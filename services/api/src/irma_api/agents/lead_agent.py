@@ -1,116 +1,47 @@
-"""LeadAgent — Claude-powered PMO synthesis.
+"""LeadAgent — horizon-aware PMO synthesis.
 
-Consumes the latest :class:`Signal` stream and emits a validated
-:class:`StandupBrief`. Defensive parsing strips Markdown fences, slices to
-the JSON object, validates via Pydantic, and retries exactly once if Claude
-deviated from the contract. A second failure raises ``BriefSynthesisError``.
+Given a Horizon, builds a per-window SynthesisContext, composes a prompt
+against the Irma persona, calls LLMClient.complete(), parses the response
+to a Brief, caches it keyed on (horizon, inputs_hash), and returns. One
+JSON-parse retry; second failure raises BriefSynthesisError.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
-from collections import defaultdict
-from datetime import UTC, datetime
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, timedelta
 from typing import Final
 
 import structlog
 from pydantic import ValidationError
 
 from irma_api.agents.llm import ChatTurn, LLMClient
+from irma_api.agents.prompts import load_prompt
 from irma_api.config import Settings
-from irma_api.models.brief import StandupBrief
+from irma_api.models.brief import Brief, Horizon
+from irma_api.models.project import Project, ProjectStatus
 from irma_api.models.signal import Signal
-from irma_api.store.sqlite import SignalStore, compute_signal_set_hash
+from irma_api.models.task import Task, TaskStatus
+from irma_api.store.repos.brief_cache_repo import BriefCacheRepo
+from irma_api.store.repos.project_repo import ProjectRepo
+from irma_api.store.repos.task_repo import TaskRepo
+from irma_api.store.sqlite import SignalStore
 
 logger = structlog.get_logger(__name__)
 
 
 class BriefSynthesisError(RuntimeError):
-    """Claude failed to produce a valid StandupBrief after one retry."""
-
-
-_SYSTEM_PROMPT: Final[str] = """\
-You are Irma — a small dog who lives beside Amit's macOS Dock and serves
-as his calm, anticipatory PMO (Project Management Office) chief of staff.
-You observe his calendar and local git activity and produce a single
-daily standup brief in your own voice. Don't perform "dog" in the brief;
-your narrative voice can carry a quiet loyalty, nothing more.
-
-Tone: terse, factual, slightly proactive. No filler. No "I'll be happy to
-help" boilerplate. Surface cross-epic conflicts and schedule collisions as
-the most useful information you can offer.
-
-You MUST respond with ONLY a single JSON object — no Markdown, no fences,
-no commentary before or after — matching exactly this schema:
-
-{
-  "generated_at": "<ISO-8601 datetime, UTC>",
-  "velocity":     "<1-2 sentences on momentum and churn>",
-  "blockers":     ["<one concrete blocker>", ...],
-  "conflicts":    ["<one cross-epic or schedule clash>", ...],
-  "schedule":     [{ "ts": "<ISO-8601>", "title": "<string>", "epic": "<string or null>" }, ...],
-  "recommendation": "<single highest-leverage next move>",
-  "narrative":   "<your voice, <= 4 sentences>"
-}
-
-Rules:
-- Use the `epic` tag on each input signal to detect cross-epic collisions.
-- If commit velocity is high on epic A but the calendar holds a long protected
-  block on epic B, surface that as a `conflicts` entry explicitly.
-- If no real conflicts exist, return an empty `conflicts` list. Do not invent.
-- Pick the most useful 5-8 calendar items for `schedule`; do not echo all events.
-"""
-
-
-_EPIC_PATTERNS: Final[tuple[tuple[re.Pattern[str], str], ...]] = (
-    (
-        re.compile(
-            r"\b(video[\s_-]?wm|world[\s_-]?model|autoregressive|video[\s_-]?gen|"
-            r"zero[\s_-]?shot|ablation)\b",
-            re.IGNORECASE,
-        ),
-        "Zero-Shot Video World Model",
-    ),
-    (
-        re.compile(
-            r"\b(mit|6\.s191|bar[\s_-]?ilan|m\.?sc|coursework|pset|advisor)\b",
-            re.IGNORECASE,
-        ),
-        "MIT DL & Bar-Ilan M.Sc",
-    ),
-)
-
-
-def _infer_epic(text: str) -> str | None:
-    for pattern, label in _EPIC_PATTERNS:
-        if pattern.search(text):
-            return label
-    return None
-
-
-def _signal_epic(s: Signal) -> str | None:
-    repo = str(s.meta.get("repo") or "")
-    haystack = " ".join((s.title, s.detail, repo))
-    return _infer_epic(haystack)
-
-
-def _summarize(text: str, cap: int) -> str:
-    text = text.strip().replace("\r", "")
-    if len(text) <= cap:
-        return text
-    return text[: cap - 1].rstrip() + "…"
+    """LLM failed to produce a valid Brief after one retry."""
 
 
 _FENCE_RE: Final[re.Pattern[str]] = re.compile(r"^```[a-zA-Z]*\s*|\s*```\s*$")
 
 
 def _strip_fences(text: str) -> str:
-    """Best-effort JSON extraction from a model response."""
-    stripped = text.strip()
-    # Remove ```json ... ``` fences if present.
-    stripped = _FENCE_RE.sub("", stripped)
-    # Slice the first { ... last } window.
+    stripped = _FENCE_RE.sub("", text.strip())
     start = stripped.find("{")
     end = stripped.rfind("}")
     if start == -1 or end == -1 or end < start:
@@ -118,24 +49,54 @@ def _strip_fences(text: str) -> str:
     return stripped[start : end + 1]
 
 
-def _parse_brief(text: str) -> StandupBrief:
-    """Strip fences → slice JSON object → validate via Pydantic.
-
-    Raises :class:`BriefSynthesisError` on any failure. Caller owns retry.
-    """
+def _parse_brief(text: str) -> Brief:
     cleaned = _strip_fences(text)
     try:
-        return StandupBrief.model_validate_json(cleaned)
+        return Brief.model_validate_json(cleaned)
     except (ValidationError, ValueError, json.JSONDecodeError) as exc:
-        logger.warning(
-            "lead_agent.parse_failed", error=str(exc)[:200], head=cleaned[:200]
-        )
+        logger.warning("lead_agent.parse_failed", error=str(exc)[:200], head=cleaned[:200])
         raise BriefSynthesisError(str(exc)) from exc
 
 
-class LeadAgent:
-    """Async stateful synthesizer that turns signals into a StandupBrief."""
+@dataclass(frozen=True)
+class SynthesisContext:
+    horizon: Horizon
+    today: date
+    window_start: date
+    window_end: date | None
+    projects: list[Project]
+    tasks: list[Task]
+    signals: list[Signal]
 
+
+def _window_for(horizon: Horizon, today: date) -> tuple[date, date | None]:
+    if horizon == "day":
+        return today, today
+    if horizon == "week":
+        start = today - timedelta(days=today.weekday())
+        return start, start + timedelta(days=6)
+    if horizon == "month":
+        start = today.replace(day=1)
+        if start.month == 12:
+            end = start.replace(year=start.year + 1, month=1) - timedelta(days=1)
+        else:
+            end = start.replace(month=start.month + 1) - timedelta(days=1)
+        return start, end
+    return today, None
+
+
+def _inputs_hash(ctx: SynthesisContext) -> str:
+    parts: list[str] = [ctx.horizon, ctx.today.isoformat()]
+    for p in sorted(ctx.projects, key=lambda x: x.id):
+        parts.append(f"p:{p.id}:{p.updated_at.isoformat()}")
+    for t in sorted(ctx.tasks, key=lambda x: x.id):
+        parts.append(f"t:{t.id}:{t.updated_at.isoformat()}")
+    for s in sorted(ctx.signals, key=lambda x: x.hash_key()):
+        parts.append(f"s:{s.hash_key()}")
+    return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
+
+
+class LeadAgent:
     def __init__(
         self,
         *,
@@ -149,27 +110,73 @@ class LeadAgent:
         self._store = store
         self._max_tokens = max_tokens
 
-    async def synthesize(self, signals: list[Signal]) -> StandupBrief:
-        signal_hash = compute_signal_set_hash(signals)
-        cached = await self._store.get_cached_brief(signal_hash)
+    async def synthesize(self, horizon: Horizon) -> Brief:
+        ctx = await self._build_context(horizon)
+        cache = BriefCacheRepo(self._store.connection)
+        inputs_hash = _inputs_hash(ctx)
+        cached = await cache.get(horizon, inputs_hash=inputs_hash)
         if cached is not None:
-            logger.info("lead_agent.cache_hit", signals=len(signals))
+            logger.info("lead_agent.cache_hit", horizon=horizon)
             return cached
 
-        user_content = self._user_content(signals)
-        messages: list[ChatTurn] = [
-            ChatTurn(role="user", content=user_content)
-        ]
+        if not ctx.projects and not ctx.tasks and not ctx.signals:
+            brief = self._empty_brief(horizon)
+            await cache.put(horizon, inputs_hash=inputs_hash, brief=brief)
+            return brief
+
+        brief = await self._call_and_parse(ctx)
+        await cache.put(horizon, inputs_hash=inputs_hash, brief=brief)
+        logger.info("lead_agent.brief_ready", horizon=horizon, conflicts=len(brief.conflicts))
+        return brief
+
+    async def _build_context(self, horizon: Horizon) -> SynthesisContext:
+        today = datetime.now(UTC).date()
+        start, end = _window_for(horizon, today)
+
+        prepo = ProjectRepo(self._store.connection)
+        trepo = TaskRepo(self._store.connection)
+        projects = await prepo.list(statuses=[ProjectStatus.ACTIVE])
+
+        open_statuses = [TaskStatus.TODO, TaskStatus.DOING, TaskStatus.BLOCKED]
+        if horizon == "all":
+            tasks = await trepo.list(statuses=open_statuses)
+        else:
+            scheduled = await trepo.list(
+                statuses=open_statuses,
+                scheduled_from=start,
+                scheduled_to=end,
+            )
+            due_soon = await trepo.list(statuses=open_statuses, due_before=end)
+            by_id = {t.id: t for t in scheduled}
+            for t in due_soon:
+                by_id.setdefault(t.id, t)
+            tasks = list(by_id.values())
+
+        sig_limit = {"day": 50, "week": 200, "month": 500, "all": 0}[horizon]
+        signals: list[Signal] = (
+            [] if sig_limit == 0 else await self._store.latest_signals(limit=sig_limit)
+        )
+        return SynthesisContext(
+            horizon=horizon,
+            today=today,
+            window_start=start,
+            window_end=end,
+            projects=projects,
+            tasks=tasks,
+            signals=signals,
+        )
+
+    async def _call_and_parse(self, ctx: SynthesisContext) -> Brief:
+        system = load_prompt("irma_persona")
+        user = self._compose_user_message(ctx)
+        messages: list[ChatTurn] = [ChatTurn(role="user", content=user)]
 
         text = await self._llm.complete(
-            system=_SYSTEM_PROMPT,
-            messages=messages,
-            max_tokens=self._max_tokens,
+            system=system, messages=messages, max_tokens=self._max_tokens
         )
         try:
-            brief = _parse_brief(text)
+            return _parse_brief(text)
         except BriefSynthesisError:
-            logger.info("lead_agent.retrying_parse")
             messages.append(ChatTurn(role="assistant", content=text))
             messages.append(
                 ChatTurn(
@@ -180,75 +187,71 @@ class LeadAgent:
                     ),
                 )
             )
-            retry_text = await self._llm.complete(
-                system=_SYSTEM_PROMPT,
-                messages=messages,
-                max_tokens=self._max_tokens,
+            retry = await self._llm.complete(
+                system=system, messages=messages, max_tokens=self._max_tokens
             )
-            brief = _parse_brief(retry_text)
+            return _parse_brief(retry)
 
-        await self._store.cache_brief(signal_hash, brief)
-        logger.info(
-            "lead_agent.brief_ready",
-            blockers=len(brief.blockers),
-            conflicts=len(brief.conflicts),
-        )
-        return brief
-
-    def _user_content(self, signals: list[Signal]) -> str:
-        now = datetime.now(UTC).isoformat()
-        by_source: dict[str, list[Signal]] = defaultdict(list)
-        for s in signals:
-            by_source[s.source].append(s)
-
+    def _compose_user_message(self, ctx: SynthesisContext) -> str:
         lines: list[str] = [
-            f"Current time (UTC): {now}",
-            "",
-            "Below are the latest observer signals grouped by source. Each item",
-            "is tagged with an inferred `epic`; use it to surface conflicts.",
-            "",
+            f"HORIZON: {ctx.horizon}",
+            f"TODAY: {ctx.today.isoformat()}",
         ]
+        if ctx.window_end:
+            lines.append(f"WINDOW: {ctx.window_start} → {ctx.window_end}")
+        else:
+            lines.append("WINDOW: all time")
 
-        for source, group in by_source.items():
-            lines.append(f"## {source} ({len(group)} signals)")
-            for s in group:
-                epic = _signal_epic(s) or "—"
-                lines.extend(_format_signal(s, epic))
-            lines.append("")
+        lines.append("")
+        lines.append("ACTIVE PROJECTS:")
+        for p in ctx.projects:
+            target = f"target {p.target_date.isoformat()}" if p.target_date else "no target"
+            lines.append(f"  • [{p.id}] {p.name}  priority={p.priority}  {target}")
+            for g in p.goals:
+                lines.append(f"      goal: {g}")
 
+        lines.append("")
+        lines.append("TASKS IN WINDOW:")
+        if ctx.tasks:
+            for t in ctx.tasks:
+                bits = [f"status={t.status.value}"]
+                if t.due_date:
+                    bits.append(f"due={t.due_date.isoformat()}")
+                if t.scheduled_for:
+                    bits.append(f"sched={t.scheduled_for.isoformat()}")
+                if t.estimated_minutes:
+                    bits.append(f"est={t.estimated_minutes}m")
+                lines.append(
+                    f"  • [{t.id}] (project {t.project_id})  {t.title}  [{', '.join(bits)}]"
+                )
+        else:
+            lines.append("  (none)")
+
+        lines.append("")
+        lines.append("CALENDAR SIGNALS IN WINDOW:")
+        if ctx.signals:
+            for s in ctx.signals:
+                lines.append(
+                    f"  • {s.ts.isoformat()}  {s.title}" + (f" — {s.detail}" if s.detail else "")
+                )
+        else:
+            lines.append("  (none)")
+
+        now_iso = datetime.now(UTC).isoformat()
+        lines.append("")
         lines.append(
-            f"Produce the StandupBrief JSON now. Use `generated_at` = {now}."
+            f"Produce the Brief JSON now. Use generated_at = {now_iso} and "
+            f'horizon = "{ctx.horizon}".'
         )
         return "\n".join(lines)
 
-
-def _format_signal(s: Signal, epic: str) -> list[str]:
-    if s.kind == "commit":
-        repo = s.meta.get("repo") or "?"
-        ins = s.meta.get("insertions") or 0
-        dels = s.meta.get("deletions") or 0
-        out = [
-            f"- [{epic}] {s.ts.isoformat()} {repo} +{ins}/-{dels} :: "
-            f"{_summarize(s.title, 120)}"
-        ]
-        if s.detail:
-            out.append(f"    {_summarize(s.detail, 200)}")
-        return out
-    if s.kind == "velocity_summary":
-        return [f"- [{epic}] velocity :: {s.title}"]
-    if s.kind == "event":
-        end = s.meta.get("end") or "?"
-        location = s.meta.get("location") or ""
-        head = (
-            f"- [{epic}] {s.ts.isoformat()} → {end}  "
-            f"{_summarize(s.title, 120)}"
+    def _empty_brief(self, horizon: Horizon) -> Brief:
+        return Brief(
+            horizon=horizon,
+            generated_at=datetime.now(UTC),
+            focus=[],
+            project_status=[],
+            conflicts=[],
+            recommendation="Add a project to get started.",
+            narrative="",
         )
-        if location:
-            head = f"{head}  ({location})"
-        out = [head]
-        if s.detail:
-            out.append(f"    {_summarize(s.detail, 200)}")
-        return out
-    return [
-        f"- [{epic}] {s.ts.isoformat()} {s.kind} :: {_summarize(s.title, 120)}"
-    ]

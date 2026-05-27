@@ -22,22 +22,6 @@ export interface SpriteManifest {
   extras?: Record<string, SpriteFrameSpec>;
 }
 
-export interface ScheduleItem {
-  ts: string;
-  title: string;
-  epic: string | null;
-}
-
-export interface StandupBrief {
-  generated_at: string;
-  velocity: string;
-  blockers: string[];
-  conflicts: string[];
-  schedule: ScheduleItem[];
-  recommendation: string;
-  narrative: string;
-}
-
 export interface Signal {
   source: "calendar" | "codebase";
   kind: string;
@@ -58,4 +42,98 @@ export interface ChatResponse {
   reply: string;
   backend: string;
   model: string;
+}
+
+// --- Projects + Tasks ----------------------------------------------------
+
+export type ProjectStatus = "active" | "paused" | "archived";
+
+export interface Project {
+  id: string;
+  name: string;
+  description: string;
+  status: ProjectStatus;
+  priority: 1 | 2 | 3;
+  calendar_keywords: string[];
+  goals: string[];
+  target_date: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProjectCreate {
+  name: string;
+  description?: string;
+  status?: ProjectStatus;
+  priority?: 1 | 2 | 3;
+  calendar_keywords?: string[];
+  goals?: string[];
+  target_date?: string | null;
+}
+
+export type ProjectUpdate = Partial<ProjectCreate>;
+
+export type TaskStatus = "todo" | "doing" | "done" | "blocked";
+
+export interface Task {
+  id: string;
+  project_id: string;
+  title: string;
+  notes: string;
+  status: TaskStatus;
+  due_date: string | null;
+  scheduled_for: string | null;
+  estimated_minutes: number | null;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+}
+
+export interface TaskCreate {
+  project_id: string;
+  title: string;
+  notes?: string;
+  status?: TaskStatus;
+  due_date?: string | null;
+  scheduled_for?: string | null;
+  estimated_minutes?: number | null;
+}
+
+export type TaskUpdate = Partial<Omit<TaskCreate, "project_id">>;
+
+// --- Brief ---------------------------------------------------------------
+
+export type Horizon = "day" | "week" | "month" | "all";
+
+export type FocusKind = "task" | "event";
+
+export interface FocusItem {
+  kind: FocusKind;
+  title: string;
+  project_id: string | null;
+  project_name: string | null;
+  task_id: string | null;
+  due_date: string | null;
+  scheduled_for: string | null;
+  when: string | null;
+  note: string;
+}
+
+export interface ProjectStatusItem {
+  project_id: string;
+  project_name: string;
+  open_tasks: number;
+  done_tasks: number;
+  days_to_target: number | null;
+  note: string;
+}
+
+export interface Brief {
+  horizon: Horizon;
+  generated_at: string;
+  focus: FocusItem[];
+  project_status: ProjectStatusItem[];
+  conflicts: string[];
+  recommendation: string;
+  narrative: string;
 }

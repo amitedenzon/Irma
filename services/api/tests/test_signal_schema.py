@@ -1,10 +1,9 @@
-"""Signal + StandupBrief schema invariants."""
+"""Signal + ScheduleItem schema invariants."""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from irma_api.models.brief import StandupBrief
 from irma_api.models.signal import ScheduleItem, Signal
 
 
@@ -35,21 +34,6 @@ def test_signal_hash_differs_on_field_change() -> None:
     different_ts = base.model_copy(update={"ts": ts.replace(minute=31)})
     assert base.hash_key() != different_title.hash_key()
     assert base.hash_key() != different_ts.hash_key()
-
-
-def test_standup_brief_attention_signal() -> None:
-    quiet = StandupBrief(
-        generated_at=datetime.now(UTC),
-        velocity="…",
-        blockers=[],
-        conflicts=[],
-        schedule=[],
-        recommendation="…",
-        narrative="…",
-    )
-    noisy = quiet.model_copy(update={"blockers": ["pipeline stuck"]})
-    assert quiet.has_attention_signal is False
-    assert noisy.has_attention_signal is True
 
 
 def test_schedule_item_optional_epic() -> None:

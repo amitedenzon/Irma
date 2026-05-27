@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     # NoDecode → pydantic-settings hands us the raw env string (comma-separated
     # paths) instead of trying to JSON-decode the list.
     irma_repos: Annotated[list[Path], NoDecode] = Field(default_factory=list)
+    irma_codebase_agent_enabled: bool = False
     irma_refresh_minutes: int = 30
     irma_dock_clearance: float = 80.0
     irma_db_path: Path = Path("./irma.db")

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from irma_api.models.brief import StandupBrief
+from irma_api.models.brief import Brief, Horizon
 from irma_api.models.signal import Signal
 
 
@@ -19,13 +19,7 @@ class Observer(Protocol):
 
 
 class LeadAgentProtocol(Protocol):
-    """Structural type for the Phase 3 synthesis agent.
+    """Structural type for the horizon-aware synthesis agent."""
 
-    Defined here (and not in `agents/lead_agent.py`) so Phase 2 code can refer
-    to the typed surface without importing a module that doesn't exist yet.
-    """
-
-    async def synthesize(
-        self, signals: list[Signal]
-    ) -> StandupBrief:  # pragma: no cover - protocol
+    async def synthesize(self, horizon: Horizon) -> Brief:  # pragma: no cover - protocol
         ...

@@ -60,9 +60,7 @@ class AnthropicLLM:
         messages: list[ChatTurn],
         max_tokens: int = 1500,
     ) -> str:
-        wire: list[dict[str, Any]] = [
-            {"role": m.role, "content": m.content} for m in messages
-        ]
+        wire: list[dict[str, Any]] = [{"role": m.role, "content": m.content} for m in messages]
         response = await self._client.messages.create(
             model=self.model,
             max_tokens=max_tokens,
@@ -133,12 +131,8 @@ def build_llm_client(settings: Settings) -> LLMClient | None:
         if settings.anthropic_api_key is None:
             logger.warning("llm.anthropic_unconfigured")
             return None
-        client = AsyncAnthropic(
-            api_key=settings.anthropic_api_key.get_secret_value()
-        )
+        client = AsyncAnthropic(api_key=settings.anthropic_api_key.get_secret_value())
         return AnthropicLLM(client=client, model=settings.anthropic_model)
     if backend == "ollama":
-        return OllamaLLM(
-            base_url=settings.ollama_base_url, model=settings.ollama_model
-        )
+        return OllamaLLM(base_url=settings.ollama_base_url, model=settings.ollama_model)
     raise ValueError(f"unknown IRMA_LLM_BACKEND: {backend!r}")

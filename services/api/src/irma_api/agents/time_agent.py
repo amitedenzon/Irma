@@ -144,9 +144,7 @@ class TimeAgent:
             ts = datetime.fromisoformat(str(raw_start).replace("Z", "+00:00"))
         except ValueError:
             ts = datetime.now(UTC)
-        attendees = [
-            a.get("email") for a in event.get("attendees", []) if isinstance(a, dict)
-        ]
+        attendees = [a.get("email") for a in event.get("attendees", []) if isinstance(a, dict)]
         return Signal(
             source="calendar",
             kind="event",

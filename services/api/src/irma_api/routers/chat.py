@@ -67,9 +67,7 @@ async def post_chat(request: Request, body: ChatRequest) -> ChatResponse:
     await bus.publish(AgentState.THINKING)
     try:
         turns = [ChatTurn(role=m.role, content=m.content) for m in body.messages]
-        reply = await llm.complete(
-            system=_SYSTEM_PROMPT, messages=turns, max_tokens=800
-        )
+        reply = await llm.complete(system=_SYSTEM_PROMPT, messages=turns, max_tokens=800)
     except Exception as exc:
         logger.exception("chat.failed", backend=llm.backend)
         await bus.publish(AgentState.ALERT)
