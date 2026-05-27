@@ -1,0 +1,128 @@
+"""FastAPI app factory.
+
+The lifespan hook owns the SQLite connection, observers, AgentState bus, and
+the APScheduler — they all share the same event loop as the request handlers.
+"""
+
+from __future__ import annotations
+
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from importlib import import_module
+
+import structlog
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from nofari_api.agents.base import LeadAgentProtocol, Observer
+from nofari_api.agents.codebase_agent import CodebaseAgent
+from nofari_api.agents.time_agent import TimeAgent
+from nofari_api.config import get_settings
+from nofari_api.logging import configure_logging
+from nofari_api.routers.signals import router as signals_router
+from nofari_api.routers.signals import run_refresh
+from nofari_api.routers.standup import router as standup_router
+from nofari_api.routers.state import router as state_router
+from nofari_api.runtime.scheduler import Scheduler
+from nofari_api.runtime.state import StateBus
+from nofari_api.store.sqlite import SignalStore
+
+logger = structlog.get_logger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    settings = get_settings()
+
+    store = SignalStore(settings.nofari_db_path)
+    await store.connect()
+
+    bus = StateBus()
+    observers: list[Observer] = [
+        TimeAgent(settings),
+        CodebaseAgent(settings.nofari_repos),
+    ]
+
+    lead_agent: LeadAgentProtocol | None = None
+    if settings.anthropic_api_key is not None:
+        # Imported lazily so Phase 2 deployments without the LeadAgent module
+        # still boot. Phase 3 provides nofari_api.agents.lead_agent.
+        try:
+            lead_module = import_module("nofari_api.agents.lead_agent")
+            from anthropic import AsyncAnthropic
+
+            client = AsyncAnthropic(
+                api_key=settings.anthropic_api_key.get_secret_value()
+            )
+            lead_agent = lead_module.LeadAgent(
+                settings=settings, client=client, store=store
+            )
+        except ModuleNotFoundError:
+            logger.info("app.lead_agent_unavailable", phase="2-only")
+
+    app.state.settings = settings
+    app.state.store = store
+    app.state.bus = bus
+    app.state.observers = observers
+    app.state.lead_agent = lead_agent
+
+    async def tick() -> None:
+        await run_refresh(
+            store=store,
+            observers=observers,
+            bus=bus,
+            lead_agent=lead_agent,
+        )
+
+    scheduler = Scheduler(
+        refresh_minutes=settings.nofari_refresh_minutes,
+        on_tick=tick,
+    )
+    scheduler.start()
+    app.state.scheduler = scheduler
+    logger.info(
+        "app.ready",
+        observers=[o.name for o in observers],
+        lead_agent=lead_agent is not None,
+    )
+
+    try:
+        yield
+    finally:
+        scheduler.shutdown()
+        await store.close()
+        logger.info("app.shutdown")
+
+
+def create_app() -> FastAPI:
+    """Application factory consumed by `uvicorn.run(..., factory=True)`."""
+    configure_logging()
+    app = FastAPI(
+        title="Nofari API",
+        version="0.1.0",
+        lifespan=lifespan,
+        docs_url="/docs",
+        redoc_url=None,
+    )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[
+            "http://localhost:1420",
+            "http://127.0.0.1:1420",
+            "tauri://localhost",
+            "https://tauri.localhost",
+        ],
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    app.include_router(signals_router, prefix="/api/v1")
+    app.include_router(standup_router, prefix="/api/v1")
+    app.include_router(state_router, prefix="/api/v1")
+
+    @app.get("/", include_in_schema=False)
+    async def root() -> dict[str, str]:
+        return {"app": "nofari-api", "version": "0.1.0"}
+
+    return app

@@ -1,0 +1,88 @@
+[project]
+name = "nofari-api"
+version = "0.1.0"
+description = "Async FastAPI backend for the Nofari desktop assistant"
+readme = "README.md"
+authors = [
+    { name = "amitedenzon", email = "amit.edenzon@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "aiogoogle>=5.17.0",
+    "aiosqlite>=0.22.1",
+    "anthropic>=0.104.1",
+    "apscheduler>=3.11.2",
+    "fastapi>=0.136.3",
+    "httpx>=0.28.1",
+    "pydantic>=2.13.4",
+    "pydantic-settings>=2.14.1",
+    "sqlmodel>=0.0.38",
+    "structlog>=25.5.0",
+    "tenacity>=9.1.4",
+    "uvicorn[standard]>=0.48.0",
+]
+
+[project.scripts]
+nofari-api = "nofari_api:main"
+
+[build-system]
+requires = ["uv_build>=0.11.16,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "mypy>=2.1.0",
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.15.14",
+]
+
+# ---------------------------------------------------------------------------
+# Lint / type / test configuration
+# ---------------------------------------------------------------------------
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC", "RUF"]
+ignore = ["B008", "E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B018", "SIM117"]
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+files = ["src/nofari_api", "tests"]
+plugins = ["pydantic.mypy"]
+warn_unused_ignores = true
+warn_redundant_casts = true
+# Some third-party libs ship without types — silence those rather than fail strict.
+[[tool.mypy.overrides]]
+module = [
+    "aiogoogle.*",
+    "apscheduler.*",
+    "aiosqlite.*",
+    "sqlmodel.*",
+]
+ignore_missing_imports = true
+follow_untyped_imports = true
+
+# These two modules call directly into untyped third-party clients (aiogoogle,
+# apscheduler). Relax `disallow_untyped_calls` locally rather than weakening
+# strict mode for the whole codebase.
+[[tool.mypy.overrides]]
+module = [
+    "nofari_api.agents.time_agent",
+    "nofari_api.runtime.scheduler",
+]
+disallow_untyped_calls = false
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+filterwarnings = [
+    "ignore::DeprecationWarning:apscheduler.*",
+]
