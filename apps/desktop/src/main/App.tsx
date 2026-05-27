@@ -1,69 +1,33 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { StandupView } from "./StandupView";
-import { mockBrief } from "./mockBrief";
-import { ChatPanel } from "./components/ChatPanel";
-import { fetchStandup, forceRefresh } from "../lib/api";
+import { forceRefresh } from "../lib/api";
 import { subscribeAgentState } from "../lib/sse";
-import type { AgentState, StandupBrief } from "../lib/types";
+import type { AgentState } from "../lib/types";
+import { BriefView } from "./brief/BriefView";
+import { ChatPanel } from "./components/ChatPanel";
+import { ProjectsView } from "./projects/ProjectsView";
 
-const USE_MOCK: boolean =
-  (import.meta.env.VITE_USE_MOCK as string | undefined) === "1";
+type Tab = "brief" | "projects";
 
 export function App() {
-  const [brief, setBrief] = useState<StandupBrief | null>(
-    USE_MOCK ? mockBrief : null,
-  );
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState<boolean>(!USE_MOCK);
+  const [tab, setTab] = useState<Tab>("brief");
   const [agentState, setAgentState] = useState<AgentState>("idle");
-  const inFlightRef = useRef<boolean>(false);
+  // Increment whenever the backend settles after a refresh — BriefView reloads.
+  const [agentSignal, setAgentSignal] = useState(0);
 
-  const load = useCallback(async (): Promise<void> => {
-    if (USE_MOCK) return;
-    if (inFlightRef.current) return;
-    inFlightRef.current = true;
-    setLoading(true);
-    setError(null);
-    try {
-      const b = await fetchStandup();
-      setBrief(b);
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
-      inFlightRef.current = false;
-    }
-  }, []);
-
-  // Initial load.
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  // Re-fetch when the backend signals it has settled into idle or alert after
-  // a refresh (i.e. a fresh brief is available in cache).
   useEffect(() => {
     const sub = subscribeAgentState((s) => {
       setAgentState(s);
-      if (s === "idle" || s === "alert") {
-        void load();
-      }
+      if (s === "idle" || s === "alert") setAgentSignal((n) => n + 1);
     });
     return () => sub.close();
-  }, [load]);
-
-  const refresh = useCallback(async (): Promise<void> => {
-    try {
-      await forceRefresh();
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
   }, []);
 
-  const closeWindow = (): void => {
-    // Route through Rust so `main:visibility` fires (companion needs it to
-    // exit bark mode). Direct getCurrentWindow().hide() would bypass that.
+  const refresh = async () => {
+    try { await forceRefresh(); } catch (e) { console.error(e); }
+  };
+
+  const closeWindow = () => {
     void invoke("toggle_main").catch((e: unknown) =>
       console.error("[dashboard] toggle_main failed:", e),
     );
@@ -75,40 +39,30 @@ export function App() {
         data-tauri-drag-region
         className="h-10 flex items-center justify-between px-4 border-b border-irma-border bg-irma-surface shrink-0"
       >
-        <div className="text-sm font-medium tracking-wide flex items-center gap-2 select-none">
+        <div className="flex items-center gap-3 select-none">
           <StateDot state={agentState} />
-          Irma · Standup Brief
-          <span className="text-xs text-irma-mute font-mono ml-1">{agentState}</span>
+          <span className="text-sm font-medium tracking-wide">Irma</span>
+          <nav className="flex gap-1 ml-2">
+            <TabButton current={tab} id="brief"    onClick={setTab} label="Brief" />
+            <TabButton current={tab} id="projects" onClick={setTab} label="Projects" />
+          </nav>
+          <span className="text-xs text-irma-mute font-mono ml-2">{agentState}</span>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => void refresh()}
-            className="text-xs text-irma-mute hover:text-irma-text px-2 py-0.5 rounded border border-irma-border"
-            aria-label="Force refresh"
-            type="button"
-            disabled={USE_MOCK}
-            title={USE_MOCK ? "Refresh disabled in mock mode" : "Force re-observation"}
-          >
+          <button onClick={() => void refresh()} type="button"
+                  className="text-xs text-irma-mute hover:text-irma-text px-2 py-0.5 rounded border border-irma-border">
             refresh
           </button>
-          <button
-            onClick={closeWindow}
-            className="text-base leading-none text-irma-mute hover:text-irma-text px-2 py-0.5 rounded"
-            aria-label="Hide window"
-            type="button"
-          >
+          <button onClick={closeWindow} type="button" aria-label="Hide window"
+                  className="text-base leading-none text-irma-mute hover:text-irma-text px-2 py-0.5 rounded">
             ×
           </button>
         </div>
       </div>
+
       <div className="flex-1 overflow-y-auto px-6 py-5">
-        {error && (
-          <div className="text-sm text-irma-amber mb-4">
-            Brief unavailable: {error}
-          </div>
-        )}
-        <div className="max-w-3xl mx-auto space-y-6">
-          {brief ? <StandupView brief={brief} /> : <Skeleton loading={loading} />}
+        <div className="max-w-4xl mx-auto space-y-6">
+          {tab === "brief" ? <BriefView agentSignal={agentSignal} /> : <ProjectsView />}
           <ChatPanel />
         </div>
       </div>
@@ -116,26 +70,29 @@ export function App() {
   );
 }
 
-function StateDot({ state }: { state: AgentState }) {
-  const color =
-    state === "alert"
-      ? "bg-irma-amber"
-      : state === "thinking"
-      ? "bg-irma-violet"
-      : state === "observing"
-      ? "bg-irma-teal"
-      : "bg-irma-indigo";
-  return <span className={`inline-block w-2 h-2 rounded-full ${color}`} />;
+function TabButton({
+  current, id, onClick, label,
+}: { current: Tab; id: Tab; onClick: (t: Tab) => void; label: string }) {
+  const active = current === id;
+  return (
+    <button
+      type="button"
+      onClick={() => onClick(id)}
+      className={
+        "px-2 py-0.5 text-xs rounded " +
+        (active ? "bg-irma-surface text-irma-text border border-irma-border" : "text-irma-mute hover:text-irma-text")
+      }
+    >
+      {label}
+    </button>
+  );
 }
 
-function Skeleton({ loading }: { loading: boolean }) {
-  return (
-    <div className="space-y-4 text-sm text-irma-mute">
-      <div>
-        {loading
-          ? "Waiting for Irma to assemble your brief…"
-          : "No brief yet. Hit refresh to ask Irma to observe and synthesize."}
-      </div>
-    </div>
-  );
+function StateDot({ state }: { state: AgentState }) {
+  const color =
+    state === "alert" ? "bg-irma-amber"
+    : state === "thinking" ? "bg-irma-violet"
+    : state === "observing" ? "bg-irma-teal"
+    : "bg-irma-indigo";
+  return <span className={`inline-block w-2 h-2 rounded-full ${color}`} />;
 }
