@@ -1,4 +1,4 @@
-"""Async SQLite-backed persistence for signals."""
+"""Async SQLite-backed persistence: signals (with project attribution)."""
 
 from __future__ import annotations
 
@@ -48,6 +48,11 @@ class SignalStore:
             await self._conn.close()
             self._conn = None
 
+    @property
+    def connection(self) -> aiosqlite.Connection:
+        """Expose the underlying connection so repos can share it."""
+        return self._require()
+
     def _require(self) -> aiosqlite.Connection:
         if self._conn is None:
             raise RuntimeError("SignalStore not connected — call .connect() first")
@@ -56,10 +61,10 @@ class SignalStore:
     # --- Signals -------------------------------------------------------------
 
     async def upsert_signals(self, signals: list[Signal]) -> int:
-        """Insert new signals (by hash_key). Returns count of NEW rows."""
         if not signals:
             return 0
         conn = self._require()
+        active_projects = await self._fetch_active_projects()
         rows = [
             (
                 s.source,
@@ -70,33 +75,46 @@ class SignalStore:
                 json.dumps(s.meta, sort_keys=True, default=str),
                 s.hash_key(),
                 _iso_now(),
+                _match_project_id(s, active_projects),
             )
             for s in signals
         ]
         cur = await conn.executemany(
             """
             INSERT OR IGNORE INTO signals
-                (source, kind, title, detail, ts, meta_json, hash_key, collected_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (source, kind, title, detail, ts, meta_json, hash_key,
+                 collected_at, project_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             rows,
         )
         await conn.commit()
-        # `rowcount` from executemany is the total number of changes, which
-        # equals the count of newly inserted rows (IGNORE no-ops contribute 0).
         return cur.rowcount or 0
 
     async def latest_signals(self, limit: int = 500) -> list[Signal]:
         conn = self._require()
         cur = await conn.execute(
             "SELECT source, kind, title, detail, ts, meta_json "
-            "FROM signals "
-            "ORDER BY datetime(ts) DESC "
-            "LIMIT ?",
+            "FROM signals ORDER BY datetime(ts) DESC LIMIT ?",
             (limit,),
         )
-        rows = await cur.fetchall()
-        return [self._row_to_signal(r) for r in rows]
+        return [self._row_to_signal(r) for r in await cur.fetchall()]
+
+    async def _fetch_active_projects(self) -> list[tuple[str, list[str]]]:
+        """Return [(project_id, keywords_lowercased)] for active projects,
+        ordered by (priority ASC, name_lower ASC) so first-match is deterministic.
+        """
+        conn = self._require()
+        cur = await conn.execute(
+            "SELECT id, calendar_keywords FROM project "
+            "WHERE status = 'active' "
+            "ORDER BY priority ASC, name_lower ASC"
+        )
+        out: list[tuple[str, list[str]]] = []
+        for row in await cur.fetchall():
+            kws = json.loads(row["calendar_keywords"]) or []
+            out.append((row["id"], [str(k).lower() for k in kws]))
+        return out
 
     @staticmethod
     def _row_to_signal(row: aiosqlite.Row) -> Signal:
@@ -111,3 +129,14 @@ class SignalStore:
             meta=meta,
         )
 
+
+def _match_project_id(
+    sig: Signal, projects: list[tuple[str, list[str]]]
+) -> str | None:
+    if sig.source != "calendar":
+        return None
+    haystack = f"{sig.title} {sig.detail}".lower()
+    for pid, kws in projects:
+        if any(kw in haystack for kw in kws):
+            return pid
+    return None
