@@ -38,8 +38,7 @@ export function ProjectForm({
         goals: goals.split("\n").map((s) => s.trim()).filter(Boolean),
         target_date: target || null,
       };
-      const saved = initial ? await updateProject(initial.id, payload) : await createProject(payload);
-      onSaved(saved);
+      onSaved(initial ? await updateProject(initial.id, payload) : await createProject(payload));
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -48,89 +47,78 @@ export function ProjectForm({
   };
 
   return (
-    <form onSubmit={submit} className="paper-inset ink-frame-thin p-5 space-y-3">
-      <div className="flex items-baseline justify-between mb-1">
-        <h2 style={{ fontFamily: "var(--font-display)", color: "var(--color-red-seal)" }}
-            className="text-[12px] uppercase tracking-[0.18em]">
-          {initial ? "▶ edit project" : "▶ new project"}
+    <form onSubmit={submit} className="card p-5 space-y-4">
+      <div className="flex items-baseline justify-between">
+        <h2 className="display text-[15px] font-semibold" style={{ color: "var(--color-ink)" }}>
+          {initial ? "Edit project" : "New project"}
         </h2>
-        <button type="button" onClick={onClose}
-                className="text-[10px] uppercase tracking-wider"
-                style={{ color: "var(--color-ink-mute)" }}>
+        <button type="button" onClick={onClose} className="btn-link" style={{ color: "var(--color-ink-mute)" }}>
           cancel
         </button>
       </div>
 
-      <Field label="name *">
-        <input value={name} onChange={(e) => setName(e.target.value)} autoFocus className="field w-full" />
+      <Field label="Name">
+        <input value={name} onChange={(e) => setName(e.target.value)} autoFocus className="input" />
       </Field>
 
-      <Field label="description">
+      <Field label="Description">
         <textarea value={description} onChange={(e) => setDescription(e.target.value)}
-                  rows={2} className="field w-full" />
+                  rows={2} className="input resize-y" />
       </Field>
 
       <div className="grid grid-cols-3 gap-3">
-        <Field label="priority">
+        <Field label="Priority">
           <select value={priority} onChange={(e) => setPriority(Number(e.target.value) as 1 | 2 | 3)}
-                  className="field w-full">
-            <option value={1}>1 · high</option>
-            <option value={2}>2 · medium</option>
-            <option value={3}>3 · low</option>
+                  className="input">
+            <option value={1}>P1 · high</option>
+            <option value={2}>P2 · medium</option>
+            <option value={3}>P3 · low</option>
           </select>
         </Field>
-        <Field label="status">
-          <select value={status} onChange={(e) => setStatus(e.target.value as ProjectStatus)}
-                  className="field w-full">
+        <Field label="Status">
+          <select value={status} onChange={(e) => setStatus(e.target.value as ProjectStatus)} className="input">
             {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
         </Field>
-        <Field label="target date">
-          <input type="date" value={target} onChange={(e) => setTarget(e.target.value)}
-                 className="field w-full" />
+        <Field label="Target date">
+          <input type="date" value={target} onChange={(e) => setTarget(e.target.value)} className="input" />
         </Field>
       </div>
 
-      <Field label="calendar keywords  ·  comma separated">
+      <Field label="Calendar keywords" hint="comma separated">
         <input value={keywords} onChange={(e) => setKeywords(e.target.value)}
-               placeholder="gal, thesis, advisor"
-               className="field w-full" />
+               placeholder="gal, thesis, advisor" className="input" />
       </Field>
 
-      <Field label="goals  ·  one per line">
+      <Field label="Goals" hint="one per line">
         <textarea value={goals} onChange={(e) => setGoals(e.target.value)} rows={3}
                   placeholder={"Submit draft by 2026-07-15\nFinish coursework end of June"}
-                  className="field w-full" />
+                  className="input resize-y" />
       </Field>
 
       {error && (
-        <div className="text-[12px]" style={{ color: "var(--color-red-seal)" }}>
-          !! {error}
+        <div className="text-[13px]" style={{ color: "var(--color-red)" }}>
+          {error}
         </div>
       )}
 
-      <div className="flex justify-end gap-2 pt-2">
-        <button type="button" onClick={onClose}
-                className="text-[11px] uppercase tracking-wider px-3 py-1.5"
-                style={{ color: "var(--color-ink-mute)", border: "1px solid var(--color-rule)", fontFamily: "var(--font-mono)" }}>
-          cancel
-        </button>
-        <button type="submit" disabled={busy || !name.trim()}
-                className="wax-seal text-[11px] uppercase tracking-wider px-4 py-1.5"
-                style={{ fontFamily: "var(--font-mono)" }}>
-          {initial ? (busy ? "saving…" : "save") : (busy ? "stamping…" : "create")}
+      <div className="flex justify-end gap-2 pt-1">
+        <button type="button" onClick={onClose} className="btn-ghost">cancel</button>
+        <button type="submit" disabled={busy || !name.trim()} className="btn-red">
+          {initial ? (busy ? "saving…" : "save") : (busy ? "creating…" : "create")}
         </button>
       </div>
     </form>
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="text-[10px] uppercase tracking-widest block mb-1"
-            style={{ color: "var(--color-ink-faint)", fontFamily: "var(--font-mono)" }}>
+      <span className="flex items-baseline gap-2 text-[12px] font-medium mb-1.5"
+            style={{ color: "var(--color-ink)" }}>
         {label}
+        {hint && <span className="text-[11px] font-normal" style={{ color: "var(--color-ink-faint)" }}>· {hint}</span>}
       </span>
       {children}
     </label>

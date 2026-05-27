@@ -21,32 +21,26 @@ export function TaskList({ projectId }: { projectId: string }) {
   const done = tasks.filter((t) => t.status === "done");
 
   return (
-    <section>
-      <div className="flex items-baseline justify-between mb-2">
-        <h3 style={{ fontFamily: "var(--font-display)", color: "var(--color-red-seal)" }}
-            className="text-[11px] uppercase tracking-[0.18em]">
-          ── tasks ── <span style={{ color: "var(--color-ink-faint)" }} className="ml-2">
-            {open.length} open · {done.length} done
-          </span>
-        </h3>
+    <section className="border-t pt-3" style={{ borderColor: "var(--color-border)" }}>
+      <div className="flex items-center justify-between mb-2 text-[12px]"
+           style={{ color: "var(--color-ink-mute)" }}>
+        <span>{open.length} open · {done.length} done</span>
         {done.length > 0 && (
-          <button onClick={() => setShowDone((v) => !v)}
-                  className="text-[10px] uppercase tracking-wider hover:underline"
-                  style={{ color: "var(--color-ink-mute)" }}>
-            {showDone ? "hide" : "show"} done
+          <button onClick={() => setShowDone((v) => !v)} className="btn-link">
+            {showDone ? "hide done" : "show done"}
           </button>
         )}
       </div>
 
-      <ul className="space-y-px">
+      <ul>
         {open.map((t) => (
           <TaskRow key={t.id} task={t}
                    onChanged={(u) => setTasks((cur) => cur.map((c) => (c.id === u.id ? u : c)))}
                    onDeleted={(id) => setTasks((cur) => cur.filter((c) => c.id !== id))} />
         ))}
         {open.length === 0 && !loading && (
-          <li className="text-[12px] italic py-2" style={{ color: "var(--color-ink-faint)" }}>
-            ── no open tasks · add one below ──
+          <li className="text-[13px] italic py-1" style={{ color: "var(--color-ink-faint)" }}>
+            No open tasks
           </li>
         )}
       </ul>
@@ -55,7 +49,7 @@ export function TaskList({ projectId }: { projectId: string }) {
                   onCreated={(t) => setTasks((cur) => [...cur, t])} />
 
       {showDone && done.length > 0 && (
-        <ul className="space-y-px mt-4 pt-2 border-t" style={{ borderColor: "var(--color-rule)" }}>
+        <ul className="mt-3 pt-2 border-t" style={{ borderColor: "var(--color-border)" }}>
           {done.map((t) => (
             <TaskRow key={t.id} task={t}
                      onChanged={(u) => setTasks((cur) => cur.map((c) => (c.id === u.id ? u : c)))}

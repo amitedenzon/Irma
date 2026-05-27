@@ -1,13 +1,7 @@
 import { useState } from "react";
 import { createTask } from "../../lib/api";
 import type { Task } from "../../lib/types";
-import { IconPlus } from "../../lib/icons";
 
-/**
- * Always-visible inline task adder. Type → Enter creates a task on the
- * current project. Optional due/scheduled date pickers are tucked behind
- * a chevron so the common case (no deadline) stays one keystroke away.
- */
 export function TaskAddRow({
   projectId,
   onCreated,
@@ -26,17 +20,13 @@ export function TaskAddRow({
     if (!t || busy) return;
     setBusy(true);
     try {
-      const task = await createTask({
+      onCreated(await createTask({
         project_id: projectId,
         title: t,
         due_date: due || null,
         scheduled_for: sched || null,
-      });
-      onCreated(task);
-      setTitle("");
-      setDue("");
-      setSched("");
-      setShowDates(false);
+      }));
+      setTitle(""); setDue(""); setSched(""); setShowDates(false);
     } catch (e: unknown) {
       alert(`create failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
@@ -46,54 +36,36 @@ export function TaskAddRow({
 
   return (
     <div className="mt-2">
-      <form
-        onSubmit={(e) => { e.preventDefault(); void submit(); }}
-        className="flex items-center gap-2 py-1.5 px-2 border-l-2"
-        style={{ borderColor: "var(--color-red-seal)", background: "var(--color-paper-deep)" }}
-      >
-        <span style={{ color: "var(--color-red-seal)", fontFamily: "var(--font-mono)" }} className="text-[14px]">
-          [+]
-        </span>
+      <form onSubmit={(e) => { e.preventDefault(); void submit(); }}
+            className="flex items-center gap-2 py-1">
         <input
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          placeholder="add task… (Enter to save)"
-          className="field flex-1 text-[13px]"
-          style={{ background: "var(--color-paper)" }}
+          placeholder="Add task and press Enter…"
+          className="input flex-1"
+          style={{ background: "transparent", border: "1px dashed var(--color-border)" }}
           disabled={busy}
         />
-        <button
-          type="button"
-          onClick={() => setShowDates((v) => !v)}
-          title="Add deadline / scheduled date"
-          className="text-[10px] uppercase tracking-wider px-1.5 py-1"
-          style={{
-            color: showDates ? "var(--color-red-seal)" : "var(--color-ink-mute)",
-            border: `1px solid ${showDates ? "var(--color-red-seal)" : "var(--color-rule)"}`,
-            fontFamily: "var(--font-mono)",
-          }}
-        >
-          dates
+        <button type="button" onClick={() => setShowDates((v) => !v)} className="btn-link"
+                style={{ color: showDates ? "var(--color-red)" : "var(--color-ink-mute)" }}>
+          {showDates ? "− dates" : "+ dates"}
         </button>
-        <button
-          type="submit"
-          disabled={busy || !title.trim()}
-          className="wax-seal text-[10px] uppercase tracking-wider px-3 py-1 flex items-center gap-1"
-          style={{ fontFamily: "var(--font-mono)" }}
-        >
-          <IconPlus size={10} /> {busy ? "…" : "add"}
+        <button type="submit" disabled={busy || !title.trim()} className="btn-red">
+          add
         </button>
       </form>
       {showDates && (
-        <div className="flex items-center gap-3 py-1.5 px-2 pl-9 text-[11px]"
-             style={{ background: "var(--color-paper-deep)", color: "var(--color-ink-faint)" }}>
-          <label className="flex items-center gap-1">
+        <div className="flex items-center gap-4 mt-1 ml-1 text-[12px]"
+             style={{ color: "var(--color-ink-mute)" }}>
+          <label className="flex items-center gap-1.5">
             due
-            <input type="date" value={due} onChange={(e) => setDue(e.target.value)} className="field" />
+            <input type="date" value={due} onChange={(e) => setDue(e.target.value)} className="input"
+                   style={{ width: "auto" }} />
           </label>
-          <label className="flex items-center gap-1">
+          <label className="flex items-center gap-1.5">
             scheduled
-            <input type="date" value={sched} onChange={(e) => setSched(e.target.value)} className="field" />
+            <input type="date" value={sched} onChange={(e) => setSched(e.target.value)} className="input"
+                   style={{ width: "auto" }} />
           </label>
         </div>
       )}
