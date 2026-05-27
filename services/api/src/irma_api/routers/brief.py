@@ -12,12 +12,14 @@ from fastapi.responses import JSONResponse
 
 from irma_api.agents.base import LeadAgentProtocol
 from irma_api.models.brief import Brief, Horizon
-from irma_api.runtime.state import AgentState, StateBus
 
 router = APIRouter(prefix="/brief", tags=["brief"])
 
 
 async def _synthesize(request: Request, horizon: Horizon) -> Brief | JSONResponse:
+    """Synthesize on-demand. Does NOT publish to the AgentState bus —
+    that would feedback-loop with the dashboard's SSE-triggered reload.
+    The dashboard tracks per-request loading in its own UI state."""
     lead_agent: LeadAgentProtocol | None = getattr(request.app.state, "lead_agent", None)
     if lead_agent is None:
         return JSONResponse(
@@ -28,18 +30,7 @@ async def _synthesize(request: Request, horizon: Horizon) -> Brief | JSONRespons
             },
             headers={"Retry-After": "30"},
         )
-    bus: StateBus | None = getattr(request.app.state, "bus", None)
-    if bus is not None:
-        await bus.publish(AgentState.THINKING)
-    try:
-        brief = await lead_agent.synthesize(horizon)
-    except Exception:
-        if bus is not None:
-            await bus.publish(AgentState.IDLE)
-        raise
-    if bus is not None:
-        await bus.publish(AgentState.ALERT if brief.has_attention_signal else AgentState.IDLE)
-    return brief
+    return await lead_agent.synthesize(horizon)
 
 
 @router.get("/today", response_model=Brief)
