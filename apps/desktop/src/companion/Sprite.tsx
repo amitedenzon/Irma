@@ -46,7 +46,7 @@ export function Sprite({
     const sheetStyle: CSSProperties = {
       width: dispW,
       height: dispH,
-      backgroundImage: `url(/sprites/${manifest.image})`,
+      backgroundImage: `url(/sprites/dogs/${manifest.image})`,
       backgroundPosition: `${-col * dispW}px ${-row * dispH}px`,
       backgroundSize: `${manifest.columns * dispW}px auto`,
       backgroundRepeat: "no-repeat",

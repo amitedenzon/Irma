@@ -7,6 +7,8 @@ export interface SpriteFrameSpec {
 }
 
 export interface SpriteManifest {
+  /** Sprite sheet filename, relative to `/sprites/dogs/`. */
+  image: string;
   /** Source-pixel width of one frame in the sheet. */
   frameWidth: number;
   /** Source-pixel height of one frame in the sheet. */

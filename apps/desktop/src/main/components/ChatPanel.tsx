@@ -1,23 +1,37 @@
 import { useEffect, useRef, useState } from "react";
-import type { ChatMessage } from "../../lib/types";
 import { sendChat } from "../../lib/api";
+import type { ChatMessage } from "../../lib/types";
+import { IconTerminal } from "../../lib/icons";
 
-export function ChatPanel() {
+/**
+ * Persistent bottom strip. Collapsed by default — shows the prompt line
+ * with a hint. Expands upward on focus or when there's a conversation.
+ *
+ * Currently the NL-to-task path is not yet wired on the backend; we hint
+ * at it in the placeholder so the user knows it's coming.
+ */
+export function ChatPanel({
+  contextProjectId: _ctxId,
+  contextProjectName,
+  onTaskCreated: _onTaskCreated,
+}: {
+  contextProjectId: string | null;
+  contextProjectName: string | null;
+  onTaskCreated: () => void;
+}) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState<string>("");
-  const [busy, setBusy] = useState<boolean>(false);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [meta, setMeta] = useState<{ backend: string; model: string } | null>(
-    null,
-  );
+  const [meta, setMeta] = useState<{ backend: string; model: string } | null>(null);
+  const [expanded, setExpanded] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({
-      top: scrollRef.current.scrollHeight,
-      behavior: "smooth",
-    });
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, busy]);
+
+  useEffect(() => { if (messages.length > 0) setExpanded(true); }, [messages.length]);
 
   async function submit(): Promise<void> {
     const text = input.trim();
@@ -38,86 +52,128 @@ export function ChatPanel() {
     }
   }
 
-  function onKey(e: React.KeyboardEvent<HTMLTextAreaElement>): void {
+  function onKey(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       void submit();
     }
   }
 
+  const placeholder = contextProjectName
+    ? `ask irma… (about ${contextProjectName} or anything)`
+    : "ask irma anything…";
+
   return (
-    <section className="border border-irma-border rounded-lg bg-irma-surface flex flex-col h-[28rem]">
-      <header className="px-4 py-2 border-b border-irma-border flex items-center justify-between shrink-0">
-        <h3 className="text-xs uppercase tracking-widest text-irma-mute flex items-center gap-2">
-          <span className="inline-block w-2 h-2 rounded-full bg-irma-indigo" />
-          Ask Irma
-        </h3>
-        {meta && (
-          <span className="text-[10px] font-mono text-irma-mute">
-            {meta.backend} · {meta.model}
-          </span>
-        )}
-      </header>
+    <section
+      className="border-t shrink-0 flex flex-col"
+      style={{
+        borderColor: "var(--color-rule)",
+        background: "var(--color-paper)",
+        maxHeight: expanded ? "22rem" : "auto",
+      }}
+    >
+      {expanded && (
+        <header className="px-3 py-1.5 flex items-baseline justify-between border-b"
+                style={{ borderColor: "var(--color-rule)", background: "var(--color-paper-deep)" }}>
+          <div className="flex items-center gap-2" style={{ color: "var(--color-red-seal)" }}>
+            <IconTerminal size={12} />
+            <span style={{ fontFamily: "var(--font-display)" }}
+                  className="text-[10px] uppercase tracking-[0.18em]">
+              ── irma · chat ──
+            </span>
+            {meta && (
+              <span style={{ color: "var(--color-ink-faint)", fontFamily: "var(--font-mono)" }}
+                    className="text-[10px]">
+                {meta.backend} · {meta.model}
+              </span>
+            )}
+          </div>
+          <button onClick={() => { setExpanded(false); setMessages([]); }}
+                  className="text-[10px] uppercase tracking-wider"
+                  style={{ color: "var(--color-ink-mute)" }}>
+            clear
+          </button>
+        </header>
+      )}
 
-      <div
-        ref={scrollRef}
-        className="flex-1 overflow-y-auto px-4 py-3 space-y-3 text-sm"
-      >
-        {messages.length === 0 && !busy && (
-          <p className="text-irma-mute italic">
-            Try: "what's on my calendar today?" or "draft a 3-line standup for me."
-          </p>
-        )}
-        {messages.map((m, i) => (
-          <MessageBubble key={i} message={m} />
-        ))}
-        {busy && (
-          <div className="text-irma-mute text-xs italic">Irma is thinking…</div>
-        )}
-        {error && (
-          <div className="text-irma-amber text-xs">Chat failed: {error}</div>
-        )}
-      </div>
+      {expanded && (
+        <div ref={scrollRef}
+             className="flex-1 overflow-y-auto px-4 py-3 space-y-2"
+             style={{ minHeight: "8rem", maxHeight: "16rem" }}>
+          {messages.length === 0 && !busy && (
+            <p style={{ fontFamily: "var(--font-serif)", color: "var(--color-ink-mute)" }}
+               className="text-[13px] italic">
+              Try: <em>"what's on my plate today?"</em>, <em>"draft a 3-line standup for me."</em>
+            </p>
+          )}
+          {messages.map((m, i) => <Bubble key={i} message={m} />)}
+          {busy && (
+            <div className="flex items-center gap-2 text-[12px]"
+                 style={{ color: "var(--color-ink-mute)" }}>
+              <span className="caret" style={{ fontFamily: "var(--font-mono)" }}>irma:</span>
+              <span className="italic">thinking…</span>
+            </div>
+          )}
+          {error && (
+            <div className="text-[12px]" style={{ color: "var(--color-red-seal)" }}>
+              !! chat failed: {error}
+            </div>
+          )}
+        </div>
+      )}
 
-      <div className="border-t border-irma-border p-2 flex gap-2 shrink-0">
-        <textarea
+      <div className="flex items-center gap-2 px-3 py-2"
+           style={{ background: "var(--color-paper)" }}>
+        <span style={{ fontFamily: "var(--font-display)", color: "var(--color-red-seal)" }}
+              className="text-[14px] shrink-0">
+          ▍
+        </span>
+        <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={onKey}
-          rows={2}
-          placeholder="Message Irma… (Enter to send, Shift+Enter for newline)"
-          className="flex-1 resize-none bg-irma-bg text-irma-text border border-irma-border rounded px-2 py-1.5 text-sm focus:outline-none focus:border-irma-indigo placeholder:text-irma-mute"
+          onFocus={() => setExpanded(true)}
+          placeholder={placeholder}
+          className="flex-1 bg-transparent outline-none text-[13px]"
+          style={{
+            fontFamily: "var(--font-mono)",
+            color: "var(--color-ink)",
+            border: "none",
+          }}
           disabled={busy}
         />
         <button
           type="button"
           onClick={() => void submit()}
           disabled={busy || !input.trim()}
-          className="px-3 py-1.5 text-sm rounded border border-irma-border text-irma-text hover:border-irma-indigo disabled:opacity-40 disabled:cursor-not-allowed"
+          className="wax-seal text-[10px] uppercase tracking-wider px-3 py-1"
+          style={{ fontFamily: "var(--font-mono)" }}
         >
-          Send
+          send
         </button>
       </div>
     </section>
   );
 }
 
-function MessageBubble({ message }: { message: ChatMessage }) {
+function Bubble({ message }: { message: ChatMessage }) {
   const isUser = message.role === "user";
   return (
-    <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
-      <div
-        className={
-          isUser
-            ? "max-w-[80%] rounded-lg px-3 py-2 bg-irma-indigo/15 border border-irma-indigo/30 text-irma-text"
-            : "max-w-[80%] rounded-lg px-3 py-2 border border-irma-border text-irma-text"
-        }
-      >
-        <div className="text-[10px] uppercase tracking-widest text-irma-mute mb-1">
-          {isUser ? "you" : "irma"}
-        </div>
-        <div className="whitespace-pre-wrap leading-relaxed">{message.content}</div>
-      </div>
+    <div className="flex gap-2 text-[13px] leading-snug">
+      <span style={{
+        fontFamily: "var(--font-mono)",
+        color: isUser ? "var(--color-ink-mute)" : "var(--color-red-seal)",
+        minWidth: "3.5rem",
+      }} className="shrink-0">
+        {isUser ? "you:" : "irma:"}
+      </span>
+      <span style={{
+        fontFamily: isUser ? "var(--font-mono)" : "var(--font-serif)",
+        color: "var(--color-ink)",
+        fontSize: isUser ? 12 : 14,
+      }} className="whitespace-pre-wrap flex-1">
+        {message.content}
+      </span>
     </div>
   );
 }

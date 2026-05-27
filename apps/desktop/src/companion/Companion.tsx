@@ -123,7 +123,7 @@ export function Companion() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch("/sprites/manifest.json");
+        const res = await fetch("/sprites/dogs/manifest.json");
         if (!res.ok) {
           console.warn("[companion] manifest fetch", res.status);
           return;
@@ -131,7 +131,7 @@ export function Companion() {
         const m = (await res.json()) as SpriteManifest;
         if (cancelled) return;
         setManifest(m);
-        const probe = await fetch(`/sprites/${m.image}`, { method: "HEAD" });
+        const probe = await fetch(`/sprites/dogs/${m.image}`, { method: "HEAD" });
         const ct = probe.headers.get("content-type") ?? "";
         if (!cancelled) setSheetAvailable(probe.ok && ct.startsWith("image/"));
         console.info("[companion] manifest loaded; sheet=", probe.ok && ct.startsWith("image/"));

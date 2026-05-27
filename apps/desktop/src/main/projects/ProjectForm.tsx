@@ -21,81 +21,118 @@ export function ProjectForm({
   const [target, setTarget] = useState(initial?.target_date ?? "");
   const [status, setStatus] = useState<ProjectStatus>(initial?.status ?? "active");
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
     setBusy(true);
+    setError(null);
     try {
       const payload: ProjectCreate = {
         name: name.trim(),
         description,
         priority,
         status,
-        calendar_keywords: keywords
-          .split(",").map((s) => s.trim()).filter(Boolean),
+        calendar_keywords: keywords.split(",").map((s) => s.trim()).filter(Boolean),
         goals: goals.split("\n").map((s) => s.trim()).filter(Boolean),
         target_date: target || null,
       };
-      const saved = initial
-        ? await updateProject(initial.id, payload)
-        : await createProject(payload);
+      const saved = initial ? await updateProject(initial.id, payload) : await createProject(payload);
       onSaved(saved);
-      onClose();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-10">
-      <form onSubmit={submit}
-            className="bg-irma-surface border border-irma-border rounded-lg p-5 w-[28rem] space-y-3">
-        <h2 className="font-medium">{initial ? "Edit project" : "New project"}</h2>
-        <label className="block text-xs text-irma-mute">name
-          <input value={name} onChange={(e) => setName(e.target.value)} autoFocus
-                 className="block w-full mt-1 bg-irma-bg border border-irma-border rounded px-2 py-1 text-irma-text" />
-        </label>
-        <label className="block text-xs text-irma-mute">description
-          <textarea value={description} onChange={(e) => setDescription(e.target.value)}
-                    className="block w-full mt-1 bg-irma-bg border border-irma-border rounded px-2 py-1 text-irma-text" />
-        </label>
-        <div className="flex gap-3 text-xs text-irma-mute">
-          <label>priority
-            <select value={priority} onChange={(e) => setPriority(Number(e.target.value) as 1 | 2 | 3)}
-                    className="ml-1 bg-irma-bg border border-irma-border rounded px-1 text-irma-text">
-              <option value={1}>1 high</option>
-              <option value={2}>2 med</option>
-              <option value={3}>3 low</option>
-            </select>
-          </label>
-          <label>status
-            <select value={status} onChange={(e) => setStatus(e.target.value as ProjectStatus)}
-                    className="ml-1 bg-irma-bg border border-irma-border rounded px-1 text-irma-text">
-              {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
-          </label>
-          <label>target
-            <input type="date" value={target} onChange={(e) => setTarget(e.target.value)}
-                   className="ml-1 bg-irma-bg border border-irma-border rounded px-1 text-irma-text" />
-          </label>
+    <form onSubmit={submit} className="paper-inset ink-frame-thin p-5 space-y-3">
+      <div className="flex items-baseline justify-between mb-1">
+        <h2 style={{ fontFamily: "var(--font-display)", color: "var(--color-red-seal)" }}
+            className="text-[12px] uppercase tracking-[0.18em]">
+          {initial ? "▶ edit project" : "▶ new project"}
+        </h2>
+        <button type="button" onClick={onClose}
+                className="text-[10px] uppercase tracking-wider"
+                style={{ color: "var(--color-ink-mute)" }}>
+          cancel
+        </button>
+      </div>
+
+      <Field label="name *">
+        <input value={name} onChange={(e) => setName(e.target.value)} autoFocus className="field w-full" />
+      </Field>
+
+      <Field label="description">
+        <textarea value={description} onChange={(e) => setDescription(e.target.value)}
+                  rows={2} className="field w-full" />
+      </Field>
+
+      <div className="grid grid-cols-3 gap-3">
+        <Field label="priority">
+          <select value={priority} onChange={(e) => setPriority(Number(e.target.value) as 1 | 2 | 3)}
+                  className="field w-full">
+            <option value={1}>1 · high</option>
+            <option value={2}>2 · medium</option>
+            <option value={3}>3 · low</option>
+          </select>
+        </Field>
+        <Field label="status">
+          <select value={status} onChange={(e) => setStatus(e.target.value as ProjectStatus)}
+                  className="field w-full">
+            {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </Field>
+        <Field label="target date">
+          <input type="date" value={target} onChange={(e) => setTarget(e.target.value)}
+                 className="field w-full" />
+        </Field>
+      </div>
+
+      <Field label="calendar keywords  ·  comma separated">
+        <input value={keywords} onChange={(e) => setKeywords(e.target.value)}
+               placeholder="gal, thesis, advisor"
+               className="field w-full" />
+      </Field>
+
+      <Field label="goals  ·  one per line">
+        <textarea value={goals} onChange={(e) => setGoals(e.target.value)} rows={3}
+                  placeholder={"Submit draft by 2026-07-15\nFinish coursework end of June"}
+                  className="field w-full" />
+      </Field>
+
+      {error && (
+        <div className="text-[12px]" style={{ color: "var(--color-red-seal)" }}>
+          !! {error}
         </div>
-        <label className="block text-xs text-irma-mute">calendar keywords (comma separated)
-          <input value={keywords} onChange={(e) => setKeywords(e.target.value)}
-                 className="block w-full mt-1 bg-irma-bg border border-irma-border rounded px-2 py-1 text-irma-text" />
-        </label>
-        <label className="block text-xs text-irma-mute">goals (one per line)
-          <textarea value={goals} onChange={(e) => setGoals(e.target.value)} rows={3}
-                    className="block w-full mt-1 bg-irma-bg border border-irma-border rounded px-2 py-1 text-irma-text" />
-        </label>
-        <div className="flex justify-end gap-2 pt-1">
-          <button type="button" onClick={onClose} className="px-3 py-1 text-irma-mute">cancel</button>
-          <button type="submit" disabled={busy || !name.trim()}
-                  className="px-3 py-1 border border-irma-indigo text-irma-indigo rounded">
-            {initial ? "save" : "create"}
-          </button>
-        </div>
-      </form>
-    </div>
+      )}
+
+      <div className="flex justify-end gap-2 pt-2">
+        <button type="button" onClick={onClose}
+                className="text-[11px] uppercase tracking-wider px-3 py-1.5"
+                style={{ color: "var(--color-ink-mute)", border: "1px solid var(--color-rule)", fontFamily: "var(--font-mono)" }}>
+          cancel
+        </button>
+        <button type="submit" disabled={busy || !name.trim()}
+                className="wax-seal text-[11px] uppercase tracking-wider px-4 py-1.5"
+                style={{ fontFamily: "var(--font-mono)" }}>
+          {initial ? (busy ? "saving…" : "save") : (busy ? "stamping…" : "create")}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="block">
+      <span className="text-[10px] uppercase tracking-widest block mb-1"
+            style={{ color: "var(--color-ink-faint)", fontFamily: "var(--font-mono)" }}>
+        {label}
+      </span>
+      {children}
+    </label>
   );
 }

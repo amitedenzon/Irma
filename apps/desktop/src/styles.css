@@ -1,16 +1,25 @@
 @import "tailwindcss";
 
+@import url("https://fonts.googleapis.com/css2?family=Departure+Mono&family=JetBrains+Mono:wght@400;500;600;700&family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&display=swap");
+
 @theme {
-  --color-irma-bg: #10131a;
-  --color-irma-surface: #1a1f2c;
-  --color-irma-border: #2a3142;
-  --color-irma-text: #e6e9ef;
-  --color-irma-mute: #8a93a8;
-  --color-irma-indigo: #7c83ff;
-  --color-irma-teal: #5bd1c1;
-  --color-irma-violet: #b386ff;
-  --color-irma-amber: #ffb86b;
-  --color-irma-rose: #ff7a8a;
+  /* Paper Terminal palette. Warm cardstock + ink + wax seal red. */
+  --color-paper:       #efe5d0;
+  --color-paper-deep:  #e6d9bd;
+  --color-paper-fold:  #d8c8a8;
+  --color-ink:         #2a1f17;
+  --color-ink-mute:    #7a6a52;
+  --color-ink-faint:   #a8967a;
+  --color-rule:        #c2b08c;
+  --color-red-seal:    #b8341c;
+  --color-red-glow:    #d4543a;
+  --color-ember:       #8a3a14;
+  --color-moss:        #5a6b3a;
+  --color-amber-stain: #c98a1a;
+
+  --font-mono:    "JetBrains Mono", "SF Mono", ui-monospace, monospace;
+  --font-display: "Departure Mono", "JetBrains Mono", ui-monospace, monospace;
+  --font-serif:   "EB Garamond", "Iowan Old Style", Georgia, serif;
 }
 
 html,
@@ -21,38 +30,166 @@ body,
   width: 100%;
   height: 100%;
   background: transparent;
-  color: var(--color-irma-text);
-  font-family:
-    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue",
-    Arial, sans-serif;
+  color: var(--color-ink);
+  font-family: var(--font-mono);
+  font-feature-settings: "ss01", "ss02", "cv02", "cv11";
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
 
-/* Companion window has no chrome — every pixel outside the sprite is the
- * macOS desktop showing through (requires macOSPrivateApi=true). */
 body.companion {
   background: transparent;
   overflow: hidden;
   user-select: none;
 }
 
-/* Sprite placeholder animations. Used until a real spritesheet is dropped in. */
-@keyframes irma-pulse {
-  0%, 100% { transform: scale(1);    opacity: 1; }
-  50%      { transform: scale(0.94); opacity: 0.78; }
+/* ---- Paper texture: faint speckled noise + horizontal "fiber" lines ---- */
+.paper-bg {
+  background-color: var(--color-paper);
+  background-image:
+    radial-gradient(circle at 1px 1px, rgba(42, 31, 23, 0.06) 1px, transparent 0),
+    repeating-linear-gradient(
+      0deg,
+      transparent 0,
+      transparent 28px,
+      rgba(168, 150, 122, 0.08) 28px,
+      rgba(168, 150, 122, 0.08) 29px
+    );
+  background-size: 6px 6px, 100% 100%;
 }
-@keyframes irma-scan {
-  0%   { box-shadow: 0 0 0 0 rgba(91, 209, 193, 0.55); }
-  70%  { box-shadow: 0 0 0 18px rgba(91, 209, 193, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(91, 209, 193, 0); }
+
+/* Tighter cardstock grain for inset surfaces. */
+.paper-inset {
+  background-color: var(--color-paper-deep);
+  background-image:
+    radial-gradient(circle at 1px 1px, rgba(42, 31, 23, 0.05) 1px, transparent 0);
+  background-size: 5px 5px;
 }
-@keyframes irma-shimmer {
-  0%   { filter: hue-rotate(0deg)  brightness(1); }
-  50%  { filter: hue-rotate(45deg) brightness(1.18); }
-  100% { filter: hue-rotate(0deg)  brightness(1); }
+
+/* Hand-stamped border using double pixel-style box. */
+.ink-frame {
+  border: 1px solid var(--color-rule);
+  box-shadow:
+    inset 0 0 0 1px var(--color-paper),
+    inset 0 0 0 2px var(--color-rule);
 }
-@keyframes irma-blink {
-  0%, 100% { background-color: var(--color-irma-amber); }
-  50%      { background-color: #ff7a45; }
+
+.ink-frame-thin {
+  border: 1px solid var(--color-rule);
 }
+
+/* Red wax seal accent for primary actions. */
+.wax-seal {
+  background: var(--color-red-seal);
+  color: var(--color-paper);
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.18);
+  box-shadow:
+    inset 0 -2px 0 0 rgba(0, 0, 0, 0.16),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.18),
+    0 1px 0 0 rgba(0, 0, 0, 0.1);
+  border: 1px solid var(--color-ember);
+}
+.wax-seal:hover { background: var(--color-red-glow); }
+.wax-seal:active {
+  background: var(--color-ember);
+  box-shadow:
+    inset 0 2px 0 0 rgba(0, 0, 0, 0.22),
+    inset 0 -1px 0 0 rgba(255, 255, 255, 0.08);
+}
+.wax-seal:disabled { opacity: 0.35; cursor: not-allowed; }
+
+/* Terminal-style ASCII rule. */
+.rule-dash {
+  background-image: linear-gradient(
+    to right,
+    var(--color-ink-faint) 50%,
+    transparent 50%
+  );
+  background-size: 8px 1px;
+  background-repeat: repeat-x;
+  background-position: 0 50%;
+  height: 1px;
+}
+
+/* Blinking caret used after prompts. */
+.caret::after {
+  content: "▍";
+  margin-left: 2px;
+  animation: caret-blink 1.1s steps(2, end) infinite;
+  color: var(--color-red-seal);
+}
+@keyframes caret-blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+/* Subtle scanline overlay for the terminal header band. */
+.scanlines {
+  background-image: repeating-linear-gradient(
+    0deg,
+    transparent 0,
+    transparent 2px,
+    rgba(42, 31, 23, 0.04) 2px,
+    rgba(42, 31, 23, 0.04) 3px
+  );
+}
+
+/* Stamp-style P1/P2/P3 priority chip. */
+.stamp {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-display);
+  font-size: 10px;
+  line-height: 1;
+  padding: 2px 4px;
+  border: 1px solid currentColor;
+  letter-spacing: 0.04em;
+  border-radius: 1px;
+  text-transform: uppercase;
+}
+.stamp-p1 { color: var(--color-red-seal); }
+.stamp-p2 { color: var(--color-amber-stain); }
+.stamp-p3 { color: var(--color-ink-mute); }
+
+/* Status dot with sharp pixel edges. */
+.pdot {
+  width: 8px;
+  height: 8px;
+  display: inline-block;
+  image-rendering: pixelated;
+}
+
+/* Pixel-style inputs: flat, no rounded corners, ink underline. */
+.field {
+  background: var(--color-paper-deep);
+  border: 1px solid var(--color-rule);
+  color: var(--color-ink);
+  font-family: var(--font-mono);
+  padding: 4px 6px;
+  font-size: 12px;
+  outline: none;
+  border-radius: 0;
+}
+.field:focus {
+  border-color: var(--color-red-seal);
+  box-shadow: inset 0 -2px 0 0 var(--color-red-seal);
+}
+.field::placeholder { color: var(--color-ink-faint); font-style: italic; }
+
+/* Scrollbar styled to match paper. */
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: var(--color-paper); }
+*::-webkit-scrollbar-thumb {
+  background: var(--color-rule);
+  border: 2px solid var(--color-paper);
+}
+
+/* Selection */
+::selection {
+  background: var(--color-red-seal);
+  color: var(--color-paper);
+}
+
+/* Drag region must not show text cursor. */
+[data-tauri-drag-region] { cursor: grab; }
