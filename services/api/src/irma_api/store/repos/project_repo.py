@@ -140,9 +140,14 @@ class ProjectRepo:
         return await self.get(project_id)
 
     async def delete(self, project_id: str) -> None:
-        cur = await self._conn.execute(
-            "DELETE FROM project WHERE id = ?", (project_id,)
-        )
-        await self._conn.commit()
+        try:
+            cur = await self._conn.execute(
+                "DELETE FROM project WHERE id = ?", (project_id,)
+            )
+            await self._conn.commit()
+        except aiosqlite.IntegrityError as exc:
+            raise ConflictError(
+                "cannot delete project with attached tasks; archive instead"
+            ) from exc
         if cur.rowcount == 0:
             raise NotFoundError("project", project_id)
