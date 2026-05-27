@@ -1,7 +1,13 @@
-"""Codebase observer — reads recent commits via async `git log` subprocess.
+"""Codebase observer — local git observer.
 
-Per-commit `Signal(kind="commit", ...)` + one `kind="velocity_summary"` per
-repo. Missing/non-git paths are logged and skipped (no crash).
+Disabled by default (see config.irma_codebase_agent_enabled). The
+local-only design misses the user's primary codebase, which lives on
+SSH servers. A future spec will introduce an SSH-aware variant; until
+then this module is retained but not registered.
+
+Behavior when enabled: emits per-commit `Signal(kind="commit", ...)` plus
+one `kind="velocity_summary"` per repo. Missing/non-git paths are logged
+and skipped (no crash).
 """
 
 from __future__ import annotations

@@ -42,10 +42,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await store.connect()
 
     bus = StateBus()
-    observers: list[Observer] = [
-        TimeAgent(settings),
-        CodebaseAgent(settings.irma_repos),
-    ]
+    observers: list[Observer] = [TimeAgent(settings)]
+    if settings.irma_codebase_agent_enabled:
+        observers.append(CodebaseAgent(settings.irma_repos))
 
     llm: LLMClient | None = build_llm_client(settings)
 
