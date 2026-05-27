@@ -61,21 +61,39 @@ irma/
 
 ## 5. Core Abstractions (build these exactly)
 
-- **`Signal`** — normalized unit every observer emits: `source`, `kind`, `title`, `detail`, `ts`, `meta`.
-- **`Observer` protocol** — `async def collect(self) -> list[Signal]`. `TimeAgent` and `CodebaseAgent` implement it.
-- **`LeadAgent`** — consumes `list[Signal]`, builds the Irma system prompt, calls Claude, returns a structured **`StandupBrief`** (`velocity`, `blockers`, `conflicts`, `schedule`, `recommendation`, `narrative`).
+- **`Signal`** — normalized unit every observer emits: `source`, `kind`, `title`, `detail`, `ts`, `meta`. Persisted with optional `project_id` (calendar signals are attributed via project keyword match at write time).
+- **`Project`** — first-class manual entity grouping `goals[]`, `target_date`, `calendar_keywords[]`, `priority`, `status (active/paused/archived)`.
+- **`Task`** — manually entered work item scoped to a `Project`. Carries `status (todo/doing/done/blocked)`, `due_date`, `scheduled_for`, `estimated_minutes`, auto-stamped `completed_at`.
+- **`Observer` protocol** — `async def collect(self) -> list[Signal]`. `TimeAgent` ships; `CodebaseAgent` is gated off behind `IRMA_CODEBASE_AGENT_ENABLED` pending an SSH-aware variant.
+- **`LeadAgent`** — horizon-aware synthesizer. `synthesize(horizon: "day"|"week"|"month"|"all") -> Brief`. Builds a per-window context (active projects + open tasks scheduled-in-window or due-before-end + recent calendar signals), composes the Irma persona prompt, calls `LLMClient.complete`, parses + caches.
+- **`Brief`** — horizon-aware output: `focus[]`, `project_status[]`, `conflicts[]`, `recommendation`, `narrative`. Empty sections hide in the UI.
+- **`BriefCacheRepo`** — per-horizon cache row, keyed on `inputs_hash` over project+task+signal state.
 - **`AgentState` bus** — in-process pub/sub of `idle/observing/thinking/alert`, exposed over SSE at `/api/v1/stream`. The companion window subscribes and animates.
-- **Sprite manifest** — `public/sprites/manifest.json` maps each `AgentState` → `{frames, fps, loop}`. Swapping art is config-only.
+- **Sprite manifest** — `public/sprites/dogs/manifest.json` maps each `AgentState` → `{frames, fps, loop}`. Swapping art is config-only.
 
 ## 6. API Surface
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/v1/standup` | Aggregate signals → Claude synthesis → `StandupBrief`. Cached; re-synth only on signal delta. |
-| POST | `/api/v1/refresh` | Force re-observation across all agents. |
-| GET | `/api/v1/signals` | Raw collected signals (debug/inspection). |
-| GET | `/api/v1/state` | Current `AgentState`. |
-| GET | `/api/v1/stream` | SSE stream of `AgentState` transitions. |
+| GET    | `/api/v1/projects`              | List projects (`?status=` repeatable; default `active`). |
+| POST   | `/api/v1/projects`              | Create project. 409 on duplicate name. |
+| GET    | `/api/v1/projects/{id}`         | Get project. 404 if missing. |
+| PATCH  | `/api/v1/projects/{id}`         | Partial update. |
+| DELETE | `/api/v1/projects/{id}`         | Delete. 409 if non-`done` tasks remain (archive instead). |
+| GET    | `/api/v1/tasks`                 | List with filters: `project_id`, `status`, `scheduled_from/to`, `due_before`. |
+| POST   | `/api/v1/tasks`                 | Create. 404 if project missing. |
+| GET    | `/api/v1/tasks/{id}`            | Get. |
+| PATCH  | `/api/v1/tasks/{id}`            | Partial update. `status=done` auto-stamps `completed_at`. |
+| DELETE | `/api/v1/tasks/{id}`            | Delete. |
+| POST   | `/api/v1/tasks/{id}/complete`   | Idempotent shortcut. |
+| GET    | `/api/v1/brief/today`           | Day horizon. Lazy cache on `inputs_hash`. |
+| GET    | `/api/v1/brief/week`            | Week horizon. |
+| GET    | `/api/v1/brief/month`           | Month horizon. |
+| GET    | `/api/v1/brief/overview`        | No-window snapshot across all active projects. |
+| POST   | `/api/v1/refresh`               | Force observers; clears `brief_cache`. |
+| GET    | `/api/v1/signals`               | Raw signals (debug). |
+| GET    | `/api/v1/state`                 | Current `AgentState`. |
+| GET    | `/api/v1/stream`                | SSE stream of `AgentState`. |
 
 ## 7. Why REST and not MCP for Calendar
 
@@ -94,7 +112,9 @@ MCP is a host↔server protocol for exposing tools *to* an LLM client at inferen
 - **Phase 1 — Companion + UI shell.** Tauri two-window setup, accessory policy, tray, bottom-left positioning command, placeholder sprite, click→toggle main window, dashboard shell wired to `/standup` (mocked allowed until Phase 3).
 - **Phase 2 — Observer backend.** FastAPI skeleton, `Signal` schema, `TimeAgent` (GCal), `CodebaseAgent` (git), `SignalStore`, `/signals` + `/refresh`.
 - **Phase 3 — Lead PMO synthesis.** `LeadAgent` + Irma persona prompt, `/standup` structured brief, `AgentState` bus + SSE, sprite reacts to state.
-- **Phase 4 — DEFERRED (document only, do not build now).** ChromaDB RAG over ArXiv/code, Gemini synthesizer, real sprite-sheet animation engine, additional observers.
+- **Phase 4 — Manual PMO (current).** Project + Task entities, horizon-aware `Brief` (`day`/`week`/`month`/`all`), minimal dashboard (`Brief` + `Projects` tabs). `/standup` removed. `CodebaseAgent` gated off (`IRMA_CODEBASE_AGENT_ENABLED=false`) pending an SSH-aware variant.
+- **Phase 4 (original) — Superseded.** ChromaDB RAG over ArXiv/code, Gemini synthesizer, real sprite-sheet animation engine, additional observers. The Manual PMO slice took priority; revisit individual pieces as separate specs if/when needed.
+- **Phase 5 — DEFERRED.** Outbound channels (Gmail API, native macOS notifications), scheduled digests (daily/weekly/monthly auto-email), reminder engine, local-LLM synthesis (gpt-oss on Mac GPU), calendar write-ops, SSH-aware codebase observer.
 
 ## 10. Test Data Context (for synthesis realism)
 
