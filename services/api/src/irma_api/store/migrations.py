@@ -22,7 +22,8 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
         ts            TEXT    NOT NULL,
         meta_json     TEXT    NOT NULL DEFAULT '{}',
         hash_key      TEXT    NOT NULL UNIQUE,
-        collected_at  TEXT    NOT NULL
+        collected_at  TEXT    NOT NULL,
+        project_id    TEXT
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_signals_source_kind ON signals(source, kind)",

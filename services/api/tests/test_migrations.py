@@ -74,6 +74,21 @@ async def test_ensure_schema_adds_project_id_to_existing_signals_db(
             "(source, kind, title, detail, ts, meta_json, hash_key, collected_at) "
             "VALUES ('calendar','event','old','','2026-01-01T00:00:00Z','{}','x','now')"
         )
+        # Stale briefs table (old schema) — must be dropped by ensure_schema.
+        await conn.execute(
+            """
+            CREATE TABLE briefs (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                signal_set_hash TEXT NOT NULL UNIQUE,
+                payload_json    TEXT NOT NULL,
+                generated_at    TEXT NOT NULL
+            )
+            """
+        )
+        await conn.execute(
+            "INSERT INTO briefs (signal_set_hash, payload_json, generated_at) "
+            "VALUES ('old', '{}', 'now')"
+        )
         await conn.commit()
 
         await ensure_schema(conn)  # upgrade in place
@@ -85,4 +100,10 @@ async def test_ensure_schema_adds_project_id_to_existing_signals_db(
         # Existing row preserved, project_id NULL.
         cur = await conn.execute("SELECT title, project_id FROM signals")
         rows = await cur.fetchall()
-    assert rows == [("old", None)]
+        assert rows == [("old", None)]
+
+        # Stale briefs table must have been dropped.
+        cur = await conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='briefs'"
+        )
+        assert await cur.fetchone() is None
