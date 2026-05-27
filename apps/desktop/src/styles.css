@@ -29,7 +29,8 @@ body,
   text-rendering: optimizeLegibility;
 }
 
-/* Companion window has no chrome — keep it click-pass-through clean */
+/* Companion window has no chrome — every pixel outside the sprite is the
+ * macOS desktop showing through (requires macOSPrivateApi=true). */
 body.companion {
   background: transparent;
   overflow: hidden;

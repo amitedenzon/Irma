@@ -20,13 +20,20 @@ fn dock_clearance() -> f64 {
 
 fn place_companion(window: &WebviewWindow) -> tauri::Result<()> {
     let Some(monitor) = window.current_monitor()? else {
+        eprintln!("[nofari] place_companion: current_monitor() returned None");
         return Ok(());
     };
     let scale = monitor.scale_factor();
     let area = monitor.size().to_logical::<f64>(scale);
     let origin = monitor.position().to_logical::<f64>(scale);
+    let clearance = dock_clearance();
     let x = origin.x + MARGIN_X;
-    let y = origin.y + area.height - SPRITE_H - dock_clearance();
+    let y = origin.y + area.height - SPRITE_H - clearance;
+    eprintln!(
+        "[nofari] place_companion: monitor=({:.0}x{:.0}@{:.0},{:.0}) scale={} \
+         → set_position=({:.1},{:.1}) (dock_clearance={})",
+        area.width, area.height, origin.x, origin.y, scale, x, y, clearance
+    );
     window.set_position(LogicalPosition::new(x, y))?;
     Ok(())
 }

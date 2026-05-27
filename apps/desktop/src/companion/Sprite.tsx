@@ -2,6 +2,8 @@ import type { CSSProperties } from "react";
 import type { AgentState, SpriteManifest } from "../lib/types";
 import { useSpriteAnimation } from "./useSpriteAnimation";
 
+const PLACEHOLDER_SIZE = 80; // window is 96×96; 8px breathing room each side
+
 const PLACEHOLDER_BG: Record<AgentState, string> = {
   idle: "radial-gradient(circle at 50% 42%, #9ea3ff 0%, #4b53d8 65%, #2a2f7a 100%)",
   observing: "radial-gradient(circle at 50% 42%, #8ff0e2 0%, #2da594 65%, #154a45 100%)",
@@ -35,27 +37,24 @@ export function Sprite({ state, manifest, sheetAvailable }: SpriteProps) {
       backgroundPosition: `${-(frame * manifest.frameWidth)}px 0`,
       backgroundRepeat: "no-repeat",
       imageRendering: "pixelated",
+      userSelect: "none",
     };
-    return (
-      <div
-        className="select-none"
-        style={sheetStyle}
-        aria-label={`Nofari sprite — ${state}`}
-      />
-    );
+    return <div style={sheetStyle} aria-label={`Nofari sprite — ${state}`} />;
   }
 
+  // Pure inline styles — no Tailwind dependency. 80×80 centered in the
+  // 96×96 window gives a soft visual margin around the sprite.
   const placeholderStyle: CSSProperties = {
-    width: manifest.frameWidth,
-    height: manifest.frameHeight,
+    width: PLACEHOLDER_SIZE,
+    height: PLACEHOLDER_SIZE,
     background: PLACEHOLDER_BG[state],
     animation: PLACEHOLDER_ANIM[state],
+    borderRadius: "50%",
     boxShadow: "0 6px 22px rgba(0, 0, 0, 0.45)",
+    userSelect: "none",
   };
-
   return (
     <div
-      className="rounded-full select-none"
       style={placeholderStyle}
       aria-label={`Nofari sprite — ${state} (placeholder)`}
     />
