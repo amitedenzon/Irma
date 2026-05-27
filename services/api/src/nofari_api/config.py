@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Annotated
 
 from pydantic import Field, SecretStr, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -33,7 +34,9 @@ class Settings(BaseSettings):
     google_oauth_refresh_token: SecretStr | None = None
 
     # --- Observers -----------------------------------------------------------
-    nofari_repos: list[Path] = Field(default_factory=list)
+    # NoDecode → pydantic-settings hands us the raw env string (comma-separated
+    # paths) instead of trying to JSON-decode the list.
+    nofari_repos: Annotated[list[Path], NoDecode] = Field(default_factory=list)
     nofari_refresh_minutes: int = 30
     nofari_dock_clearance: float = 80.0
     nofari_db_path: Path = Path("./nofari.db")
