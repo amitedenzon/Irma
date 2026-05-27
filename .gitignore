@@ -1,0 +1,68 @@
+# --- macOS ---
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# --- Editors / IDE ---
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# --- Secrets ---
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+token.json
+oauth_token*.json
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.sqlite
+*.sqlite3
+*.db
+!.env.example
+
+# uv
+.uv/
+.python-version.local
+
+# --- Node / Vite ---
+node_modules/
+.vite/
+.cache/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Vite/React build output
+apps/desktop/dist/
+apps/desktop/dist-ssr/
+
+# --- Rust / Tauri ---
+target/
+apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/gen/
+apps/desktop/src-tauri/WixTools/
+**/*.rs.bk
+
+# --- Project ---
+/nofari.db
+services/api/nofari.db
+services/api/.coverage
