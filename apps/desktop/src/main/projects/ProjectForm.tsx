@@ -14,10 +14,8 @@ export function ProjectForm({
   onSaved: (p: Project) => void;
 }) {
   const [name, setName] = useState(initial?.name ?? "");
-  const [description, setDescription] = useState(initial?.description ?? "");
   const [priority, setPriority] = useState<1 | 2 | 3>(initial?.priority ?? 2);
   const [keywords, setKeywords] = useState(initial?.calendar_keywords.join(", ") ?? "");
-  const [goals, setGoals] = useState(initial?.goals.join("\n") ?? "");
   const [target, setTarget] = useState(initial?.target_date ?? "");
   const [status, setStatus] = useState<ProjectStatus>(initial?.status ?? "active");
   const [busy, setBusy] = useState(false);
@@ -31,11 +29,9 @@ export function ProjectForm({
     try {
       const payload: ProjectCreate = {
         name: name.trim(),
-        description,
         priority,
         status,
         calendar_keywords: keywords.split(",").map((s) => s.trim()).filter(Boolean),
-        goals: goals.split("\n").map((s) => s.trim()).filter(Boolean),
         target_date: target || null,
       };
       onSaved(initial ? await updateProject(initial.id, payload) : await createProject(payload));
@@ -61,11 +57,6 @@ export function ProjectForm({
         <input value={name} onChange={(e) => setName(e.target.value)} autoFocus className="input" />
       </Field>
 
-      <Field label="Description">
-        <textarea value={description} onChange={(e) => setDescription(e.target.value)}
-                  rows={2} className="input resize-y" />
-      </Field>
-
       <div className="grid grid-cols-3 gap-3">
         <Field label="Priority">
           <select value={priority} onChange={(e) => setPriority(Number(e.target.value) as 1 | 2 | 3)}
@@ -88,12 +79,6 @@ export function ProjectForm({
       <Field label="Calendar keywords" hint="comma separated">
         <input value={keywords} onChange={(e) => setKeywords(e.target.value)}
                placeholder="gal, thesis, advisor" className="input" />
-      </Field>
-
-      <Field label="Goals" hint="one per line">
-        <textarea value={goals} onChange={(e) => setGoals(e.target.value)} rows={3}
-                  placeholder={"Submit draft by 2026-07-15\nFinish coursework end of June"}
-                  className="input resize-y" />
       </Field>
 
       {error && (

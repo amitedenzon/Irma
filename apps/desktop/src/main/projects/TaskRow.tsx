@@ -14,7 +14,6 @@ export function TaskRow({
   onDeleted: (id: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [notes, setNotes] = useState(task.notes);
   const [status, setStatus] = useState<TaskStatus>(task.status);
   const [due, setDue] = useState(task.due_date ?? "");
   const [sched, setSched] = useState(task.scheduled_for ?? "");
@@ -34,7 +33,6 @@ export function TaskRow({
 
   const save = async () => {
     const updated = await updateTask(task.id, {
-      notes,
       status,
       due_date: due || null,
       scheduled_for: sched || null,
@@ -47,7 +45,7 @@ export function TaskRow({
 
   return (
     <li className="border-b last:border-b-0" style={{ borderColor: "var(--color-border)" }}>
-      <div className="flex items-center gap-3 py-2 group">
+      <div className="flex items-center gap-2.5 py-1.5 group">
         <input
           type="checkbox"
           checked={isDone}
@@ -88,12 +86,7 @@ export function TaskRow({
       </div>
 
       {open && (
-        <div className="grid grid-cols-2 gap-3 pb-3 pl-7 pr-1 text-[12px]">
-          <label className="col-span-2">
-            <span className="block mb-1 text-[11px]" style={{ color: "var(--color-ink-faint)" }}>notes</span>
-            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} onBlur={() => void save()}
-                      rows={2} className="input resize-y" />
-          </label>
+        <div className="grid grid-cols-4 gap-2 pb-2.5 pl-7 pr-1 text-[12px]">
           <FieldS label="status">
             <select value={status}
                     onChange={(e) => { const s = e.target.value as TaskStatus; setStatus(s); void save(); }}
@@ -116,7 +109,7 @@ export function TaskRow({
           </FieldS>
           <button type="button"
                   onClick={async () => { await deleteTask(task.id); onDeleted(task.id); }}
-                  className="col-span-2 text-left text-[12px] mt-1"
+                  className="col-span-4 text-left text-[12px] mt-1"
                   style={{ color: "var(--color-red)" }}>
             delete task
           </button>

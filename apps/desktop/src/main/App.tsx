@@ -46,9 +46,12 @@ export function App() {
     finally { setBriefBusy(false); }
   }, []);
 
-  // Auto-fetch brief the first time the user opens the tab.
+  // Pre-fetch the brief on mount so it's ready instantly when the user
+  // clicks the Brief tab. Refire if the prior attempt errored and the user
+  // later switches to the tab — gives them a retry path.
+  useEffect(() => { void synth(); }, [synth]);
   useEffect(() => {
-    if (tab === "brief" && !brief && !briefBusy && !briefError) void synth();
+    if (tab === "brief" && !brief && !briefBusy && briefError) void synth();
   }, [tab, brief, briefBusy, briefError, synth]);
 
   const refresh = useCallback(async () => {

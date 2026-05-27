@@ -21,42 +21,36 @@ export function TaskList({ projectId }: { projectId: string }) {
   const done = tasks.filter((t) => t.status === "done");
 
   return (
-    <section className="border-t pt-3" style={{ borderColor: "var(--color-border)" }}>
-      <div className="flex items-center justify-between mb-2 text-[12px]"
-           style={{ color: "var(--color-ink-mute)" }}>
-        <span>{open.length} open · {done.length} done</span>
-        {done.length > 0 && (
-          <button onClick={() => setShowDone((v) => !v)} className="btn-link">
-            {showDone ? "hide done" : "show done"}
-          </button>
-        )}
-      </div>
-
+    <section>
       <ul>
         {open.map((t) => (
           <TaskRow key={t.id} task={t}
                    onChanged={(u) => setTasks((cur) => cur.map((c) => (c.id === u.id ? u : c)))}
                    onDeleted={(id) => setTasks((cur) => cur.filter((c) => c.id !== id))} />
         ))}
-        {open.length === 0 && !loading && (
-          <li className="text-[13px] italic py-1" style={{ color: "var(--color-ink-faint)" }}>
-            No open tasks
-          </li>
-        )}
       </ul>
 
       <TaskAddRow projectId={projectId}
                   onCreated={(t) => setTasks((cur) => [...cur, t])} />
 
-      {showDone && done.length > 0 && (
-        <ul className="mt-3 pt-2 border-t" style={{ borderColor: "var(--color-border)" }}>
-          {done.map((t) => (
-            <TaskRow key={t.id} task={t}
-                     onChanged={(u) => setTasks((cur) => cur.map((c) => (c.id === u.id ? u : c)))}
-                     onDeleted={(id) => setTasks((cur) => cur.filter((c) => c.id !== id))} />
-          ))}
-        </ul>
+      {done.length > 0 && (
+        <div className="mt-1.5">
+          <button onClick={() => setShowDone((v) => !v)} className="btn-link text-[11px]"
+                  style={{ color: "var(--color-ink-faint)" }}>
+            {showDone ? "− hide" : "+ show"} {done.length} done
+          </button>
+          {showDone && (
+            <ul className="mt-1">
+              {done.map((t) => (
+                <TaskRow key={t.id} task={t}
+                         onChanged={(u) => setTasks((cur) => cur.map((c) => (c.id === u.id ? u : c)))}
+                         onDeleted={(id) => setTasks((cur) => cur.filter((c) => c.id !== id))} />
+              ))}
+            </ul>
+          )}
+        </div>
       )}
+      {open.length === 0 && done.length === 0 && !loading && null}
     </section>
   );
 }
