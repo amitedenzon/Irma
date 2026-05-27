@@ -22,8 +22,8 @@ from tenacity import (
     wait_exponential_jitter,
 )
 
-from nofari_api.config import Settings
-from nofari_api.models.signal import Signal
+from irma_api.config import Settings
+from irma_api.models.signal import Signal
 
 logger = structlog.get_logger(__name__)
 

@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Nofari",
+  "productName": "Irma",
   "version": "0.1.0",
-  "identifier": "com.amit.nofari",
+  "identifier": "com.amit.irma",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Nofari",
+        "title": "Irma",
         "url": "index.html",
         "width": 960,
         "height": 640,
@@ -28,7 +28,7 @@
       },
       {
         "label": "companion",
-        "title": "Nofari Companion",
+        "title": "Irma Companion",
         "url": "companion.html",
         "width": 128,
         "height": 96,

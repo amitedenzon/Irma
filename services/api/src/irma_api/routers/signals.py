@@ -12,10 +12,10 @@ import asyncio
 import structlog
 from fastapi import APIRouter, Request
 
-from nofari_api.agents.base import LeadAgentProtocol, Observer
-from nofari_api.models.signal import Signal
-from nofari_api.runtime.state import AgentState, StateBus
-from nofari_api.store.sqlite import SignalStore
+from irma_api.agents.base import LeadAgentProtocol, Observer
+from irma_api.models.signal import Signal
+from irma_api.runtime.state import AgentState, StateBus
+from irma_api.store.sqlite import SignalStore
 
 logger = structlog.get_logger(__name__)
 

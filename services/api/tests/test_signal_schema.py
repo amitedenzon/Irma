@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from nofari_api.models.brief import StandupBrief
-from nofari_api.models.signal import ScheduleItem, Signal
+from irma_api.models.brief import StandupBrief
+from irma_api.models.signal import ScheduleItem, Signal
 
 
 def test_signal_hash_is_stable_and_order_independent() -> None:

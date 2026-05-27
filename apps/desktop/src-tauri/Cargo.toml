@@ -1,13 +1,13 @@
 [package]
-name = "nofari-desktop"
+name = "irma-desktop"
 version = "0.1.0"
-description = "Nofari desktop shell — companion sprite + dashboard"
+description = "Irma desktop shell — companion sprite + dashboard"
 edition = "2021"
 
 [lib]
 # The `_lib` suffix is required so the library and binary crate names do not
 # collide on Windows (see https://github.com/rust-lang/cargo/issues/8519).
-name = "nofari_lib"
+name = "irma_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

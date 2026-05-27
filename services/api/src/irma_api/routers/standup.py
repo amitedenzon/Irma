@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request, status
 
-from nofari_api.agents.base import LeadAgentProtocol
-from nofari_api.models.brief import StandupBrief
-from nofari_api.runtime.state import AgentState, StateBus
-from nofari_api.store.sqlite import SignalStore
+from irma_api.agents.base import LeadAgentProtocol
+from irma_api.models.brief import StandupBrief
+from irma_api.runtime.state import AgentState, StateBus
+from irma_api.store.sqlite import SignalStore
 
 router = APIRouter(tags=["standup"])
 

@@ -1,4 +1,4 @@
-# ARCHITECTURE.md — Nofari
+# ARCHITECTURE.md — Irma
 
 Design rationale and contracts. `CLAUDE.md` is the authoritative summary; this expands the non-trivial parts.
 
@@ -17,7 +17,7 @@ Two windows + a tray:
 - Toggled show/hide on companion click. On close, hide rather than destroy.
 
 ### Activation policy & tray
-- `app.set_activation_policy(ActivationPolicy::Accessory)` on macOS → no Dock tile, no app-switcher entry. Nofari's only visible presence is the sprite + a menu-bar tray icon (Settings, Toggle Nofari, Quit).
+- `app.set_activation_policy(ActivationPolicy::Accessory)` on macOS → no Dock tile, no app-switcher entry. Irma's only visible presence is the sprite + a menu-bar tray icon (Settings, Toggle Irma, Quit).
 
 ### Positioning math (Rust command `position_companion`)
 ```
@@ -84,7 +84,7 @@ thinking ── brief.blockers or brief.conflicts non-empty ──▶ alert ─�
 ### Sprite manifest (`public/sprites/manifest.json`)
 ```json
 {
-  "image": "nofari_sheet.png",
+  "image": "irma_sheet.png",
   "frameWidth": 96, "frameHeight": 96,
   "states": {
     "idle":      { "frames": [0,1,2,1], "fps": 4,  "loop": true },
@@ -94,11 +94,11 @@ thinking ── brief.blockers or brief.conflicts non-empty ──▶ alert ─�
   }
 }
 ```
-The companion renderer is a small `<canvas>`/CSS-sprite component that subscribes to SSE and plays the clip for the current state. **Until a real sheet exists**, ship a placeholder: a CSS-styled circular avatar that changes color/animation per state and reads the same manifest contract — so dropping in `nofari_sheet.png` later is config-only.
+The companion renderer is a small `<canvas>`/CSS-sprite component that subscribes to SSE and plays the clip for the current state. **Until a real sheet exists**, ship a placeholder: a CSS-styled circular avatar that changes color/animation per state and reads the same manifest contract — so dropping in `irma_sheet.png` later is config-only.
 
 ## 4. Synthesis Prompt Contract
 
-System prompt establishes the **Nofari persona** (PMO chief of staff: terse, anticipatory, conflict-aware) and demands JSON-only output matching `StandupBrief`. User content is the serialized signals grouped by source with explicit epic tagging. Request structured output; parse defensively (strip fences, validate with Pydantic, one retry on parse failure). Keep token use lean — summarize commit bodies, cap event descriptions.
+System prompt establishes the **Irma persona** (PMO chief of staff: terse, anticipatory, conflict-aware) and demands JSON-only output matching `StandupBrief`. User content is the serialized signals grouped by source with explicit epic tagging. Request structured output; parse defensively (strip fences, validate with Pydantic, one retry on parse failure). Keep token use lean — summarize commit bodies, cap event descriptions.
 
 ```python
 class StandupBrief(BaseModel):
@@ -108,7 +108,7 @@ class StandupBrief(BaseModel):
     conflicts: list[str]              # cross-epic / schedule clashes
     schedule: list[ScheduleItem]      # next ~7d salient items
     recommendation: str               # the single highest-leverage action
-    narrative: str                    # Nofari's voice, <= 4 sentences
+    narrative: str                    # Irma's voice, <= 4 sentences
 ```
 
 ## 5. Data Schemas (single source of truth)
@@ -135,10 +135,10 @@ ANTHROPIC_MODEL=claude-sonnet-4-6        # verify latest at docs.claude.com
 GOOGLE_OAUTH_CLIENT_ID=
 GOOGLE_OAUTH_CLIENT_SECRET=
 GOOGLE_OAUTH_REFRESH_TOKEN=
-NOFARI_REPOS=/abs/path/repo1,/abs/path/repo2
-NOFARI_REFRESH_MINUTES=30
-NOFARI_DOCK_CLEARANCE=80
-NOFARI_DB_PATH=./nofari.db
+IRMA_REPOS=/abs/path/repo1,/abs/path/repo2
+IRMA_REFRESH_MINUTES=30
+IRMA_DOCK_CLEARANCE=80
+IRMA_DB_PATH=./irma.db
 ```
 
 ## 7. Phase 4 (deferred — design notes only)

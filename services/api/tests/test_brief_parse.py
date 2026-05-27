@@ -10,16 +10,16 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nofari_api.agents.lead_agent import (
+from irma_api.agents.lead_agent import (
     BriefSynthesisError,
     LeadAgent,
     _parse_brief,
     _strip_fences,
 )
-from nofari_api.config import Settings
-from nofari_api.models.brief import StandupBrief
-from nofari_api.models.signal import Signal
-from nofari_api.store.sqlite import SignalStore
+from irma_api.config import Settings
+from irma_api.models.brief import StandupBrief
+from irma_api.models.signal import Signal
+from irma_api.store.sqlite import SignalStore
 
 _VALID_BRIEF_JSON = json.dumps(
     {
@@ -65,8 +65,8 @@ def test_parse_brief_raises_on_garbage() -> None:
 def _settings_for(tmp_path: Path, name: str) -> Settings:
     return Settings(
         anthropic_api_key=None,
-        nofari_db_path=tmp_path / f"{name}.db",
-        nofari_repos=[],
+        irma_db_path=tmp_path / f"{name}.db",
+        irma_repos=[],
     )
 
 
@@ -82,7 +82,7 @@ def _text_response(text: str) -> Any:
 @pytest.mark.asyncio
 async def test_synthesize_retries_once_and_succeeds(tmp_path: Path) -> None:
     settings = _settings_for(tmp_path, "retry_ok")
-    store = SignalStore(settings.nofari_db_path)
+    store = SignalStore(settings.irma_db_path)
     await store.connect()
 
     client = MagicMock()
@@ -114,7 +114,7 @@ async def test_synthesize_retries_once_and_succeeds(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_synthesize_raises_after_two_parse_failures(tmp_path: Path) -> None:
     settings = _settings_for(tmp_path, "retry_fail")
-    store = SignalStore(settings.nofari_db_path)
+    store = SignalStore(settings.irma_db_path)
     await store.connect()
 
     client = MagicMock()

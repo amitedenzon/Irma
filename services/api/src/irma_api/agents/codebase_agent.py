@@ -13,7 +13,7 @@ from typing import Final
 
 import structlog
 
-from nofari_api.models.signal import Signal
+from irma_api.models.signal import Signal
 
 logger = structlog.get_logger(__name__)
 

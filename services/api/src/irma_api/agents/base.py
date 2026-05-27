@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from nofari_api.models.brief import StandupBrief
-from nofari_api.models.signal import Signal
+from irma_api.models.brief import StandupBrief
+from irma_api.models.signal import Signal
 
 
 @runtime_checkable

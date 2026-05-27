@@ -26,9 +26,9 @@ export function StandupView({ brief }: StandupViewProps) {
 
 function NextMove({ text }: { text: string }) {
   return (
-    <section className="border border-nofari-border rounded-lg p-4 bg-nofari-surface">
-      <h3 className="text-xs uppercase tracking-widest text-nofari-mute mb-2 flex items-center gap-2">
-        <span className="inline-block w-2 h-2 rounded-full bg-nofari-indigo" />
+    <section className="border border-irma-border rounded-lg p-4 bg-irma-surface">
+      <h3 className="text-xs uppercase tracking-widest text-irma-mute mb-2 flex items-center gap-2">
+        <span className="inline-block w-2 h-2 rounded-full bg-irma-indigo" />
         Next move
       </h3>
       <p className="text-base leading-relaxed">{text}</p>

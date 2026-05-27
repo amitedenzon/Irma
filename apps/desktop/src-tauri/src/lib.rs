@@ -19,5 +19,5 @@ pub fn run() {
             Ok(())
         })
         .run(tauri::generate_context!())
-        .expect("error while running Nofari");
+        .expect("error while running Irma");
 }

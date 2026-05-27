@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from nofari_api.runtime.state import AgentState, StateBus
+from irma_api.runtime.state import AgentState, StateBus
 
 
 @pytest.mark.asyncio

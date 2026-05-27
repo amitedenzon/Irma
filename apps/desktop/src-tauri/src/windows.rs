@@ -1,4 +1,4 @@
-//! Window positioning and lifecycle wiring for the Nofari shell.
+//! Window positioning and lifecycle wiring for the Irma shell.
 //!
 //! The companion window is sized to the sprite bounding box and pinned beside
 //! the macOS Dock on the primary monitor (the one with the menu bar). JS owns
@@ -24,21 +24,21 @@ fn env_f64(key: &str, default: f64) -> f64 {
 }
 
 fn dock_clearance() -> f64 {
-    env_f64("NOFARI_DOCK_CLEARANCE", DEFAULT_DOCK_CLEARANCE)
+    env_f64("IRMA_DOCK_CLEARANCE", DEFAULT_DOCK_CLEARANCE)
 }
 
 /// Extra pixels to add to the computed `y`. Positive shifts the window
 /// DOWN on screen — useful when the source sprite has empty padding below
 /// the dog's feet so visually the dog ends up flush with the Dock.
 fn dog_y_offset() -> f64 {
-    env_f64("NOFARI_DOG_Y_OFFSET", DEFAULT_DOG_Y_OFFSET)
+    env_f64("IRMA_DOG_Y_OFFSET", DEFAULT_DOG_Y_OFFSET)
 }
 
 /// Width (logical px) of the horizontal walking strip, centered on the
 /// monitor. Defaults to 490 — calibrated for a typical macOS Dock. Set
-/// `NOFARI_DOCK_WIDTH=0` to allow the dog to walk the entire monitor width.
+/// `IRMA_DOCK_WIDTH=0` to allow the dog to walk the entire monitor width.
 fn dock_width() -> Option<f64> {
-    let val = std::env::var("NOFARI_DOCK_WIDTH")
+    let val = std::env::var("IRMA_DOCK_WIDTH")
         .ok()
         .and_then(|s| s.parse::<f64>().ok())
         .unwrap_or(DEFAULT_DOCK_WIDTH);
@@ -72,18 +72,26 @@ fn cursor_monitor(window: &WebviewWindow) -> tauri::Result<Option<Monitor>> {
 }
 
 /// Pick the monitor the companion should live on. Preference order:
-///   1. The monitor under the cursor (the active screen, where the macOS
-///      Dock currently is by default).
-///   2. The primary monitor (menu-bar screen).
-///   3. The window's current monitor (fallback for headless cases).
+///   1. `IRMA_MONITOR_INDEX=<n>` selects the n-th available monitor (0-indexed).
+///   2. The primary monitor (System Settings → Displays → "Use as main display").
+///   3. The monitor under the cursor (last-resort fallback).
+///
+/// We intentionally do NOT chase the cursor monitor by default — the dog
+/// staying on a stable screen is more important than reacting to brief
+/// mouse moves to another display.
 fn target_monitor(window: &WebviewWindow) -> tauri::Result<Option<Monitor>> {
-    if let Some(m) = cursor_monitor(window)? {
-        return Ok(Some(m));
+    if let Ok(idx_s) = std::env::var("IRMA_MONITOR_INDEX") {
+        if let Ok(idx) = idx_s.parse::<usize>() {
+            let monitors = window.available_monitors()?;
+            if let Some(m) = monitors.into_iter().nth(idx) {
+                return Ok(Some(m));
+            }
+        }
     }
     if let Some(m) = window.primary_monitor()? {
         return Ok(Some(m));
     }
-    window.current_monitor()
+    cursor_monitor(window)
 }
 
 fn compute_bounds(window: &WebviewWindow) -> tauri::Result<Option<CompanionBounds>> {
@@ -98,7 +106,7 @@ fn compute_bounds(window: &WebviewWindow) -> tauri::Result<Option<CompanionBound
     let y_offset = dog_y_offset();
     let y = origin.y + area.height - win_size.height - clearance + y_offset;
 
-    // Horizontal walking strip. If NOFARI_DOCK_WIDTH is set, center a strip of
+    // Horizontal walking strip. If IRMA_DOCK_WIDTH is set, center a strip of
     // that width on the monitor; otherwise allow the full width.
     let (strip_left, strip_right) = match dock_width() {
         Some(dw) => {
@@ -129,14 +137,14 @@ fn compute_bounds(window: &WebviewWindow) -> tauri::Result<Option<CompanionBound
 
 fn place_companion(window: &WebviewWindow) -> tauri::Result<()> {
     let Some(bounds) = compute_bounds(window)? else {
-        eprintln!("[nofari] place_companion: no monitor available");
+        eprintln!("[irma] place_companion: no monitor available");
         return Ok(());
     };
     // Default anchor: a little in from the left edge of the primary monitor.
     // JS will move it elsewhere once it has bounds.
     let x = bounds.min_x + MARGIN_X;
     eprintln!(
-        "[nofari] place_companion: monitor=({:.0}x{:.0}) sprite=({:.0}x{:.0}) \
+        "[irma] place_companion: monitor=({:.0}x{:.0}) sprite=({:.0}x{:.0}) \
          strip=[{:.0},{:.0}] → set_position=({:.1},{:.1}) \
          (dock_clearance={}, dog_y_offset={})",
         bounds.monitor_width,
@@ -167,15 +175,15 @@ pub struct CompanionBounds {
     pub min_x: f64,
     /// Rightmost valid x (window top-left). min_x + monitor_width - sprite_width.
     pub max_x: f64,
-    /// Current NOFARI_DOCK_CLEARANCE used to compute `y`.
+    /// Current IRMA_DOCK_CLEARANCE used to compute `y`.
     pub dock_clearance: f64,
-    /// Current NOFARI_DOG_Y_OFFSET added to `y`.
+    /// Current IRMA_DOG_Y_OFFSET added to `y`.
     pub dog_y_offset: f64,
 }
 
 fn emit_main_visibility(app: &AppHandle, visible: bool) {
     if let Err(err) = app.emit(MAIN_VISIBILITY_EVENT, visible) {
-        eprintln!("[nofari] emit {MAIN_VISIBILITY_EVENT} failed: {err}");
+        eprintln!("[irma] emit {MAIN_VISIBILITY_EVENT} failed: {err}");
     }
 }
 

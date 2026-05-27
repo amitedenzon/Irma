@@ -17,10 +17,10 @@ export function BriefHeader({ generatedAt, velocity }: BriefHeaderProps) {
 
   return (
     <header className="flex flex-col gap-2">
-      <div className="text-xs uppercase tracking-widest text-nofari-mute">
+      <div className="text-xs uppercase tracking-widest text-irma-mute">
         Standup brief · {stamp}
       </div>
-      <p className="text-lg leading-snug text-nofari-text">{velocity}</p>
+      <p className="text-lg leading-snug text-irma-text">{velocity}</p>
     </header>
   );
 }

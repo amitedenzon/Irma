@@ -11,9 +11,9 @@ from typing import Any
 
 import aiosqlite
 
-from nofari_api.models.brief import StandupBrief
-from nofari_api.models.signal import Signal
-from nofari_api.store.migrations import ensure_schema
+from irma_api.models.brief import StandupBrief
+from irma_api.models.signal import Signal
+from irma_api.store.migrations import ensure_schema
 
 
 def _iso_now() -> str:

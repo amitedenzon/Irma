@@ -1,5 +1,5 @@
 import type { AgentState } from "./types";
-import { NOFARI_API_BASE } from "./api";
+import { IRMA_API_BASE } from "./api";
 
 const KNOWN_STATES = new Set<AgentState>([
   "idle",
@@ -26,7 +26,7 @@ export interface AgentStateSubscription {
 export function subscribeAgentState(
   onState: (s: AgentState) => void,
 ): AgentStateSubscription {
-  const source = new EventSource(`${NOFARI_API_BASE}/api/v1/stream`);
+  const source = new EventSource(`${IRMA_API_BASE}/api/v1/stream`);
 
   source.addEventListener("state", (ev: Event) => {
     const data = (ev as MessageEvent<string>).data;

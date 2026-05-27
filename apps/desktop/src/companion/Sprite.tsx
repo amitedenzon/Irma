@@ -12,10 +12,10 @@ const PLACEHOLDER_BG: Record<AgentState, string> = {
 };
 
 const PLACEHOLDER_ANIM: Record<AgentState, string> = {
-  idle: "nofari-pulse 1.6s ease-in-out infinite",
-  observing: "nofari-scan 1.2s ease-out infinite",
-  thinking: "nofari-shimmer 1s ease-in-out infinite",
-  alert: "nofari-blink 0.6s steps(2, end) infinite",
+  idle: "irma-pulse 1.6s ease-in-out infinite",
+  observing: "irma-scan 1.2s ease-out infinite",
+  thinking: "irma-shimmer 1s ease-in-out infinite",
+  alert: "irma-blink 0.6s steps(2, end) infinite",
 };
 
 interface SpriteProps {
@@ -54,7 +54,7 @@ export function Sprite({
       userSelect: "none",
       transform: mirror ? "scaleX(-1)" : undefined,
     };
-    return <div style={sheetStyle} aria-label="Nofari sprite" />;
+    return <div style={sheetStyle} aria-label="Irma sprite" />;
   }
 
   const placeholderStyle: CSSProperties = {
@@ -69,7 +69,7 @@ export function Sprite({
   return (
     <div
       style={placeholderStyle}
-      aria-label={`Nofari sprite — ${fallbackState} (placeholder)`}
+      aria-label={`Irma sprite — ${fallbackState} (placeholder)`}
     />
   );
 }

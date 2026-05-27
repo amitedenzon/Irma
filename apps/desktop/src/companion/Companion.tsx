@@ -338,7 +338,7 @@ export function Companion() {
       style={WRAPPER_STYLE}
       onClick={onClick}
       role="button"
-      aria-label="Nofari companion"
+      aria-label="Irma companion"
     >
       <Sprite
         spec={spec}

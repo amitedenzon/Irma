@@ -12,7 +12,7 @@ from collections.abc import AsyncIterator
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
-from nofari_api.runtime.state import AgentState, StateBus
+from irma_api.runtime.state import AgentState, StateBus
 
 router = APIRouter(tags=["state"])
 

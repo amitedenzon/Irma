@@ -1,7 +1,7 @@
 import type { Signal, StandupBrief } from "./types";
 
 const BASE_URL: string =
-  (import.meta.env.VITE_NOFARI_API as string | undefined) ??
+  (import.meta.env.VITE_IRMA_API as string | undefined) ??
   "http://127.0.0.1:8765";
 
 async function jsonOrThrow<T>(res: Response): Promise<T> {
@@ -27,4 +27,4 @@ export async function forceRefresh(): Promise<void> {
   if (!res.ok) throw new Error(`refresh failed: HTTP ${res.status}`);
 }
 
-export const NOFARI_API_BASE = BASE_URL;
+export const IRMA_API_BASE = BASE_URL;

@@ -65,6 +65,6 @@ apps/desktop/src-tauri/WixTools/
 **/*.rs.bk
 
 # --- Project ---
-/nofari.db
-services/api/nofari.db
+/irma.db
+services/api/irma.db
 services/api/.coverage

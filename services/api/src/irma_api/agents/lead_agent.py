@@ -18,10 +18,10 @@ import structlog
 from anthropic import AsyncAnthropic
 from pydantic import ValidationError
 
-from nofari_api.config import Settings
-from nofari_api.models.brief import StandupBrief
-from nofari_api.models.signal import Signal
-from nofari_api.store.sqlite import SignalStore, compute_signal_set_hash
+from irma_api.config import Settings
+from irma_api.models.brief import StandupBrief
+from irma_api.models.signal import Signal
+from irma_api.store.sqlite import SignalStore, compute_signal_set_hash
 
 logger = structlog.get_logger(__name__)
 
@@ -31,7 +31,7 @@ class BriefSynthesisError(RuntimeError):
 
 
 _SYSTEM_PROMPT: Final[str] = """\
-You are Nofari, a calm, anticipatory PMO (Project Management Office) chief
+You are Irma, a calm, anticipatory PMO (Project Management Office) chief
 of staff. You observe a researcher's calendar and local git activity and
 produce a single daily standup brief in your own voice.
 

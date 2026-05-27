@@ -1,7 +1,7 @@
 [project]
-name = "nofari-api"
+name = "irma-api"
 version = "0.1.0"
-description = "Async FastAPI backend for the Nofari desktop assistant"
+description = "Async FastAPI backend for the Irma desktop assistant"
 readme = "README.md"
 authors = [
     { name = "amitedenzon", email = "amit.edenzon@gmail.com" }
@@ -23,7 +23,7 @@ dependencies = [
 ]
 
 [project.scripts]
-nofari-api = "nofari_api:main"
+irma-api = "irma_api:main"
 
 [build-system]
 requires = ["uv_build>=0.11.16,<0.12.0"]
@@ -55,7 +55,7 @@ ignore = ["B008", "E501"]
 [tool.mypy]
 strict = true
 python_version = "3.12"
-files = ["src/nofari_api", "tests"]
+files = ["src/irma_api", "tests"]
 plugins = ["pydantic.mypy"]
 warn_unused_ignores = true
 warn_redundant_casts = true
@@ -75,8 +75,8 @@ follow_untyped_imports = true
 # strict mode for the whole codebase.
 [[tool.mypy.overrides]]
 module = [
-    "nofari_api.agents.time_agent",
-    "nofari_api.runtime.scheduler",
+    "irma_api.agents.time_agent",
+    "irma_api.runtime.scheduler",
 ]
 disallow_untyped_calls = false
 

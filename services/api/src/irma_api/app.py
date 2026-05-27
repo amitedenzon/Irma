@@ -14,18 +14,18 @@ import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from nofari_api.agents.base import LeadAgentProtocol, Observer
-from nofari_api.agents.codebase_agent import CodebaseAgent
-from nofari_api.agents.time_agent import TimeAgent
-from nofari_api.config import get_settings
-from nofari_api.logging import configure_logging
-from nofari_api.routers.signals import router as signals_router
-from nofari_api.routers.signals import run_refresh
-from nofari_api.routers.standup import router as standup_router
-from nofari_api.routers.state import router as state_router
-from nofari_api.runtime.scheduler import Scheduler
-from nofari_api.runtime.state import StateBus
-from nofari_api.store.sqlite import SignalStore
+from irma_api.agents.base import LeadAgentProtocol, Observer
+from irma_api.agents.codebase_agent import CodebaseAgent
+from irma_api.agents.time_agent import TimeAgent
+from irma_api.config import get_settings
+from irma_api.logging import configure_logging
+from irma_api.routers.signals import router as signals_router
+from irma_api.routers.signals import run_refresh
+from irma_api.routers.standup import router as standup_router
+from irma_api.routers.state import router as state_router
+from irma_api.runtime.scheduler import Scheduler
+from irma_api.runtime.state import StateBus
+from irma_api.store.sqlite import SignalStore
 
 logger = structlog.get_logger(__name__)
 
@@ -34,21 +34,21 @@ logger = structlog.get_logger(__name__)
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
 
-    store = SignalStore(settings.nofari_db_path)
+    store = SignalStore(settings.irma_db_path)
     await store.connect()
 
     bus = StateBus()
     observers: list[Observer] = [
         TimeAgent(settings),
-        CodebaseAgent(settings.nofari_repos),
+        CodebaseAgent(settings.irma_repos),
     ]
 
     lead_agent: LeadAgentProtocol | None = None
     if settings.anthropic_api_key is not None:
         # Imported lazily so Phase 2 deployments without the LeadAgent module
-        # still boot. Phase 3 provides nofari_api.agents.lead_agent.
+        # still boot. Phase 3 provides irma_api.agents.lead_agent.
         try:
-            lead_module = import_module("nofari_api.agents.lead_agent")
+            lead_module = import_module("irma_api.agents.lead_agent")
             from anthropic import AsyncAnthropic
 
             client = AsyncAnthropic(
@@ -75,7 +75,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
 
     scheduler = Scheduler(
-        refresh_minutes=settings.nofari_refresh_minutes,
+        refresh_minutes=settings.irma_refresh_minutes,
         on_tick=tick,
     )
     scheduler.start()
@@ -98,7 +98,7 @@ def create_app() -> FastAPI:
     """Application factory consumed by `uvicorn.run(..., factory=True)`."""
     configure_logging()
     app = FastAPI(
-        title="Nofari API",
+        title="Irma API",
         version="0.1.0",
         lifespan=lifespan,
         docs_url="/docs",
@@ -123,6 +123,6 @@ def create_app() -> FastAPI:
 
     @app.get("/", include_in_schema=False)
     async def root() -> dict[str, str]:
-        return {"app": "nofari-api", "version": "0.1.0"}
+        return {"app": "irma-api", "version": "0.1.0"}
 
     return app

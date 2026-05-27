@@ -1,22 +1,22 @@
-# CLAUDE.md — Nofari
+# CLAUDE.md — Irma
 
-> Canonical spec for the Nofari desktop assistant. Claude Code reads this on every turn.
+> Canonical spec for the Irma desktop assistant. Claude Code reads this on every turn.
 > Deep design rationale lives in `docs/ARCHITECTURE.md`. The build kickoff prompt lives in `docs/KICKOFF_PROMPT.md`.
 
 ## 0. Operating Context for the Agent
 
 The maintainer is an AI Researcher / Backend Engineer (deep learning, generative AI, inference-time optimization). **Skip tutorials, junior commentary, and basic explanations.** Ship production-grade, strictly-typed, async code. No placeholder bodies (`# implement here`) — write the real implementation or explicitly scope it to a deferred phase.
 
-## 1. What Nofari Is
+## 1. What Irma Is
 
-Nofari is a **local, desktop-native AI PMO (Project Management Office) assistant** embodied as a character that lives beside the macOS Dock. She is a *passive intelligence layer*: she observes read-only data streams (calendar, local git repos), synthesizes them into a daily standup brief, and surfaces conflicts/blockers. Clicking the character opens her UI.
+Irma is a **local, desktop-native AI PMO (Project Management Office) assistant** embodied as a character that lives beside the macOS Dock. She is a *passive intelligence layer*: she observes read-only data streams (calendar, local git repos), synthesizes them into a daily standup brief, and surfaces conflicts/blockers. Clicking the character opens her UI.
 
-She has a persona — calm, precise, slightly proactive. The synthesis LLM speaks **as Nofari**, not as a generic assistant.
+She has a persona — calm, precise, slightly proactive. The synthesis LLM speaks **as Irma**, not as a generic assistant.
 
 ## 2. Product Behavior (the parts that are non-obvious)
 
 - **Companion presence.** A borderless, transparent, always-on-top, non-focusable window anchored bottom-left of the primary monitor's work area, beside the Dock. It renders only the sprite (window sized to the sprite's bounding box so transparent regions need no click-through hacks).
-- **Accessory app.** The app runs with `ActivationPolicy::Accessory` (macOS `LSUIElement`) so it has **no Dock tile of its own** — Nofari the sprite is the presence. A menu-bar tray icon provides quit/settings.
+- **Accessory app.** The app runs with `ActivationPolicy::Accessory` (macOS `LSUIElement`) so it has **no Dock tile of its own** — Irma the sprite is the presence. A menu-bar tray icon provides quit/settings.
 - **Click → toggle UI.** Clicking the sprite toggles the main UI window (the dashboard).
 - **Reactive sprite.** The sprite's animation is driven by backend agent state (`idle / observing / thinking / alert`) delivered over SSE. A blocker/conflict flips her to `alert`.
 - **NOTE — Dock injection is impossible.** macOS exposes no public API to place a view inside the Dock. "Beside the Dock, bottom-left" is the design. Do not attempt private APIs.
@@ -37,7 +37,7 @@ She has a persona — calm, precise, slightly proactive. The synthesis LLM speak
 ## 4. Repo Layout (monorepo)
 
 ```
-nofari/
+irma/
 ├── CLAUDE.md
 ├── docs/{ARCHITECTURE.md,KICKOFF_PROMPT.md}
 ├── apps/desktop/                 # Tauri v2 + React
@@ -48,7 +48,7 @@ nofari/
 │   ├── src-tauri/                # Rust: windows, tray, positioning, activation policy
 │   └── public/sprites/           # sprite sheet + manifest.json (placeholder for now)
 └── services/api/                 # FastAPI
-    ├── nofari_api/
+    ├── irma_api/
     │   ├── main.py app.py
     │   ├── config.py             # pydantic-settings
     │   ├── models/signal.py      # normalized Signal + StandupBrief schemas
@@ -63,7 +63,7 @@ nofari/
 
 - **`Signal`** — normalized unit every observer emits: `source`, `kind`, `title`, `detail`, `ts`, `meta`.
 - **`Observer` protocol** — `async def collect(self) -> list[Signal]`. `TimeAgent` and `CodebaseAgent` implement it.
-- **`LeadAgent`** — consumes `list[Signal]`, builds the Nofari system prompt, calls Claude, returns a structured **`StandupBrief`** (`velocity`, `blockers`, `conflicts`, `schedule`, `recommendation`, `narrative`).
+- **`LeadAgent`** — consumes `list[Signal]`, builds the Irma system prompt, calls Claude, returns a structured **`StandupBrief`** (`velocity`, `blockers`, `conflicts`, `schedule`, `recommendation`, `narrative`).
 - **`AgentState` bus** — in-process pub/sub of `idle/observing/thinking/alert`, exposed over SSE at `/api/v1/stream`. The companion window subscribes and animates.
 - **Sprite manifest** — `public/sprites/manifest.json` maps each `AgentState` → `{frames, fps, loop}`. Swapping art is config-only.
 
@@ -79,7 +79,7 @@ nofari/
 
 ## 7. Why REST and not MCP for Calendar
 
-MCP is a host↔server protocol for exposing tools *to* an LLM client at inference time. The Time Agent is a backend **data collector**, not an LLM tool call. Use the Google Calendar REST API directly (`aiogoogle`). MCP may return in Phase 4 *if* we expose Nofari's observers as tools to the synthesis model — that is a different feature.
+MCP is a host↔server protocol for exposing tools *to* an LLM client at inference time. The Time Agent is a backend **data collector**, not an LLM tool call. Use the Google Calendar REST API directly (`aiogoogle`). MCP may return in Phase 4 *if* we expose Irma's observers as tools to the synthesis model — that is a different feature.
 
 ## 8. Coding Constraints (hard requirements)
 
@@ -93,11 +93,11 @@ MCP is a host↔server protocol for exposing tools *to* an LLM client at inferen
 
 - **Phase 1 — Companion + UI shell.** Tauri two-window setup, accessory policy, tray, bottom-left positioning command, placeholder sprite, click→toggle main window, dashboard shell wired to `/standup` (mocked allowed until Phase 3).
 - **Phase 2 — Observer backend.** FastAPI skeleton, `Signal` schema, `TimeAgent` (GCal), `CodebaseAgent` (git), `SignalStore`, `/signals` + `/refresh`.
-- **Phase 3 — Lead PMO synthesis.** `LeadAgent` + Nofari persona prompt, `/standup` structured brief, `AgentState` bus + SSE, sprite reacts to state.
+- **Phase 3 — Lead PMO synthesis.** `LeadAgent` + Irma persona prompt, `/standup` structured brief, `AgentState` bus + SSE, sprite reacts to state.
 - **Phase 4 — DEFERRED (document only, do not build now).** ChromaDB RAG over ArXiv/code, Gemini synthesizer, real sprite-sheet animation engine, additional observers.
 
 ## 10. Test Data Context (for synthesis realism)
 
 - **Research Epic:** "Zero-Shot Video World Model" — autoregressive video generation, inference-time guidance.
 - **Academic Epic:** MIT Deep Learning coursework + Bar-Ilan M.Sc requirements.
-- **Expected synthesis behavior:** Nofari surfaces cross-epic conflicts, e.g. *"Heavy commit velocity on the video model, but a 4-hour MIT DL block tomorrow — consider freezing code tonight to prep coursework."*
+- **Expected synthesis behavior:** Irma surfaces cross-epic conflicts, e.g. *"Heavy commit velocity on the video model, but a 4-hour MIT DL block tomorrow — consider freezing code tonight to prep coursework."*

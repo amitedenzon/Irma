@@ -36,19 +36,19 @@ class Settings(BaseSettings):
     # --- Observers -----------------------------------------------------------
     # NoDecode → pydantic-settings hands us the raw env string (comma-separated
     # paths) instead of trying to JSON-decode the list.
-    nofari_repos: Annotated[list[Path], NoDecode] = Field(default_factory=list)
-    nofari_refresh_minutes: int = 30
-    nofari_dock_clearance: float = 80.0
-    nofari_db_path: Path = Path("./nofari.db")
+    irma_repos: Annotated[list[Path], NoDecode] = Field(default_factory=list)
+    irma_refresh_minutes: int = 30
+    irma_dock_clearance: float = 80.0
+    irma_db_path: Path = Path("./irma.db")
 
     # --- HTTP ----------------------------------------------------------------
-    nofari_api_host: str = "127.0.0.1"
-    nofari_api_port: int = 8765
+    irma_api_host: str = "127.0.0.1"
+    irma_api_port: int = 8765
 
-    @field_validator("nofari_repos", mode="before")
+    @field_validator("irma_repos", mode="before")
     @classmethod
     def _split_repos(cls, raw: object) -> object:
-        """Accept ``NOFARI_REPOS=/a,/b,/c`` from .env in addition to a JSON list."""
+        """Accept ``IRMA_REPOS=/a,/b,/c`` from .env in addition to a JSON list."""
         if isinstance(raw, str):
             paths = [p.strip() for p in raw.split(",") if p.strip()]
             return [Path(p) for p in paths]

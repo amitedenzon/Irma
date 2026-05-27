@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from nofari_api.agents.codebase_agent import CodebaseAgent
+from irma_api.agents.codebase_agent import CodebaseAgent
 
 
 def _have_git() -> bool:

@@ -1,14 +1,14 @@
-# nofari-api
+# irma-api
 
-Async FastAPI backend for the Nofari desktop assistant.
+Async FastAPI backend for the Irma desktop assistant.
 
 ```bash
 uv sync
 cp .env.example .env       # fill secrets
-uv run nofari-api          # serves on 127.0.0.1:8765 by default
+uv run irma-api          # serves on 127.0.0.1:8765 by default
 
 # Or:
-uv run python -m nofari_api
+uv run python -m irma_api
 ```
 
 Endpoints:
@@ -21,5 +21,5 @@ Endpoints:
 | `GET /api/v1/stream` | SSE stream of AgentState transitions | 3 |
 | `GET /api/v1/standup` | Claude-synthesized `StandupBrief` | 3 |
 
-Strict checks: `uv run ruff check .`, `uv run mypy --strict src/nofari_api`,
+Strict checks: `uv run ruff check .`, `uv run mypy --strict src/irma_api`,
 `uv run pytest`.

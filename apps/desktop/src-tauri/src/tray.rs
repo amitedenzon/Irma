@@ -1,7 +1,7 @@
 //! Menu-bar tray icon — the only persistent app surface besides the sprite.
 //!
 //! Left-click on the icon toggles the main window; the menu provides
-//! Toggle Nofari / Settings / Quit.
+//! Toggle Irma / Settings / Quit.
 
 use tauri::{
     menu::{Menu, MenuItem},
@@ -12,7 +12,7 @@ use tauri::{
 use crate::windows;
 
 pub fn init(app: &AppHandle) -> tauri::Result<()> {
-    let toggle = MenuItem::with_id(app, "toggle", "Toggle Nofari", true, None::<&str>)?;
+    let toggle = MenuItem::with_id(app, "toggle", "Toggle Irma", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&toggle, &settings, &quit])?;
@@ -22,7 +22,7 @@ pub fn init(app: &AppHandle) -> tauri::Result<()> {
         .expect("default window icon present (provided by tauri.conf.json bundle)")
         .clone();
 
-    let _tray = TrayIconBuilder::with_id("nofari-tray")
+    let _tray = TrayIconBuilder::with_id("irma-tray")
         .icon(icon)
         .icon_as_template(true)
         .menu(&menu)
@@ -30,11 +30,11 @@ pub fn init(app: &AppHandle) -> tauri::Result<()> {
         // We want left-click → toggle main; right-click → menu.
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| {
-            eprintln!("[nofari] tray menu event: {}", event.id().as_ref());
+            eprintln!("[irma] tray menu event: {}", event.id().as_ref());
             match event.id().as_ref() {
                 "toggle" => {
                     if let Err(err) = windows::toggle_main_internal(app) {
-                        eprintln!("[nofari] toggle_main_internal failed: {err}");
+                        eprintln!("[irma] toggle_main_internal failed: {err}");
                     }
                 }
                 "settings" => {
@@ -53,9 +53,9 @@ pub fn init(app: &AppHandle) -> tauri::Result<()> {
                 ..
             } = event
             {
-                eprintln!("[nofari] tray left-click → toggle_main");
+                eprintln!("[irma] tray left-click → toggle_main");
                 if let Err(err) = windows::toggle_main_internal(tray.app_handle()) {
-                    eprintln!("[nofari] toggle_main_internal failed: {err}");
+                    eprintln!("[irma] toggle_main_internal failed: {err}");
                 }
             }
         })

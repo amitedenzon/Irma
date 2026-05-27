@@ -6,11 +6,11 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from nofari_api.models.signal import ScheduleItem
+from irma_api.models.signal import ScheduleItem
 
 
 class StandupBrief(BaseModel):
-    """Daily PMO brief in Nofari's voice."""
+    """Daily PMO brief in Irma's voice."""
 
     model_config = ConfigDict(frozen=False)
 

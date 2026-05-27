@@ -27,7 +27,7 @@ class Scheduler:
         self._sched.add_job(
             self._on_tick,
             trigger=IntervalTrigger(minutes=self._refresh_minutes),
-            id="nofari-refresh",
+            id="irma-refresh",
             replace_existing=True,
             max_instances=1,
             coalesce=True,
