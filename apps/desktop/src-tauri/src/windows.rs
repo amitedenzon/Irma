@@ -13,7 +13,7 @@ use tauri::{
 const MARGIN_X: f64 = 12.0;
 const DEFAULT_DOCK_CLEARANCE: f64 = 80.0;
 const DEFAULT_DOG_Y_OFFSET: f64 = 28.0;
-const DEFAULT_DOCK_WIDTH: f64 = 490.0;
+const DEFAULT_DOCK_WIDTH: f64 = 450.0;
 const MAIN_VISIBILITY_EVENT: &str = "main:visibility";
 
 fn env_f64(key: &str, default: f64) -> f64 {
