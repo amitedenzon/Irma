@@ -66,14 +66,8 @@ async def test_list_filters_by_status_and_window(
 ) -> None:
     pid = await _make_project(db_conn)
     repo = TaskRepo(db_conn)
-    await repo.create(
-        TaskCreate(project_id=pid, title="today",
-                   scheduled_for=date(2026, 5, 27))
-    )
-    await repo.create(
-        TaskCreate(project_id=pid, title="next-week",
-                   scheduled_for=date(2026, 6, 3))
-    )
+    await repo.create(TaskCreate(project_id=pid, title="today", scheduled_for=date(2026, 5, 27)))
+    await repo.create(TaskCreate(project_id=pid, title="next-week", scheduled_for=date(2026, 6, 3)))
     today_only = await repo.list(
         project_id=pid,
         scheduled_from=date(2026, 5, 27),
@@ -92,12 +86,10 @@ async def test_list_orders_by_due_then_scheduled_then_created(
     pid = await _make_project(db_conn)
     repo = TaskRepo(db_conn)
     later = await repo.create(
-        TaskCreate(project_id=pid, title="due-later",
-                   due_date=date(2026, 6, 10))
+        TaskCreate(project_id=pid, title="due-later", due_date=date(2026, 6, 10))
     )
     sooner = await repo.create(
-        TaskCreate(project_id=pid, title="due-sooner",
-                   due_date=date(2026, 6, 1))
+        TaskCreate(project_id=pid, title="due-sooner", due_date=date(2026, 6, 1))
     )
     no_due = await repo.create(TaskCreate(project_id=pid, title="no-due"))
     out = await repo.list(project_id=pid)
@@ -146,9 +138,7 @@ async def test_count_open_blocks_project_delete(
     pid = await _make_project(db_conn)
     repo = TaskRepo(db_conn)
     await repo.create(TaskCreate(project_id=pid, title="open"))
-    await repo.create(
-        TaskCreate(project_id=pid, title="closed", status=TaskStatus.DONE)
-    )
+    await repo.create(TaskCreate(project_id=pid, title="closed", status=TaskStatus.DONE))
     assert await repo.count_non_done_for_project(pid) == 1
 
 

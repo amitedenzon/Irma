@@ -89,8 +89,7 @@ async def test_list_filters(client: AsyncClient) -> None:
         json={"project_id": pid, "title": "next", "scheduled_for": "2026-06-03"},
     )
     r = await client.get(
-        f"/api/v1/tasks?project_id={pid}"
-        "&scheduled_from=2026-05-27&scheduled_to=2026-05-27"
+        f"/api/v1/tasks?project_id={pid}&scheduled_from=2026-05-27&scheduled_to=2026-05-27"
     )
     assert [t["title"] for t in r.json()] == ["today"]
 

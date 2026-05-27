@@ -58,9 +58,7 @@ async def test_list_filters_and_orders_by_priority_then_name(
     await repo.create(ProjectCreate(name="Alpha", priority=1))
     await repo.create(ProjectCreate(name="Beta", priority=1))
     paused = await repo.create(ProjectCreate(name="Sidekick", priority=2))
-    await repo.update(
-        paused.id, ProjectUpdate(status=ProjectStatus.PAUSED)
-    )
+    await repo.update(paused.id, ProjectUpdate(status=ProjectStatus.PAUSED))
 
     active = await repo.list(statuses=[ProjectStatus.ACTIVE])
     assert [p.name for p in active] == ["Alpha", "Beta", "Zeta"]
@@ -76,9 +74,7 @@ async def test_list_filters_and_orders_by_priority_then_name(
 async def test_update_partial(db_conn: aiosqlite.Connection) -> None:
     repo = ProjectRepo(db_conn)
     p = await repo.create(ProjectCreate(name="Thesis", priority=2))
-    updated = await repo.update(
-        p.id, ProjectUpdate(priority=1, goals=["Draft", "Defense"])
-    )
+    updated = await repo.update(p.id, ProjectUpdate(priority=1, goals=["Draft", "Defense"]))
     assert updated.priority == 1
     assert updated.goals == ["Draft", "Defense"]
     assert updated.name == "Thesis"

@@ -43,7 +43,7 @@ async def list_tasks(
 
 
 @router.post("", response_model=Task, status_code=status.HTTP_201_CREATED)
-async def create_task(request: Request, payload: TaskCreate):
+async def create_task(request: Request, payload: TaskCreate) -> Task | JSONResponse:
     try:
         return await _repo(request).create(payload)
     except NotFoundError as exc:
@@ -53,7 +53,7 @@ async def create_task(request: Request, payload: TaskCreate):
 
 
 @router.get("/{task_id}", response_model=Task)
-async def get_task(request: Request, task_id: str):
+async def get_task(request: Request, task_id: str) -> Task | JSONResponse:
     try:
         return await _repo(request).get(task_id)
     except NotFoundError as exc:
@@ -61,7 +61,9 @@ async def get_task(request: Request, task_id: str):
 
 
 @router.patch("/{task_id}", response_model=Task)
-async def update_task(request: Request, task_id: str, patch: TaskUpdate):
+async def update_task(
+    request: Request, task_id: str, patch: TaskUpdate
+) -> Task | JSONResponse:
     try:
         return await _repo(request).update(task_id, patch)
     except NotFoundError as exc:
@@ -69,7 +71,7 @@ async def update_task(request: Request, task_id: str, patch: TaskUpdate):
 
 
 @router.delete("/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_task(request: Request, task_id: str):
+async def delete_task(request: Request, task_id: str) -> Response:
     try:
         await _repo(request).delete(task_id)
     except NotFoundError as exc:
@@ -78,10 +80,8 @@ async def delete_task(request: Request, task_id: str):
 
 
 @router.post("/{task_id}/complete", response_model=Task)
-async def complete_task(request: Request, task_id: str):
+async def complete_task(request: Request, task_id: str) -> Task | JSONResponse:
     try:
-        return await _repo(request).update(
-            task_id, TaskUpdate(status=TaskStatus.DONE)
-        )
+        return await _repo(request).update(task_id, TaskUpdate(status=TaskStatus.DONE))
     except NotFoundError as exc:
         return _err(404, "not_found", str(exc))

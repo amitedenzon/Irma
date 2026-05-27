@@ -37,9 +37,7 @@ def _row_to_project(row: aiosqlite.Row) -> Project:
         priority=row["priority"],
         calendar_keywords=json.loads(row["calendar_keywords"]),
         goals=json.loads(row["goals"]),
-        target_date=(
-            date.fromisoformat(row["target_date"]) if row["target_date"] else None
-        ),
+        target_date=(date.fromisoformat(row["target_date"]) if row["target_date"] else None),
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
     )
@@ -88,9 +86,7 @@ class ProjectRepo:
             raise NotFoundError("project", project_id)
         return _row_to_project(row)
 
-    async def list(
-        self, statuses: Iterable[ProjectStatus] | None = None
-    ) -> list[Project]:
+    async def list(self, statuses: Iterable[ProjectStatus] | None = None) -> list[Project]:
         statuses = list(statuses) if statuses is not None else [ProjectStatus.ACTIVE]
         placeholders = ", ".join("?" * len(statuses))
         cur = await self._conn.execute(
@@ -131,9 +127,7 @@ class ProjectRepo:
         params.append(project_id)
 
         try:
-            await self._conn.execute(
-                f"UPDATE project SET {', '.join(sets)} WHERE id = ?", params
-            )
+            await self._conn.execute(f"UPDATE project SET {', '.join(sets)} WHERE id = ?", params)
             await self._conn.commit()
         except aiosqlite.IntegrityError as exc:
             raise ConflictError("project name conflict on update") from exc
@@ -141,9 +135,7 @@ class ProjectRepo:
 
     async def delete(self, project_id: str) -> None:
         try:
-            cur = await self._conn.execute(
-                "DELETE FROM project WHERE id = ?", (project_id,)
-            )
+            cur = await self._conn.execute("DELETE FROM project WHERE id = ?", (project_id,))
             await self._conn.commit()
         except aiosqlite.IntegrityError as exc:
             raise ConflictError(

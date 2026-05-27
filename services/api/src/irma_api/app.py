@@ -54,9 +54,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # still boot. Phase 3 provides irma_api.agents.lead_agent.
         try:
             lead_module = import_module("irma_api.agents.lead_agent")
-            lead_agent = lead_module.LeadAgent(
-                settings=settings, llm=llm, store=store
-            )
+            lead_agent = lead_module.LeadAgent(settings=settings, llm=llm, store=store)
         except ModuleNotFoundError:
             logger.info("app.lead_agent_unavailable", phase="2-only")
 

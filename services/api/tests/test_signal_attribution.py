@@ -24,9 +24,7 @@ def _signal(title: str, *, source: str = "calendar") -> Signal:
 
 
 async def _project_ids_for_signals(store: SignalStore) -> list[str | None]:
-    cur = await store.connection.execute(
-        "SELECT project_id FROM signals ORDER BY id"
-    )
+    cur = await store.connection.execute("SELECT project_id FROM signals ORDER BY id")
     rows = await cur.fetchall()
     return [row["project_id"] for row in rows]
 
@@ -64,9 +62,7 @@ async def test_no_match_yields_null_project(store: SignalStore) -> None:
 @pytest.mark.asyncio
 async def test_multi_match_picks_higher_priority(store: SignalStore) -> None:
     prepo = ProjectRepo(store.connection)
-    low = await prepo.create(
-        ProjectCreate(name="LowP", priority=3, calendar_keywords=["lecture"])
-    )
+    low = await prepo.create(ProjectCreate(name="LowP", priority=3, calendar_keywords=["lecture"]))
     high = await prepo.create(
         ProjectCreate(name="HighP", priority=1, calendar_keywords=["lecture"])
     )

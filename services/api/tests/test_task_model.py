@@ -110,9 +110,7 @@ def test_apply_status_transition_unsetting_done_clears_completed_at() -> None:
         created_at=_now(),
         updated_at=_now(),
     )
-    new = apply_status_transition(
-        existing, new_status=TaskStatus.DOING, now=datetime(2026, 6, 1)
-    )
+    new = apply_status_transition(existing, new_status=TaskStatus.DOING, now=datetime(2026, 6, 1))
     assert new.status is TaskStatus.DOING
     assert new.completed_at is None
 
@@ -128,9 +126,7 @@ def test_apply_status_transition_done_to_done_preserves_completed_at() -> None:
         created_at=_now(),
         updated_at=_now(),
     )
-    new = apply_status_transition(
-        existing, new_status=TaskStatus.DONE, now=datetime(2026, 6, 1)
-    )
+    new = apply_status_transition(existing, new_status=TaskStatus.DONE, now=datetime(2026, 6, 1))
     assert new.completed_at == first
 
 

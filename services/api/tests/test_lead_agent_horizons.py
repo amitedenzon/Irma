@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import UTC, date, datetime
+from datetime import date
 from pathlib import Path
 
 import pytest
 import pytest_asyncio
 
 from irma_api.agents.lead_agent import LeadAgent
-from irma_api.agents.llm import ChatTurn, LLMClient
+from irma_api.agents.llm import ChatTurn
 from irma_api.config import Settings
-from irma_api.models.brief import Brief, Horizon
+from irma_api.models.brief import Horizon
 from irma_api.models.project import ProjectCreate
 from irma_api.models.task import TaskCreate
 from irma_api.store.repos.project_repo import ProjectRepo
@@ -30,9 +30,7 @@ class FakeLLM:
         self._responses = list(responses)
         self.calls: list[tuple[str, Sequence[ChatTurn]]] = []
 
-    async def complete(
-        self, *, system: str, messages: Sequence[ChatTurn], max_tokens: int
-    ) -> str:
+    async def complete(self, *, system: str, messages: Sequence[ChatTurn], max_tokens: int) -> str:
         self.calls.append((system, list(messages)))
         return self._responses.pop(0)
 
@@ -54,9 +52,7 @@ async def seeded_store(tmp_path: Path) -> SignalStore:
     p = await prepo.create(
         ProjectCreate(name="Thesis", goals=["Submit"], target_date=date(2026, 7, 15))
     )
-    await trepo.create(
-        TaskCreate(project_id=p.id, title="today", scheduled_for=date(2026, 5, 27))
-    )
+    await trepo.create(TaskCreate(project_id=p.id, title="today", scheduled_for=date(2026, 5, 27)))
     await trepo.create(
         TaskCreate(project_id=p.id, title="next-week", scheduled_for=date(2026, 6, 3))
     )
@@ -104,6 +100,7 @@ async def test_cache_invalidates_on_task_change(
     trepo = TaskRepo(seeded_store.connection)
     fresh = (await trepo.list())[0]
     from irma_api.models.task import TaskStatus, TaskUpdate
+
     await trepo.update(fresh.id, TaskUpdate(status=TaskStatus.DONE))
     await agent.synthesize("day")
     assert len(llm.calls) == 2
@@ -159,9 +156,7 @@ async def test_horizon_appears_in_user_message(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("horizon", ["day", "week", "month", "all"])
-async def test_all_four_horizons_dispatch(
-    seeded_store: SignalStore, horizon: Horizon
-) -> None:
+async def test_all_four_horizons_dispatch(seeded_store: SignalStore, horizon: Horizon) -> None:
     llm = FakeLLM([_brief_json(horizon)])
     agent = LeadAgent(settings=_settings(), llm=llm, store=seeded_store)
     b = await agent.synthesize(horizon)

@@ -37,9 +37,7 @@ async def client(tmp_path: Path) -> AsyncIterator[AsyncClient]:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("path", ["today", "week", "month", "overview"])
-async def test_horizon_routes_return_503_without_agent(
-    client: AsyncClient, path: str
-) -> None:
+async def test_horizon_routes_return_503_without_agent(client: AsyncClient, path: str) -> None:
     r = await client.get(f"/api/v1/brief/{path}")
     assert r.status_code == 503
     assert r.json()["error"] == "synthesis_unavailable"

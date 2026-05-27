@@ -24,9 +24,7 @@ router = APIRouter(tags=["signals"])
 
 
 async def gather_signals(observers: list[Observer]) -> list[Signal]:
-    results = await asyncio.gather(
-        *(o.collect() for o in observers), return_exceptions=True
-    )
+    results = await asyncio.gather(*(o.collect() for o in observers), return_exceptions=True)
     out: list[Signal] = []
     for observer, result in zip(observers, results, strict=True):
         if isinstance(result, BaseException):

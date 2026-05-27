@@ -130,9 +130,7 @@ class SignalStore:
         )
 
 
-def _match_project_id(
-    sig: Signal, projects: list[tuple[str, list[str]]]
-) -> str | None:
+def _match_project_id(sig: Signal, projects: list[tuple[str, list[str]]]) -> str | None:
     if sig.source != "calendar":
         return None
     haystack = f"{sig.title} {sig.detail}".lower()

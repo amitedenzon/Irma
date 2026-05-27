@@ -37,7 +37,9 @@ async def list_projects(
 
 
 @router.post("", response_model=Project, status_code=status.HTTP_201_CREATED)
-async def create_project(request: Request, payload: ProjectCreate):
+async def create_project(
+    request: Request, payload: ProjectCreate
+) -> Project | JSONResponse:
     try:
         return await _repo(request).create(payload)
     except ConflictError as exc:
@@ -45,7 +47,7 @@ async def create_project(request: Request, payload: ProjectCreate):
 
 
 @router.get("/{project_id}", response_model=Project)
-async def get_project(request: Request, project_id: str):
+async def get_project(request: Request, project_id: str) -> Project | JSONResponse:
     try:
         return await _repo(request).get(project_id)
     except NotFoundError as exc:
@@ -53,7 +55,9 @@ async def get_project(request: Request, project_id: str):
 
 
 @router.patch("/{project_id}", response_model=Project)
-async def update_project(request: Request, project_id: str, patch: ProjectUpdate):
+async def update_project(
+    request: Request, project_id: str, patch: ProjectUpdate
+) -> Project | JSONResponse:
     try:
         return await _repo(request).update(project_id, patch)
     except NotFoundError as exc:
@@ -63,7 +67,7 @@ async def update_project(request: Request, project_id: str, patch: ProjectUpdate
 
 
 @router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_project(request: Request, project_id: str):
+async def delete_project(request: Request, project_id: str) -> Response:
     try:
         await _repo(request).delete(project_id)
     except NotFoundError as exc:

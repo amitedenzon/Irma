@@ -87,8 +87,5 @@ async def ensure_schema(conn: aiosqlite.Connection) -> None:
 
     if not await _signals_has_project_id(conn):
         await conn.execute("ALTER TABLE signals ADD COLUMN project_id TEXT")
-    await conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_signals_project_id "
-        "ON signals(project_id)"
-    )
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_signals_project_id ON signals(project_id)")
     await conn.commit()

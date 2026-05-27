@@ -17,9 +17,7 @@ async def test_ensure_schema_creates_all_tables(tmp_path: Path) -> None:
         await conn.execute("PRAGMA foreign_keys=ON")
         await ensure_schema(conn)
 
-        cur = await conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-        )
+        cur = await conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
         names = {r[0] for r in await cur.fetchall()}
 
     assert {"signals", "project", "task", "brief_cache"} <= names

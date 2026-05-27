@@ -69,9 +69,7 @@ class TaskUpdate(BaseModel):
         return v
 
 
-def apply_status_transition(
-    task: Task, *, new_status: TaskStatus, now: datetime
-) -> Task:
+def apply_status_transition(task: Task, *, new_status: TaskStatus, now: datetime) -> Task:
     """Return a copy of `task` with `status` updated and `completed_at`
     auto-stamped (set on transition to DONE, cleared on transition out of
     DONE, preserved on DONE→DONE).

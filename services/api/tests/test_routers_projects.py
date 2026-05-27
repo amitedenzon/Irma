@@ -58,9 +58,7 @@ async def test_get_404(client: AsyncClient) -> None:
 @pytest.mark.asyncio
 async def test_patch(client: AsyncClient) -> None:
     created = (await client.post("/api/v1/projects", json={"name": "X"})).json()
-    r = await client.patch(
-        f"/api/v1/projects/{created['id']}", json={"priority": 1}
-    )
+    r = await client.patch(f"/api/v1/projects/{created['id']}", json={"priority": 1})
     assert r.status_code == 200
     assert r.json()["priority"] == 1
 
@@ -76,9 +74,7 @@ async def test_delete(client: AsyncClient) -> None:
 async def test_list_filters_by_status(client: AsyncClient) -> None:
     a = (await client.post("/api/v1/projects", json={"name": "A"})).json()
     await client.post("/api/v1/projects", json={"name": "B"})
-    await client.patch(
-        f"/api/v1/projects/{a['id']}", json={"status": "archived"}
-    )
+    await client.patch(f"/api/v1/projects/{a['id']}", json={"status": "archived"})
 
     active = await client.get("/api/v1/projects?status=active")
     assert [p["name"] for p in active.json()] == ["B"]

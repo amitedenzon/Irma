@@ -36,15 +36,11 @@ def _row_to_task(row: aiosqlite.Row) -> Task:
         notes=row["notes"],
         status=TaskStatus(row["status"]),
         due_date=date.fromisoformat(row["due_date"]) if row["due_date"] else None,
-        scheduled_for=(
-            date.fromisoformat(row["scheduled_for"]) if row["scheduled_for"] else None
-        ),
+        scheduled_for=(date.fromisoformat(row["scheduled_for"]) if row["scheduled_for"] else None),
         estimated_minutes=row["estimated_minutes"],
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
-        completed_at=(
-            datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None
-        ),
+        completed_at=(datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None),
     )
 
 
@@ -82,9 +78,7 @@ class TaskRepo:
         return await self.get(tid)
 
     async def get(self, task_id: str) -> Task:
-        cur = await self._conn.execute(
-            f"SELECT {_COLUMNS} FROM task WHERE id = ?", (task_id,)
-        )
+        cur = await self._conn.execute(f"SELECT {_COLUMNS} FROM task WHERE id = ?", (task_id,))
         row = await cur.fetchone()
         if row is None:
             raise NotFoundError("task", task_id)
@@ -141,9 +135,7 @@ class TaskRepo:
             )
             updates["status"] = transitioned.status.value
             updates["completed_at"] = (
-                transitioned.completed_at.isoformat()
-                if transitioned.completed_at
-                else None
+                transitioned.completed_at.isoformat() if transitioned.completed_at else None
             )
 
         sets: list[str] = []
@@ -159,9 +151,7 @@ class TaskRepo:
         params.append(_now().isoformat())
         params.append(task_id)
 
-        await self._conn.execute(
-            f"UPDATE task SET {', '.join(sets)} WHERE id = ?", params
-        )
+        await self._conn.execute(f"UPDATE task SET {', '.join(sets)} WHERE id = ?", params)
         await self._conn.commit()
         return await self.get(task_id)
 
@@ -173,8 +163,7 @@ class TaskRepo:
 
     async def count_non_done_for_project(self, project_id: str) -> int:
         cur = await self._conn.execute(
-            "SELECT COUNT(*) AS n FROM task "
-            "WHERE project_id = ? AND status != 'done'",
+            "SELECT COUNT(*) AS n FROM task WHERE project_id = ? AND status != 'done'",
             (project_id,),
         )
         row = await cur.fetchone()

@@ -25,9 +25,7 @@ class BriefCacheRepo:
             return None
         return Brief.model_validate_json(row["payload_json"])
 
-    async def put(
-        self, horizon: Horizon, *, inputs_hash: str, brief: Brief
-    ) -> None:
+    async def put(self, horizon: Horizon, *, inputs_hash: str, brief: Brief) -> None:
         await self._conn.execute(
             """
             INSERT INTO brief_cache (horizon, payload_json, inputs_hash, computed_at)

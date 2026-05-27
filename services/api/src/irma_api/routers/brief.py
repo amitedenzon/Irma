@@ -17,10 +17,8 @@ from irma_api.runtime.state import AgentState, StateBus
 router = APIRouter(prefix="/brief", tags=["brief"])
 
 
-async def _synthesize(request: Request, horizon: Horizon):
-    lead_agent: LeadAgentProtocol | None = getattr(
-        request.app.state, "lead_agent", None
-    )
+async def _synthesize(request: Request, horizon: Horizon) -> Brief | JSONResponse:
+    lead_agent: LeadAgentProtocol | None = getattr(request.app.state, "lead_agent", None)
     if lead_agent is None:
         return JSONResponse(
             status_code=503,
@@ -40,27 +38,25 @@ async def _synthesize(request: Request, horizon: Horizon):
             await bus.publish(AgentState.IDLE)
         raise
     if bus is not None:
-        await bus.publish(
-            AgentState.ALERT if brief.has_attention_signal else AgentState.IDLE
-        )
+        await bus.publish(AgentState.ALERT if brief.has_attention_signal else AgentState.IDLE)
     return brief
 
 
 @router.get("/today", response_model=Brief)
-async def brief_today(request: Request):
+async def brief_today(request: Request) -> Brief | JSONResponse:
     return await _synthesize(request, "day")
 
 
 @router.get("/week", response_model=Brief)
-async def brief_week(request: Request):
+async def brief_week(request: Request) -> Brief | JSONResponse:
     return await _synthesize(request, "week")
 
 
 @router.get("/month", response_model=Brief)
-async def brief_month(request: Request):
+async def brief_month(request: Request) -> Brief | JSONResponse:
     return await _synthesize(request, "month")
 
 
 @router.get("/overview", response_model=Brief)
-async def brief_overview(request: Request):
+async def brief_overview(request: Request) -> Brief | JSONResponse:
     return await _synthesize(request, "all")

@@ -126,9 +126,7 @@ class LeadAgent:
 
         brief = await self._call_and_parse(ctx)
         await cache.put(horizon, inputs_hash=inputs_hash, brief=brief)
-        logger.info(
-            "lead_agent.brief_ready", horizon=horizon, conflicts=len(brief.conflicts)
-        )
+        logger.info("lead_agent.brief_ready", horizon=horizon, conflicts=len(brief.conflicts))
         return brief
 
     async def _build_context(self, horizon: Horizon) -> SynthesisContext:
@@ -207,9 +205,7 @@ class LeadAgent:
         lines.append("")
         lines.append("ACTIVE PROJECTS:")
         for p in ctx.projects:
-            target = (
-                f"target {p.target_date.isoformat()}" if p.target_date else "no target"
-            )
+            target = f"target {p.target_date.isoformat()}" if p.target_date else "no target"
             lines.append(f"  • [{p.id}] {p.name}  priority={p.priority}  {target}")
             for g in p.goals:
                 lines.append(f"      goal: {g}")
@@ -226,8 +222,7 @@ class LeadAgent:
                 if t.estimated_minutes:
                     bits.append(f"est={t.estimated_minutes}m")
                 lines.append(
-                    f"  • [{t.id}] (project {t.project_id})  {t.title}  "
-                    f"[{', '.join(bits)}]"
+                    f"  • [{t.id}] (project {t.project_id})  {t.title}  [{', '.join(bits)}]"
                 )
         else:
             lines.append("  (none)")
@@ -237,8 +232,7 @@ class LeadAgent:
         if ctx.signals:
             for s in ctx.signals:
                 lines.append(
-                    f"  • {s.ts.isoformat()}  {s.title}"
-                    + (f" — {s.detail}" if s.detail else "")
+                    f"  • {s.ts.isoformat()}  {s.title}" + (f" — {s.detail}" if s.detail else "")
                 )
         else:
             lines.append("  (none)")
