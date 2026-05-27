@@ -14,9 +14,16 @@ PIDFILE="$STATE_DIR/pids"
 
 mkdir -p "$LOG_DIR" "$STATE_DIR"
 
-# GUI launches inherit a minimal PATH — add the usual Homebrew + system bins
-# so `uv` and `npm` resolve. Adjust IRMA_LAUNCHER_PATH in ~/.zshrc to override.
-export PATH="${IRMA_LAUNCHER_PATH:-/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin}"
+# GUI launches inherit a minimal PATH — add the usual install locations so
+# `uv` (curl-installed at ~/.local/bin) and `npm` (nvm) resolve. Override
+# via IRMA_LAUNCHER_PATH if your tools live elsewhere.
+NVM_NODE_BIN=""
+if [[ -d "$HOME/.nvm/versions/node" ]]; then
+  # Pick the highest semver under nvm; falls back gracefully if empty.
+  NVM_NODE_BIN="$(ls -1 "$HOME/.nvm/versions/node" 2>/dev/null | sort -V | tail -1)"
+  [[ -n "$NVM_NODE_BIN" ]] && NVM_NODE_BIN="$HOME/.nvm/versions/node/$NVM_NODE_BIN/bin"
+fi
+export PATH="${IRMA_LAUNCHER_PATH:-$HOME/.local/bin:${NVM_NODE_BIN:+$NVM_NODE_BIN:}/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin}"
 
 notify() {
   /usr/bin/osascript -e "display notification \"$1\" with title \"Irma\""
