@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+LLMBackend = Literal["anthropic", "ollama"]
 
 
 class Settings(BaseSettings):
@@ -24,9 +26,18 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    # --- LLM backend ---------------------------------------------------------
+    # Which provider powers LeadAgent synthesis + /chat. Switch to "ollama" to
+    # run fully offline against a local model (qwen2.5:7b by default).
+    irma_llm_backend: LLMBackend = "anthropic"
+
     # --- Claude --------------------------------------------------------------
     anthropic_api_key: SecretStr | None = None
     anthropic_model: str = "claude-sonnet-4-6"
+
+    # --- Ollama --------------------------------------------------------------
+    ollama_base_url: str = "http://127.0.0.1:11434"
+    ollama_model: str = "qwen2.5:7b"
 
     # --- Google Calendar -----------------------------------------------------
     google_oauth_client_id: SecretStr | None = None

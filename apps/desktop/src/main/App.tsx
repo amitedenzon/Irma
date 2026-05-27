@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { StandupView } from "./StandupView";
 import { mockBrief } from "./mockBrief";
+import { ChatPanel } from "./components/ChatPanel";
 import { fetchStandup, forceRefresh } from "../lib/api";
 import { subscribeAgentState } from "../lib/sse";
 import type { AgentState, StandupBrief } from "../lib/types";
@@ -106,7 +107,10 @@ export function App() {
             Brief unavailable: {error}
           </div>
         )}
-        {brief ? <StandupView brief={brief} /> : <Skeleton loading={loading} />}
+        <div className="max-w-3xl mx-auto space-y-6">
+          {brief ? <StandupView brief={brief} /> : <Skeleton loading={loading} />}
+          <ChatPanel />
+        </div>
       </div>
     </div>
   );

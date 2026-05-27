@@ -7,7 +7,6 @@ export interface SpriteFrameSpec {
 }
 
 export interface SpriteManifest {
-  image: string;
   /** Source-pixel width of one frame in the sheet. */
   frameWidth: number;
   /** Source-pixel height of one frame in the sheet. */
@@ -46,4 +45,17 @@ export interface Signal {
   detail: string;
   ts: string;
   meta: Record<string, unknown>;
+}
+
+export type ChatRole = "user" | "assistant";
+
+export interface ChatMessage {
+  role: ChatRole;
+  content: string;
+}
+
+export interface ChatResponse {
+  reply: string;
+  backend: string;
+  model: string;
 }

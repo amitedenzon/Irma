@@ -16,9 +16,11 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from irma_api.agents.base import LeadAgentProtocol, Observer
 from irma_api.agents.codebase_agent import CodebaseAgent
+from irma_api.agents.llm import LLMClient, OllamaLLM, build_llm_client
 from irma_api.agents.time_agent import TimeAgent
 from irma_api.config import get_settings
 from irma_api.logging import configure_logging
+from irma_api.routers.chat import router as chat_router
 from irma_api.routers.signals import router as signals_router
 from irma_api.routers.signals import run_refresh
 from irma_api.routers.standup import router as standup_router
@@ -43,19 +45,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         CodebaseAgent(settings.irma_repos),
     ]
 
+    llm: LLMClient | None = build_llm_client(settings)
+
     lead_agent: LeadAgentProtocol | None = None
-    if settings.anthropic_api_key is not None:
+    if llm is not None:
         # Imported lazily so Phase 2 deployments without the LeadAgent module
         # still boot. Phase 3 provides irma_api.agents.lead_agent.
         try:
             lead_module = import_module("irma_api.agents.lead_agent")
-            from anthropic import AsyncAnthropic
-
-            client = AsyncAnthropic(
-                api_key=settings.anthropic_api_key.get_secret_value()
-            )
             lead_agent = lead_module.LeadAgent(
-                settings=settings, client=client, store=store
+                settings=settings, llm=llm, store=store
             )
         except ModuleNotFoundError:
             logger.info("app.lead_agent_unavailable", phase="2-only")
@@ -64,6 +63,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.store = store
     app.state.bus = bus
     app.state.observers = observers
+    app.state.llm = llm
     app.state.lead_agent = lead_agent
 
     async def tick() -> None:
@@ -84,12 +84,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         "app.ready",
         observers=[o.name for o in observers],
         lead_agent=lead_agent is not None,
+        llm_backend=llm.backend if llm else None,
+        llm_model=llm.model if llm else None,
     )
 
     try:
         yield
     finally:
         scheduler.shutdown()
+        if isinstance(llm, OllamaLLM):
+            await llm.aclose()
         await store.close()
         logger.info("app.shutdown")
 
@@ -120,6 +124,7 @@ def create_app() -> FastAPI:
     app.include_router(signals_router, prefix="/api/v1")
     app.include_router(standup_router, prefix="/api/v1")
     app.include_router(state_router, prefix="/api/v1")
+    app.include_router(chat_router, prefix="/api/v1")
 
     @app.get("/", include_in_schema=False)
     async def root() -> dict[str, str]:

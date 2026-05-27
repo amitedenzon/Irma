@@ -1,4 +1,4 @@
-import type { Signal, StandupBrief } from "./types";
+import type { ChatMessage, ChatResponse, Signal, StandupBrief } from "./types";
 
 const BASE_URL: string =
   (import.meta.env.VITE_IRMA_API as string | undefined) ??
@@ -25,6 +25,15 @@ export async function fetchSignals(): Promise<Signal[]> {
 export async function forceRefresh(): Promise<void> {
   const res = await fetch(`${BASE_URL}/api/v1/refresh`, { method: "POST" });
   if (!res.ok) throw new Error(`refresh failed: HTTP ${res.status}`);
+}
+
+export async function sendChat(messages: ChatMessage[]): Promise<ChatResponse> {
+  const res = await fetch(`${BASE_URL}/api/v1/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ messages }),
+  });
+  return jsonOrThrow<ChatResponse>(res);
 }
 
 export const IRMA_API_BASE = BASE_URL;

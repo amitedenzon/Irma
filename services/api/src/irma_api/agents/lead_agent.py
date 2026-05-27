@@ -12,12 +12,12 @@ import json
 import re
 from collections import defaultdict
 from datetime import UTC, datetime
-from typing import Any, Final, cast
+from typing import Final
 
 import structlog
-from anthropic import AsyncAnthropic
 from pydantic import ValidationError
 
+from irma_api.agents.llm import ChatTurn, LLMClient
 from irma_api.config import Settings
 from irma_api.models.brief import StandupBrief
 from irma_api.models.signal import Signal
@@ -31,9 +31,11 @@ class BriefSynthesisError(RuntimeError):
 
 
 _SYSTEM_PROMPT: Final[str] = """\
-You are Irma, a calm, anticipatory PMO (Project Management Office) chief
-of staff. You observe a researcher's calendar and local git activity and
-produce a single daily standup brief in your own voice.
+You are Irma — a small dog who lives beside Amit's macOS Dock and serves
+as his calm, anticipatory PMO (Project Management Office) chief of staff.
+You observe his calendar and local git activity and produce a single
+daily standup brief in your own voice. Don't perform "dog" in the brief;
+your narrative voice can carry a quiet loyalty, nothing more.
 
 Tone: terse, factual, slightly proactive. No filler. No "I'll be happy to
 help" boilerplate. Surface cross-epic conflicts and schedule collisions as
@@ -138,12 +140,12 @@ class LeadAgent:
         self,
         *,
         settings: Settings,
-        client: AsyncAnthropic,
+        llm: LLMClient,
         store: SignalStore,
         max_tokens: int = 1500,
     ) -> None:
         self._settings = settings
-        self._client = client
+        self._llm = llm
         self._store = store
         self._max_tokens = max_tokens
 
@@ -155,26 +157,34 @@ class LeadAgent:
             return cached
 
         user_content = self._user_content(signals)
-        messages: list[dict[str, Any]] = [
-            {"role": "user", "content": user_content}
+        messages: list[ChatTurn] = [
+            ChatTurn(role="user", content=user_content)
         ]
 
-        text = await self._call_claude(messages)
+        text = await self._llm.complete(
+            system=_SYSTEM_PROMPT,
+            messages=messages,
+            max_tokens=self._max_tokens,
+        )
         try:
             brief = _parse_brief(text)
         except BriefSynthesisError:
             logger.info("lead_agent.retrying_parse")
-            messages.append({"role": "assistant", "content": text})
+            messages.append(ChatTurn(role="assistant", content=text))
             messages.append(
-                {
-                    "role": "user",
-                    "content": (
+                ChatTurn(
+                    role="user",
+                    content=(
                         "Your previous reply did not parse as the required JSON "
                         "object. Reply with ONLY the JSON object now."
                     ),
-                }
+                )
             )
-            retry_text = await self._call_claude(messages)
+            retry_text = await self._llm.complete(
+                system=_SYSTEM_PROMPT,
+                messages=messages,
+                max_tokens=self._max_tokens,
+            )
             brief = _parse_brief(retry_text)
 
         await self._store.cache_brief(signal_hash, brief)
@@ -184,19 +194,6 @@ class LeadAgent:
             conflicts=len(brief.conflicts),
         )
         return brief
-
-    async def _call_claude(self, messages: list[dict[str, Any]]) -> str:
-        response = await self._client.messages.create(
-            model=self._settings.anthropic_model,
-            max_tokens=self._max_tokens,
-            system=_SYSTEM_PROMPT,
-            messages=cast(Any, messages),
-        )
-        parts: list[str] = []
-        for block in response.content:
-            if getattr(block, "type", None) == "text":
-                parts.append(str(getattr(block, "text", "")))
-        return "\n".join(parts).strip()
 
     def _user_content(self, signals: list[Signal]) -> str:
         now = datetime.now(UTC).isoformat()
