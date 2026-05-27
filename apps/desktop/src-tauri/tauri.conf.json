@@ -30,7 +30,7 @@
         "label": "companion",
         "title": "Nofari Companion",
         "url": "companion.html",
-        "width": 96,
+        "width": 128,
         "height": 96,
         "decorations": false,
         "transparent": true,

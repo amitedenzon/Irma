@@ -7,6 +7,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             windows::position_companion,
             windows::toggle_main,
+            windows::get_companion_bounds,
+            windows::set_companion_pos,
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]

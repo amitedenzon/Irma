@@ -1,8 +1,8 @@
 import type { CSSProperties } from "react";
-import type { AgentState, SpriteManifest } from "../lib/types";
+import type { AgentState, SpriteFrameSpec, SpriteManifest } from "../lib/types";
 import { useSpriteAnimation } from "./useSpriteAnimation";
 
-const PLACEHOLDER_SIZE = 80; // window is 96×96; 8px breathing room each side
+const PLACEHOLDER_SIZE = 80;
 
 const PLACEHOLDER_BG: Record<AgentState, string> = {
   idle: "radial-gradient(circle at 50% 42%, #9ea3ff 0%, #4b53d8 65%, #2a2f7a 100%)",
@@ -19,36 +19,49 @@ const PLACEHOLDER_ANIM: Record<AgentState, string> = {
 };
 
 interface SpriteProps {
-  state: AgentState;
+  spec: SpriteFrameSpec;
   manifest: SpriteManifest;
   sheetAvailable: boolean;
+  fallbackState: AgentState;
+  /** Flip the sprite horizontally — source art faces left, mirror for right. */
+  mirror?: boolean;
 }
 
-export function Sprite({ state, manifest, sheetAvailable }: SpriteProps) {
-  const spec = manifest.states[state];
+export function Sprite({
+  spec,
+  manifest,
+  sheetAvailable,
+  fallbackState,
+  mirror = false,
+}: SpriteProps) {
   const { frameIndex } = useSpriteAnimation(spec.frames.length, spec.fps);
   const frame = spec.frames[frameIndex] ?? spec.frames[0];
 
   if (sheetAvailable) {
+    const scale = manifest.scale ?? 1;
+    const dispW = manifest.frameWidth * scale;
+    const dispH = manifest.frameHeight * scale;
+    const col = frame % manifest.columns;
+    const row = Math.floor(frame / manifest.columns);
     const sheetStyle: CSSProperties = {
-      width: manifest.frameWidth,
-      height: manifest.frameHeight,
+      width: dispW,
+      height: dispH,
       backgroundImage: `url(/sprites/${manifest.image})`,
-      backgroundPosition: `${-(frame * manifest.frameWidth)}px 0`,
+      backgroundPosition: `${-col * dispW}px ${-row * dispH}px`,
+      backgroundSize: `${manifest.columns * dispW}px auto`,
       backgroundRepeat: "no-repeat",
       imageRendering: "pixelated",
       userSelect: "none",
+      transform: mirror ? "scaleX(-1)" : undefined,
     };
-    return <div style={sheetStyle} aria-label={`Nofari sprite — ${state}`} />;
+    return <div style={sheetStyle} aria-label="Nofari sprite" />;
   }
 
-  // Pure inline styles — no Tailwind dependency. 80×80 centered in the
-  // 96×96 window gives a soft visual margin around the sprite.
   const placeholderStyle: CSSProperties = {
     width: PLACEHOLDER_SIZE,
     height: PLACEHOLDER_SIZE,
-    background: PLACEHOLDER_BG[state],
-    animation: PLACEHOLDER_ANIM[state],
+    background: PLACEHOLDER_BG[fallbackState],
+    animation: PLACEHOLDER_ANIM[fallbackState],
     borderRadius: "50%",
     boxShadow: "0 6px 22px rgba(0, 0, 0, 0.45)",
     userSelect: "none",
@@ -56,7 +69,7 @@ export function Sprite({ state, manifest, sheetAvailable }: SpriteProps) {
   return (
     <div
       style={placeholderStyle}
-      aria-label={`Nofari sprite — ${state} (placeholder)`}
+      aria-label={`Nofari sprite — ${fallbackState} (placeholder)`}
     />
   );
 }

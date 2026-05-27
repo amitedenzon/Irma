@@ -1,23 +1,46 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { AgentState, SpriteManifest } from "../lib/types";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { AgentState, SpriteFrameSpec, SpriteManifest } from "../lib/types";
 import { subscribeAgentState } from "../lib/sse";
 import { Sprite } from "./Sprite";
 
-// Bundled fallback. Mirrors ARCHITECTURE §3 — used until /sprites/manifest.json
-// loads successfully, so the companion window is never empty/invisible.
 const FALLBACK_MANIFEST: SpriteManifest = {
-  image: "nofari_sheet.png",
-  frameWidth: 96,
-  frameHeight: 96,
+  image: "Dogs-Remastered-12.png",
+  frameWidth: 64,
+  frameHeight: 48,
+  columns: 8,
+  rows: 9,
+  scale: 2,
   states: {
-    idle: { frames: [0, 1, 2, 1], fps: 4, loop: true },
-    observing: { frames: [3, 4, 5], fps: 8, loop: true },
-    thinking: { frames: [6, 7], fps: 6, loop: true },
-    alert: { frames: [8, 9, 8, 9], fps: 10, loop: true },
+    idle: { frames: [0, 1, 2, 3, 4, 5], fps: 5, loop: true },
+    observing: { frames: [32, 33, 34, 35, 36, 37, 38, 39], fps: 8, loop: true },
+    thinking: { frames: [8, 9, 10, 11, 12, 13], fps: 4, loop: true },
+    alert: { frames: [40, 41, 42, 43, 44, 45, 46, 47], fps: 10, loop: true },
+  },
+  extras: {
+    cuddle: { frames: [64, 65, 66, 67], fps: 3, loop: true },
+    walk: { frames: [32, 33, 34, 35, 36, 37, 38, 39], fps: 8, loop: true },
+    walk_bark: { frames: [48, 49, 50, 51, 52, 53, 54, 55], fps: 9, loop: true },
+    stand: { frames: [0, 1, 2, 3, 4, 5], fps: 5, loop: true },
+    sit: { frames: [8, 9, 10, 11, 12, 13], fps: 4, loop: true },
+    lay: { frames: [16, 17, 18, 19, 20, 21], fps: 4, loop: true },
+    sit_bark: { frames: [8, 9, 10, 11, 12, 13, 14, 15], fps: 6, loop: true },
   },
 };
+
+interface CompanionBounds {
+  monitorWidth: number;
+  monitorHeight: number;
+  spriteWidth: number;
+  spriteHeight: number;
+  y: number;
+  minX: number;
+  maxX: number;
+  dockClearance: number;
+  dogYOffset: number;
+}
 
 const WRAPPER_STYLE: CSSProperties = {
   width: "100vw",
@@ -28,45 +51,92 @@ const WRAPPER_STYLE: CSSProperties = {
   cursor: "pointer",
 };
 
+const WALK_SPEED_PX_PER_SEC = 60;
+const CUDDLE_MIN_MS = 10_000;
+const CUDDLE_MAX_MS = 25_000;
+const BARK_PROBABILITY = 0.15;
+const FULL_TRAVERSE_PROBABILITY = 0.12;
+
+// Durations of the "transition" frames between walk and cuddle.
+// Each is one full loop of its animation.
+const STAND_MS = 1200; // 6 frames @ 5 fps
+const SIT_MS = 1500;   // 6 frames @ 4 fps
+const LAY_MS = 1500;   // 6 frames @ 4 fps
+
+const TEST_WALK_ONLY: boolean =
+  (import.meta.env.VITE_DOG_TEST_WALK as string | undefined) === "1";
+
+type DogVariant =
+  | "walk"
+  | "walk_bark"
+  | "stand"
+  | "sit"
+  | "lay"
+  | "cuddle"
+  | "sit_bark";
+
+interface DogRender {
+  variant: DogVariant;
+  facingRight: boolean;
+}
+
+function pickWalkTarget(currentX: number, bounds: CompanionBounds): number {
+  if (Math.random() < FULL_TRAVERSE_PROBABILITY) {
+    const mid = (bounds.minX + bounds.maxX) / 2;
+    return currentX < mid ? bounds.maxX : bounds.minX;
+  }
+  const span = bounds.maxX - bounds.minX;
+  const hop = span * (0.1 + Math.random() * 0.45);
+  const goRight = Math.random() < 0.5;
+  const raw = goRight ? currentX + hop : currentX - hop;
+  return clamp(raw, bounds.minX, bounds.maxX);
+}
+
+function clamp(v: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, v));
+}
+
+function monitorsDiffer(a: CompanionBounds | null, b: CompanionBounds): boolean {
+  if (!a) return true;
+  // Treat as a different monitor if the strip moved by more than the window.
+  return (
+    Math.abs(a.minX - b.minX) > 10 ||
+    Math.abs(a.y - b.y) > 10 ||
+    Math.abs(a.monitorWidth - b.monitorWidth) > 10
+  );
+}
+
 export function Companion() {
   const [manifest, setManifest] = useState<SpriteManifest>(FALLBACK_MANIFEST);
   const [sheetAvailable, setSheetAvailable] = useState<boolean>(false);
-  const [state, setState] = useState<AgentState>("idle");
+  const [agentState, setAgentState] = useState<AgentState>("idle");
+  const [dog, setDog] = useState<DogRender>({
+    variant: "cuddle",
+    facingRight: false,
+  });
 
+  const boundsRef = useRef<CompanionBounds | null>(null);
+  const xRef = useRef<number>(0);
+
+  // Load manifest + probe for real spritesheet.
   useEffect(() => {
-    console.info("[companion] mounted, using fallback manifest until fetch resolves");
     let cancelled = false;
     (async () => {
       try {
         const res = await fetch("/sprites/manifest.json");
         if (!res.ok) {
-          console.warn(
-            "[companion] manifest fetch returned",
-            res.status,
-            "— keeping fallback",
-          );
+          console.warn("[companion] manifest fetch", res.status);
           return;
         }
         const m = (await res.json()) as SpriteManifest;
         if (cancelled) return;
         setManifest(m);
-        // Probe must return a real image — Vite's dev server falls back to
-        // index.html for unknown paths, so `probe.ok` alone is a lie.
         const probe = await fetch(`/sprites/${m.image}`, { method: "HEAD" });
-        const contentType = probe.headers.get("content-type") ?? "";
-        const hasRealSheet = probe.ok && contentType.startsWith("image/");
-        if (!cancelled) setSheetAvailable(hasRealSheet);
-        console.info(
-          "[companion] manifest loaded — sheetAvailable=",
-          hasRealSheet,
-          "(probe.ok=",
-          probe.ok,
-          ", content-type=",
-          contentType || "<none>",
-          ")",
-        );
+        const ct = probe.headers.get("content-type") ?? "";
+        if (!cancelled) setSheetAvailable(probe.ok && ct.startsWith("image/"));
+        console.info("[companion] manifest loaded; sheet=", probe.ok && ct.startsWith("image/"));
       } catch (e) {
-        console.warn("[companion] manifest fetch threw", e, "— keeping fallback");
+        console.warn("[companion] manifest fetch failed", e);
       }
     })();
     return () => {
@@ -74,18 +144,188 @@ export function Companion() {
     };
   }, []);
 
+  // Agent-state SSE — kept for future use; doesn't drive the dog brain.
   useEffect(() => {
-    invoke("position_companion")
-      .then(() => console.info("[companion] position_companion OK"))
-      .catch((e: unknown) =>
-        console.error("[companion] position_companion failed:", e),
-      );
-  }, []);
-
-  useEffect(() => {
-    const sub = subscribeAgentState(setState);
+    const sub = subscribeAgentState(setAgentState);
     return () => sub.close();
   }, []);
+
+  // Dog brain.
+  useEffect(() => {
+    let cancelled = false;
+    let raf = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let mode: "autonomous" | "bark" = "autonomous";
+    let unlistenVis: UnlistenFn | undefined;
+
+    const clearTimers = (): void => {
+      if (raf) cancelAnimationFrame(raf);
+      raf = 0;
+      if (timer) clearTimeout(timer);
+      timer = undefined;
+    };
+
+    const moveTo = (x: number): void => {
+      xRef.current = x;
+      const b = boundsRef.current;
+      if (!b) return;
+      void invoke("set_companion_pos", { x, y: b.y }).catch((e: unknown) =>
+        console.error("[companion] set_companion_pos failed", e),
+      );
+    };
+
+    const refreshBounds = async (): Promise<CompanionBounds | null> => {
+      try {
+        const b = (await invoke("get_companion_bounds")) as CompanionBounds;
+        const migrating = monitorsDiffer(boundsRef.current, b);
+        boundsRef.current = b;
+        if (migrating) {
+          const center = b.minX + (b.maxX - b.minX) / 2;
+          xRef.current = center;
+          void invoke("set_companion_pos", { x: center, y: b.y });
+          console.info("[companion] migrated to monitor", {
+            minX: b.minX,
+            maxX: b.maxX,
+            y: b.y,
+          });
+        }
+        return b;
+      } catch (e) {
+        console.error("[companion] get_companion_bounds failed", e);
+        return null;
+      }
+    };
+
+    const startCuddle = (): void => {
+      if (cancelled || mode !== "autonomous") return;
+      setDog((d) => ({ variant: "cuddle", facingRight: d.facingRight }));
+      const dur = CUDDLE_MIN_MS + Math.random() * (CUDDLE_MAX_MS - CUDDLE_MIN_MS);
+      timer = setTimeout(() => void startWalk(), dur);
+    };
+
+    const startLayThenCuddle = (): void => {
+      if (cancelled || mode !== "autonomous") return;
+      setDog((d) => ({ variant: "lay", facingRight: d.facingRight }));
+      timer = setTimeout(() => startCuddle(), LAY_MS);
+    };
+
+    const startSitThenLay = (): void => {
+      if (cancelled || mode !== "autonomous") return;
+      setDog((d) => ({ variant: "sit", facingRight: d.facingRight }));
+      timer = setTimeout(() => startLayThenCuddle(), SIT_MS);
+    };
+
+    const startStandThenSit = (): void => {
+      if (cancelled || mode !== "autonomous") return;
+      setDog((d) => ({ variant: "stand", facingRight: d.facingRight }));
+      timer = setTimeout(() => startSitThenLay(), STAND_MS);
+    };
+
+    const startWalk = async (): Promise<void> => {
+      if (cancelled || mode !== "autonomous") return;
+      const bounds = await refreshBounds();
+      if (!bounds) {
+        timer = setTimeout(() => void startWalk(), 1000);
+        return;
+      }
+      const startX = xRef.current;
+
+      let targetX: number;
+      let bark: boolean;
+      if (TEST_WALK_ONLY) {
+        const mid = (bounds.minX + bounds.maxX) / 2;
+        targetX = startX < mid ? bounds.maxX : bounds.minX;
+        bark = false;
+      } else {
+        targetX = pickWalkTarget(startX, bounds);
+        bark = Math.random() < BARK_PROBABILITY;
+      }
+
+      const distance = Math.abs(targetX - startX);
+      if (distance < 24) {
+        if (TEST_WALK_ONLY) {
+          targetX = startX === bounds.minX ? bounds.maxX : bounds.minX;
+        } else {
+          timer = setTimeout(() => startStandThenSit(), 200);
+          return;
+        }
+      }
+
+      const facingRight = targetX > startX;
+      setDog({ variant: bark ? "walk_bark" : "walk", facingRight });
+
+      const durMs = (Math.abs(targetX - startX) / WALK_SPEED_PX_PER_SEC) * 1000;
+      const startT = performance.now();
+      const step = (): void => {
+        if (cancelled || mode !== "autonomous") return;
+        const t = Math.min(1, (performance.now() - startT) / durMs);
+        const x = startX + (targetX - startX) * t;
+        moveTo(x);
+        if (t < 1) {
+          raf = requestAnimationFrame(step);
+        } else if (TEST_WALK_ONLY) {
+          void startWalk();
+        } else {
+          startStandThenSit();
+        }
+      };
+      raf = requestAnimationFrame(step);
+    };
+
+    // ---- Bark mode (main window open) ---------------------------------
+    const enterBarkMode = (): void => {
+      mode = "bark";
+      clearTimers();
+      const facingRight = Math.random() < 0.5;
+      setDog({ variant: "sit_bark", facingRight });
+      console.info("[companion] enter bark mode");
+    };
+
+    const exitBarkMode = (): void => {
+      if (mode !== "bark") return;
+      mode = "autonomous";
+      clearTimers();
+      // lay (1 loop) → cuddle → resume walking
+      setDog((d) => ({ variant: "lay", facingRight: d.facingRight }));
+      timer = setTimeout(() => startCuddle(), LAY_MS);
+      console.info("[companion] exit bark mode → lay → cuddle → walk");
+    };
+
+    // ---- Bootstrap ----------------------------------------------------
+    (async () => {
+      const bounds = await refreshBounds();
+      if (!bounds || cancelled) return;
+      const center = bounds.minX + (bounds.maxX - bounds.minX) / 2;
+      xRef.current = center;
+      moveTo(center);
+      console.info("[companion] bounds", bounds, TEST_WALK_ONLY ? "(TEST)" : "");
+      if (TEST_WALK_ONLY) {
+        void startWalk();
+      } else {
+        startCuddle();
+      }
+    })();
+
+    listen<boolean>("main:visibility", (event) => {
+      if (cancelled) return;
+      if (event.payload) enterBarkMode();
+      else exitBarkMode();
+    })
+      .then((u) => {
+        unlistenVis = u;
+      })
+      .catch((e) => console.error("[companion] listen main:visibility failed", e));
+
+    return () => {
+      cancelled = true;
+      clearTimers();
+      if (unlistenVis) unlistenVis();
+    };
+  }, []);
+
+  const extras = manifest.extras ?? {};
+  const spec: SpriteFrameSpec =
+    extras[dog.variant] ?? manifest.states[agentState];
 
   const onClick = (): void => {
     void invoke("toggle_main").catch((e: unknown) =>
@@ -100,7 +340,13 @@ export function Companion() {
       role="button"
       aria-label="Nofari companion"
     >
-      <Sprite state={state} manifest={manifest} sheetAvailable={sheetAvailable} />
+      <Sprite
+        spec={spec}
+        manifest={manifest}
+        sheetAvailable={sheetAvailable}
+        fallbackState={agentState}
+        mirror={dog.facingRight}
+      />
     </div>
   );
 }
