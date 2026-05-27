@@ -20,11 +20,13 @@ from irma_api.agents.llm import LLMClient, OllamaLLM, build_llm_client
 from irma_api.agents.time_agent import TimeAgent
 from irma_api.config import get_settings
 from irma_api.logging import configure_logging
+from irma_api.routers.brief import router as brief_router
 from irma_api.routers.chat import router as chat_router
+from irma_api.routers.projects import router as projects_router
 from irma_api.routers.signals import router as signals_router
 from irma_api.routers.signals import run_refresh
-from irma_api.routers.standup import router as standup_router
 from irma_api.routers.state import router as state_router
+from irma_api.routers.tasks import router as tasks_router
 from irma_api.runtime.scheduler import Scheduler
 from irma_api.runtime.state import StateBus
 from irma_api.store.sqlite import SignalStore
@@ -67,12 +69,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.lead_agent = lead_agent
 
     async def tick() -> None:
-        await run_refresh(
-            store=store,
-            observers=observers,
-            bus=bus,
-            lead_agent=lead_agent,
-        )
+        await run_refresh(store=store, observers=observers, bus=bus)
 
     scheduler = Scheduler(
         refresh_minutes=settings.irma_refresh_minutes,
@@ -122,9 +119,11 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(signals_router, prefix="/api/v1")
-    app.include_router(standup_router, prefix="/api/v1")
     app.include_router(state_router, prefix="/api/v1")
     app.include_router(chat_router, prefix="/api/v1")
+    app.include_router(projects_router, prefix="/api/v1")
+    app.include_router(tasks_router, prefix="/api/v1")
+    app.include_router(brief_router, prefix="/api/v1")
 
     @app.get("/", include_in_schema=False)
     async def root() -> dict[str, str]:
