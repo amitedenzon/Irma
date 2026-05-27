@@ -68,3 +68,9 @@ apps/desktop/src-tauri/WixTools/
 /irma.db
 services/api/irma.db
 services/api/.coverage
+
+# --- Launcher build outputs ---
+apps/launcher/Irma.app/
+apps/launcher/Stop Irma.app/
+apps/launcher/crown.icns
+apps/launcher/crown.iconset/
