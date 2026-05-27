@@ -1,0 +1,57 @@
+@import "tailwindcss";
+
+@theme {
+  --color-nofari-bg: #10131a;
+  --color-nofari-surface: #1a1f2c;
+  --color-nofari-border: #2a3142;
+  --color-nofari-text: #e6e9ef;
+  --color-nofari-mute: #8a93a8;
+  --color-nofari-indigo: #7c83ff;
+  --color-nofari-teal: #5bd1c1;
+  --color-nofari-violet: #b386ff;
+  --color-nofari-amber: #ffb86b;
+  --color-nofari-rose: #ff7a8a;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  color: var(--color-nofari-text);
+  font-family:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue",
+    Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Companion window has no chrome — keep it click-pass-through clean */
+body.companion {
+  background: transparent;
+  overflow: hidden;
+  user-select: none;
+}
+
+/* Sprite placeholder animations. Used until a real spritesheet is dropped in. */
+@keyframes nofari-pulse {
+  0%, 100% { transform: scale(1);    opacity: 1; }
+  50%      { transform: scale(0.94); opacity: 0.78; }
+}
+@keyframes nofari-scan {
+  0%   { box-shadow: 0 0 0 0 rgba(91, 209, 193, 0.55); }
+  70%  { box-shadow: 0 0 0 18px rgba(91, 209, 193, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(91, 209, 193, 0); }
+}
+@keyframes nofari-shimmer {
+  0%   { filter: hue-rotate(0deg)  brightness(1); }
+  50%  { filter: hue-rotate(45deg) brightness(1.18); }
+  100% { filter: hue-rotate(0deg)  brightness(1); }
+}
+@keyframes nofari-blink {
+  0%, 100% { background-color: var(--color-nofari-amber); }
+  50%      { background-color: #ff7a45; }
+}
