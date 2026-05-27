@@ -1,4 +1,4 @@
-"""Async SQLite-backed persistence for signals + brief cache."""
+"""Async SQLite-backed persistence for signals."""
 
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ from typing import Any
 
 import aiosqlite
 
-from irma_api.models.brief import StandupBrief
 from irma_api.models.signal import Signal
 from irma_api.store.migrations import ensure_schema
 
@@ -112,32 +111,3 @@ class SignalStore:
             meta=meta,
         )
 
-    # --- Briefs --------------------------------------------------------------
-
-    async def get_cached_brief(self, signal_set_hash: str) -> StandupBrief | None:
-        conn = self._require()
-        cur = await conn.execute(
-            "SELECT payload_json FROM briefs WHERE signal_set_hash = ?",
-            (signal_set_hash,),
-        )
-        row = await cur.fetchone()
-        if row is None:
-            return None
-        return StandupBrief.model_validate_json(row["payload_json"])
-
-    async def cache_brief(self, signal_set_hash: str, brief: StandupBrief) -> None:
-        conn = self._require()
-        await conn.execute(
-            """
-            INSERT OR REPLACE INTO briefs (signal_set_hash, payload_json, generated_at)
-            VALUES (?, ?, ?)
-            """,
-            (signal_set_hash, brief.model_dump_json(), brief.generated_at.isoformat()),
-        )
-        await conn.commit()
-
-    async def invalidate_briefs(self) -> None:
-        """Drop the entire brief cache. Called from POST /refresh."""
-        conn = self._require()
-        await conn.execute("DELETE FROM briefs")
-        await conn.commit()
