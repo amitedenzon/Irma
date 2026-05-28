@@ -72,6 +72,25 @@ def _patch_subprocess(
     return captured
 
 
+def _patch_subprocess_seq(
+    monkeypatch: pytest.MonkeyPatch, procs: list[_FakeProcess]
+) -> list[list[str]]:
+    """Same as _patch_subprocess but returns a different process per call.
+
+    Returns a list that will be appended to with the argv of each invocation,
+    so tests can assert how the second call differed from the first.
+    """
+    calls: list[list[str]] = []
+    queue = list(procs)
+
+    async def fake_exec(*argv: str, **kwargs: Any) -> _FakeProcess:
+        calls.append(list(argv))
+        return queue.pop(0)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    return calls
+
+
 def _envelope(
     *,
     result: str = "PONG",
@@ -289,3 +308,95 @@ async def test_non_json_stdout_raises_runtime(
             messages=[ChatTurn(role="user", content="hi")],
             session_id=_VALID_UUID,
         )
+
+
+@pytest.mark.asyncio
+async def test_second_turn_uses_resume_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Same session_id across two turns → first creates, second resumes.
+
+    Regression test: claude refuses to re-create an existing session UUID
+    ("Session ID ... is already in use."), so subsequent turns must switch
+    from `--session-id` to `--resume`.
+    """
+    calls = _patch_subprocess_seq(
+        monkeypatch,
+        [
+            _FakeProcess(stdout=_envelope(result="first")),
+            _FakeProcess(stdout=_envelope(result="second")),
+        ],
+    )
+    llm = ClaudeCliLLM()
+    await llm.complete(
+        system="persona",
+        messages=[ChatTurn(role="user", content="turn one")],
+        session_id=_VALID_UUID,
+    )
+    await llm.complete(
+        system="persona",
+        messages=[ChatTurn(role="user", content="turn two")],
+        session_id=_VALID_UUID,
+    )
+    assert len(calls) == 2
+    create_argv, resume_argv = calls
+    # First turn: --session-id present, --resume absent, --system-prompt present
+    assert "--session-id" in create_argv
+    assert "--resume" not in create_argv
+    assert "--system-prompt" in create_argv
+    # Second turn: --resume present, --session-id absent, --system-prompt absent
+    assert "--resume" in resume_argv
+    assert resume_argv[resume_argv.index("--resume") + 1] == _VALID_UUID
+    assert "--session-id" not in resume_argv
+    assert "--system-prompt" not in resume_argv
+
+
+@pytest.mark.asyncio
+async def test_already_in_use_falls_back_to_resume(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Server-restart case: first turn after a restart sees a session that
+    survived on disk. Initial `--session-id` fails with "already in use";
+    we recover by retrying with `--resume`."""
+    calls = _patch_subprocess_seq(
+        monkeypatch,
+        [
+            _FakeProcess(
+                stderr=b"Error: Session ID xxx is already in use.\n",
+                returncode=1,
+            ),
+            _FakeProcess(stdout=_envelope(result="recovered")),
+        ],
+    )
+    llm = ClaudeCliLLM()
+    out = await llm.complete(
+        system="persona",
+        messages=[ChatTurn(role="user", content="hi")],
+        session_id=_VALID_UUID,
+    )
+    assert isinstance(out, TextResult)
+    assert out.text == "recovered"
+    assert len(calls) == 2
+    # First attempt was a create; recovery used --resume.
+    assert "--session-id" in calls[0]
+    assert "--resume" in calls[1]
+
+
+@pytest.mark.asyncio
+async def test_other_nonzero_exit_does_not_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only "already in use" triggers the resume fallback — other errors
+    must bubble up immediately without an extra subprocess invocation."""
+    calls = _patch_subprocess_seq(
+        monkeypatch,
+        [_FakeProcess(stderr=b"some other failure\n", returncode=2)],
+    )
+    llm = ClaudeCliLLM()
+    with pytest.raises(RuntimeError, match="claude exited 2"):
+        await llm.complete(
+            system="x",
+            messages=[ChatTurn(role="user", content="hi")],
+            session_id=_VALID_UUID,
+        )
+    assert len(calls) == 1
