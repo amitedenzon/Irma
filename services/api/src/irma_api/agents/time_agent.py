@@ -70,7 +70,7 @@ class TimeAgent:
         client = ClientCreds(
             client_id=s.google_oauth_client_id.get_secret_value(),
             client_secret=s.google_oauth_client_secret.get_secret_value(),
-            scopes=["https://www.googleapis.com/auth/calendar.readonly"],
+            scopes=["https://www.googleapis.com/auth/calendar.events"],
         )
         user = UserCreds(
             refresh_token=s.google_oauth_refresh_token.get_secret_value(),
