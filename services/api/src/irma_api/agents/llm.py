@@ -1,9 +1,9 @@
 """LLM client abstraction.
 
-Both LeadAgent (JSON-only standup synthesis) and the /chat endpoint
-(free-form persona reply) need a single async ``complete()`` call. We hide
-provider differences behind :class:`LLMClient` so the rest of the codebase
-never sees an SDK type and the backend is selectable via env.
+Both LeadAgent (JSON-only standup synthesis) and the /chat endpoint (free-form
+persona reply, possibly with tool use) need a single async ``complete()`` call.
+We hide provider differences behind :class:`LLMClient` so the rest of the
+codebase never sees an SDK type and the backend is selectable via env.
 """
 
 from __future__ import annotations
@@ -13,9 +13,10 @@ from typing import Any, Literal, Protocol, cast, runtime_checkable
 import httpx
 import structlog
 from anthropic import AsyncAnthropic
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from irma_api.config import Settings
+from irma_api.tools.base import ToolSpec
 
 logger = structlog.get_logger(__name__)
 
@@ -23,11 +24,45 @@ logger = structlog.get_logger(__name__)
 Role = Literal["user", "assistant"]
 
 
+class ToolCall(BaseModel):
+    """One tool the model wants to invoke."""
+
+    id: str
+    name: str
+    args: dict[str, Any]
+
+
+class ToolResult(BaseModel):
+    """The output of a tool invocation, ready to feed back to the model."""
+
+    tool_use_id: str
+    content: str
+
+
 class ChatTurn(BaseModel):
-    """One turn in a conversation. System prompt is passed separately."""
+    """One turn in a conversation. System prompt is passed separately.
+
+    Tool-use extensions are optional and additive:
+    * ``tool_calls`` is set on an assistant turn that asked to call tools.
+    * ``tool_results`` is set on a user turn that is replying with results.
+    """
 
     role: Role
     content: str
+    tool_calls: list[ToolCall] = Field(default_factory=list)
+    tool_results: list[ToolResult] = Field(default_factory=list)
+
+
+class TextResult(BaseModel):
+    text: str
+
+
+class ToolCallResult(BaseModel):
+    calls: list[ToolCall]
+    preface: str = ""  # text the assistant emitted before the tool call(s)
+
+
+CompleteResult = TextResult | ToolCallResult
 
 
 @runtime_checkable
@@ -42,8 +77,57 @@ class LLMClient(Protocol):
         *,
         system: str,
         messages: list[ChatTurn],
+        tools: list[ToolSpec] | None = None,
         max_tokens: int = 1500,
-    ) -> str: ...
+    ) -> CompleteResult: ...
+
+
+def _anthropic_messages(turns: list[ChatTurn]) -> list[dict[str, Any]]:
+    """Translate ChatTurn list into Anthropic Messages wire format."""
+    out: list[dict[str, Any]] = []
+    for t in turns:
+        if t.tool_calls:
+            content: list[dict[str, Any]] = []
+            if t.content:
+                content.append({"type": "text", "text": t.content})
+            content.extend(
+                {
+                    "type": "tool_use",
+                    "id": c.id,
+                    "name": c.name,
+                    "input": c.args,
+                }
+                for c in t.tool_calls
+            )
+            out.append({"role": t.role, "content": content})
+        elif t.tool_results:
+            out.append(
+                {
+                    "role": t.role,
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": r.tool_use_id,
+                            "content": r.content,
+                        }
+                        for r in t.tool_results
+                    ],
+                }
+            )
+        else:
+            out.append({"role": t.role, "content": t.content})
+    return out
+
+
+def _anthropic_tools(specs: list[ToolSpec]) -> list[dict[str, Any]]:
+    return [
+        {
+            "name": s.name,
+            "description": s.description,
+            "input_schema": s.input_schema,
+        }
+        for s in specs
+    ]
 
 
 class AnthropicLLM:
@@ -58,20 +142,40 @@ class AnthropicLLM:
         *,
         system: str,
         messages: list[ChatTurn],
+        tools: list[ToolSpec] | None = None,
         max_tokens: int = 1500,
-    ) -> str:
-        wire: list[dict[str, Any]] = [{"role": m.role, "content": m.content} for m in messages]
-        response = await self._client.messages.create(
-            model=self.model,
-            max_tokens=max_tokens,
-            system=system,
-            messages=cast(Any, wire),
-        )
-        parts: list[str] = []
+    ) -> CompleteResult:
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "max_tokens": max_tokens,
+            "system": system,
+            "messages": _anthropic_messages(messages),
+        }
+        if tools:
+            kwargs["tools"] = _anthropic_tools(tools)
+
+        response = await self._client.messages.create(**cast(Any, kwargs))
+
+        tool_calls: list[ToolCall] = []
+        text_parts: list[str] = []
         for block in response.content:
-            if getattr(block, "type", None) == "text":
-                parts.append(str(getattr(block, "text", "")))
-        return "\n".join(parts).strip()
+            btype = getattr(block, "type", None)
+            if btype == "text":
+                text_parts.append(str(getattr(block, "text", "")))
+            elif btype == "tool_use":
+                tool_calls.append(
+                    ToolCall(
+                        id=str(getattr(block, "id", "")),
+                        name=str(getattr(block, "name", "")),
+                        args=dict(getattr(block, "input", {}) or {}),
+                    )
+                )
+
+        if tool_calls:
+            return ToolCallResult(
+                calls=tool_calls, preface="\n".join(text_parts).strip()
+            )
+        return TextResult(text="\n".join(text_parts).strip())
 
 
 class OllamaLLM:
@@ -99,25 +203,76 @@ class OllamaLLM:
         *,
         system: str,
         messages: list[ChatTurn],
+        tools: list[ToolSpec] | None = None,
         max_tokens: int = 1500,
-    ) -> str:
-        wire: list[dict[str, str]] = [{"role": "system", "content": system}]
-        wire.extend({"role": m.role, "content": m.content} for m in messages)
+    ) -> CompleteResult:
+        wire: list[dict[str, Any]] = [{"role": "system", "content": system}]
+        for m in messages:
+            if m.tool_calls:
+                wire.append(
+                    {
+                        "role": "assistant",
+                        "content": m.content,
+                        "tool_calls": [
+                            {
+                                "function": {
+                                    "name": c.name,
+                                    "arguments": c.args,
+                                }
+                            }
+                            for c in m.tool_calls
+                        ],
+                    }
+                )
+            elif m.tool_results:
+                for r in m.tool_results:
+                    wire.append({"role": "tool", "content": r.content})
+            else:
+                wire.append({"role": m.role, "content": m.content})
+
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": wire,
             "stream": False,
             "options": {"num_predict": max_tokens},
         }
+        if tools:
+            payload["tools"] = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": s.name,
+                        "description": s.description,
+                        "parameters": s.input_schema,
+                    },
+                }
+                for s in tools
+            ]
+
         resp = await self._http.post("/api/chat", json=payload)
         resp.raise_for_status()
         data = resp.json()
-        # Ollama shape: {"message": {"role": "assistant", "content": "..."}, ...}
         msg = data.get("message") or {}
+
+        raw_calls = msg.get("tool_calls") or []
+        if raw_calls:
+            calls: list[ToolCall] = []
+            for i, raw in enumerate(raw_calls):
+                fn = raw.get("function") or {}
+                calls.append(
+                    ToolCall(
+                        id=str(raw.get("id") or f"ollama_{i}"),
+                        name=str(fn.get("name", "")),
+                        args=dict(fn.get("arguments") or {}),
+                    )
+                )
+            preface = str(msg.get("content") or "").strip()
+            return ToolCallResult(calls=calls, preface=preface)
+
         content = msg.get("content")
         if not isinstance(content, str):
             raise RuntimeError(f"unexpected ollama response shape: {data!r}")
-        return content.strip()
+        return TextResult(text=content.strip())
 
 
 def build_llm_client(settings: Settings) -> LLMClient | None:

@@ -10,7 +10,8 @@ import pytest
 import pytest_asyncio
 
 from irma_api.agents.lead_agent import LeadAgent
-from irma_api.agents.llm import ChatTurn
+from irma_api.agents.llm import ChatTurn, CompleteResult, TextResult
+from irma_api.tools.base import ToolSpec
 from irma_api.config import Settings
 from irma_api.models.brief import Horizon
 from irma_api.models.project import ProjectCreate
@@ -30,9 +31,16 @@ class FakeLLM:
         self._responses = list(responses)
         self.calls: list[tuple[str, Sequence[ChatTurn]]] = []
 
-    async def complete(self, *, system: str, messages: Sequence[ChatTurn], max_tokens: int) -> str:
+    async def complete(
+        self,
+        *,
+        system: str,
+        messages: Sequence[ChatTurn],
+        tools: list[ToolSpec] | None = None,
+        max_tokens: int = 1500,
+    ) -> CompleteResult:
         self.calls.append((system, list(messages)))
-        return self._responses.pop(0)
+        return TextResult(text=self._responses.pop(0))
 
 
 def _brief_json(horizon: str) -> str:

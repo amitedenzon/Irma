@@ -47,11 +47,15 @@ class _FakeLLM:
     backend = "fake"
     model = "fake-1"
 
-    async def complete(self, *, system, messages, max_tokens):
-        return (
-            '{"horizon":"day","generated_at":"2026-05-27T12:00:00+00:00",'
-            '"focus":[],"project_status":[],"conflicts":[],'
-            '"recommendation":"ok","narrative":""}'
+    async def complete(self, *, system, messages, tools=None, max_tokens=1500):
+        from irma_api.agents.llm import TextResult
+
+        return TextResult(
+            text=(
+                '{"horizon":"day","generated_at":"2026-05-27T12:00:00+00:00",'
+                '"focus":[],"project_status":[],"conflicts":[],'
+                '"recommendation":"ok","narrative":""}'
+            )
         )
 
 

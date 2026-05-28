@@ -18,7 +18,7 @@ from typing import Final
 import structlog
 from pydantic import ValidationError
 
-from irma_api.agents.llm import ChatTurn, LLMClient
+from irma_api.agents.llm import ChatTurn, LLMClient, TextResult
 from irma_api.agents.prompts import load_prompt
 from irma_api.config import Settings
 from irma_api.models.brief import Brief, Horizon
@@ -171,9 +171,10 @@ class LeadAgent:
         user = self._compose_user_message(ctx)
         messages: list[ChatTurn] = [ChatTurn(role="user", content=user)]
 
-        text = await self._llm.complete(
+        outcome = await self._llm.complete(
             system=system, messages=messages, max_tokens=self._max_tokens
         )
+        text = outcome.text if isinstance(outcome, TextResult) else ""
         try:
             return _parse_brief(text)
         except BriefSynthesisError:
@@ -187,10 +188,13 @@ class LeadAgent:
                     ),
                 )
             )
-            retry = await self._llm.complete(
+            retry_outcome = await self._llm.complete(
                 system=system, messages=messages, max_tokens=self._max_tokens
             )
-            return _parse_brief(retry)
+            retry_text = (
+                retry_outcome.text if isinstance(retry_outcome, TextResult) else ""
+            )
+            return _parse_brief(retry_text)
 
     def _compose_user_message(self, ctx: SynthesisContext) -> str:
         lines: list[str] = [
