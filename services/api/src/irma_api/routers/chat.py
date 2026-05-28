@@ -1,4 +1,4 @@
-"""Free-form chat with Irma — small surface for testing the active LLM backend."""
+"""Free-form chat with Irma — runs the tool-call loop on LLM outputs."""
 
 from __future__ import annotations
 
@@ -8,12 +8,24 @@ import structlog
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
-from irma_api.agents.llm import ChatTurn, LLMClient, Role, TextResult
+from irma_api.agents.llm import (
+    ChatTurn,
+    LLMClient,
+    Role,
+    TextResult,
+    ToolCall,
+    ToolCallResult,
+    ToolResult,
+)
 from irma_api.runtime.state import AgentState, StateBus
+from irma_api.tools.base import ToolError, ToolRegistry
 
 logger = structlog.get_logger(__name__)
 
 router = APIRouter(tags=["chat"])
+
+MAX_TOOL_ITERATIONS: Final[int] = 4
+_STUCK_REPLY = "I got stuck mid-tool-call — try rephrasing."
 
 
 _SYSTEM_PROMPT: Final[str] = """\
@@ -54,6 +66,28 @@ class ChatResponse(BaseModel):
     model: str
 
 
+async def _run_tool_calls(
+    registry: ToolRegistry, calls: list[ToolCall]
+) -> list[ToolResult]:
+    """Invoke each call; ToolError outputs ride along as the tool's reply text."""
+    results: list[ToolResult] = []
+    for call in calls:
+        try:
+            content = await registry.call(call.name, call.args)
+        except ToolError as exc:
+            logger.warning(
+                "chat.tool_error",
+                tool=call.name,
+                code=exc.code,
+                detail=exc.detail,
+            )
+            content = f"error: {exc.code}" + (
+                f" — {exc.detail}" if exc.detail else ""
+            )
+        results.append(ToolResult(tool_use_id=call.id, content=content))
+    return results
+
+
 @router.post("/chat", response_model=ChatResponse)
 async def post_chat(request: Request, body: ChatRequest) -> ChatResponse:
     llm: LLMClient | None = getattr(request.app.state, "llm", None)
@@ -64,11 +98,45 @@ async def post_chat(request: Request, body: ChatRequest) -> ChatResponse:
         )
 
     bus: StateBus = request.app.state.bus
+    tools: ToolRegistry | None = getattr(request.app.state, "tools", None)
+
+    turns: list[ChatTurn] = [
+        ChatTurn(role=m.role, content=m.content) for m in body.messages
+    ]
+
     await bus.publish(AgentState.THINKING)
+    reply: str | None = None
     try:
-        turns = [ChatTurn(role=m.role, content=m.content) for m in body.messages]
-        outcome = await llm.complete(system=_SYSTEM_PROMPT, messages=turns, max_tokens=800)
-        reply = outcome.text if isinstance(outcome, TextResult) else ""
+        for _iteration in range(MAX_TOOL_ITERATIONS):
+            tool_specs = tools.specs() if tools is not None else []
+            outcome = await llm.complete(
+                system=_SYSTEM_PROMPT,
+                messages=turns,
+                tools=tool_specs or None,
+                max_tokens=800,
+            )
+            if isinstance(outcome, TextResult):
+                reply = outcome.text
+                break
+            assert isinstance(outcome, ToolCallResult)
+            if tools is None:
+                logger.error("chat.tool_call_without_registry")
+                reply = _STUCK_REPLY
+                break
+            turns.append(
+                ChatTurn(
+                    role="assistant",
+                    content=outcome.preface,
+                    tool_calls=outcome.calls,
+                )
+            )
+            results = await _run_tool_calls(tools, outcome.calls)
+            turns.append(
+                ChatTurn(role="user", content="", tool_results=results)
+            )
+        if reply is None:
+            logger.error("chat.tool_loop_exceeded", iterations=MAX_TOOL_ITERATIONS)
+            reply = _STUCK_REPLY
     except Exception as exc:
         logger.exception("chat.failed", backend=llm.backend)
         await bus.publish(AgentState.ALERT)
@@ -76,5 +144,6 @@ async def post_chat(request: Request, body: ChatRequest) -> ChatResponse:
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"chat backend failed: {exc}",
         ) from exc
+
     await bus.publish(AgentState.IDLE)
     return ChatResponse(reply=reply, backend=llm.backend, model=llm.model)
