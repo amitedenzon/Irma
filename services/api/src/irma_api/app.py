@@ -32,6 +32,7 @@ from irma_api.runtime.scheduler import Scheduler
 from irma_api.runtime.state import StateBus
 from irma_api.store.sqlite import SignalStore
 from irma_api.tools.base import Tool, ToolRegistry
+from irma_api.tools.resend import ResendSendTool
 
 logger = structlog.get_logger(__name__)
 
@@ -51,7 +52,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     llm: LLMClient | None = build_llm_client(settings)
 
     tools: list[Tool] = []
-    # Step 5 will register the ResendSendTool here once both env prereqs are set.
+    if settings.resend_api_key is not None and settings.irma_user_email is not None:
+        tools.append(ResendSendTool(settings))
+    else:
+        logger.info(
+            "tools.send_email_disabled",
+            missing=[
+                key
+                for key, val in (
+                    ("RESEND_API_KEY", settings.resend_api_key),
+                    ("IRMA_USER_EMAIL", settings.irma_user_email),
+                )
+                if val is None
+            ],
+        )
     registry = ToolRegistry(tools)
 
     lead_agent: LeadAgentProtocol | None = None

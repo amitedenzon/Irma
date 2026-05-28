@@ -97,9 +97,21 @@ All mounted under `/api/v1`.
 | `signals.py` | `GET /signals`, `POST /refresh` | Inspect raw collected signals; force re-observation (drives the full `observing → thinking → idle/alert` cycle and primes the brief cache). |
 | `standup.py` | `GET /standup` | Returns the cached/fresh `StandupBrief`. 503s if `LeadAgent` isn't configured or no signals have been collected yet. |
 | `state.py` | `GET /state`, `GET /stream` | Current `AgentState`; SSE stream of transitions. SSE emits an initial snapshot, then each `event: state\ndata: <enum>\n\n`, with a 15s keep-alive comment. |
-| `chat.py` | `POST /chat` | Free-form chat with Irma's persona. Body: `{messages: [{role, content}]}`. Returns `{reply, backend, model}`. Publishes `thinking → idle/alert` on the bus so the sprite reacts. |
+| `chat.py` | `POST /chat` | Free-form chat with Irma's persona. Body: `{messages: [{role, content}]}`. Returns `{reply, backend, model}`. Runs an LLM↔tool dispatch loop (cap `MAX_TOOL_ITERATIONS=4`) against `app.state.tools`; degrades to a single LLM call when the registry is empty. Publishes `thinking → idle/alert` on the bus so the sprite reacts. |
+| `integrations.py` | `GET /integrations/google/status` | Reports `{calendar_linked, resend_linked, user_email, llm_backend, llm_model}`. `calendar_linked` ⇔ `GOOGLE_OAUTH_REFRESH_TOKEN` is set; `resend_linked` ⇔ both `RESEND_API_KEY` and `IRMA_USER_EMAIL` are set. |
 
 The shared `run_refresh()` coroutine in `routers/signals.py` is what both `POST /refresh` and the scheduler call — single code path for collection + caching.
+
+## Tools — `irma_api/tools/`
+
+LLM-callable functions exposed to the `/chat` tool loop. Provider-agnostic shapes so the same `ToolSpec` works for Anthropic and Ollama.
+
+- `base.py` — `ToolSpec` (name, description, JSON Schema), `Tool` protocol (`spec`, `async call(args) -> str`), `ToolRegistry` (name → tool dispatch). `ToolError(code, detail)` is the only user-visible failure shape; the chat loop folds it back into the model as a `tool_result` content string so the model can recover.
+- `resend.py` — `ResendSendTool` exposing `send_email(subject, body)`. Recipient is **server-locked** to `IRMA_USER_EMAIL`; the schema has no `to` field, so prompt injection can't redirect mail. Posts JSON to `https://api.resend.com/emails` via `httpx`. 4-attempt retry via `tenacity.AsyncRetrying`: retries 429 and 5xx (transport errors too), fail-fast on 4xx. Registered in `app.lifespan` only when both `RESEND_API_KEY` and `IRMA_USER_EMAIL` are set; otherwise the tool isn't in the registry and `/chat` runs without it.
+
+## Auth — `irma_api/auth/`
+
+- `google_oauth.py` — installed-app OAuth flow. `build_auth_uri()` and `exchange_code_for_refresh_token()` are pure / unit-testable; `run_installed_app_flow()` opens the system browser to Google's consent screen, captures the code on a localhost loopback callback (random free port), exchanges it. Scope is `calendar.readonly` only. Driven from the CLI (`irma-api auth google [--force]` — see `main.py`); the caller is responsible for persisting `GOOGLE_OAUTH_REFRESH_TOKEN` (the CLI writes it to `./.env`).
 
 ## Runtime — `irma_api/runtime/`
 

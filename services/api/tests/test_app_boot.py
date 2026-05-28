@@ -33,5 +33,21 @@ def test_app_boots_and_serves_integrations_status(
         assert body["resend_linked"] is False
         # ToolRegistry must always exist on app.state.
         assert hasattr(app.state, "tools")
-        # Step 4 leaves the registry empty; step 5 wires in send_email.
-        assert isinstance(app.state.tools.names(), list)
+        # Empty registry when RESEND_API_KEY + IRMA_USER_EMAIL aren't both set.
+        assert app.state.tools.names() == []
+
+
+def test_app_registers_send_email_when_resend_configured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("IRMA_DB_PATH", str(tmp_path / "boot2.db"))
+    monkeypatch.setenv("IRMA_LLM_BACKEND", "anthropic")
+    monkeypatch.setenv("IRMA_USER_EMAIL", "amit@example.com")
+    monkeypatch.setenv("RESEND_API_KEY", "re_test_key")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    get_settings.cache_clear()
+
+    app = create_app()
+    with TestClient(app):
+        assert "send_email" in app.state.tools.names()
