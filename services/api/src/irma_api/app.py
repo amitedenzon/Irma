@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from irma_api.agents.base import LeadAgentProtocol, Observer
 from irma_api.agents.codebase_agent import CodebaseAgent
-from irma_api.agents.llm import LLMClient, OllamaLLM, build_llm_client
+from irma_api.agents.llm import LLMClient, OllamaLLM, build_llm_registry
 from irma_api.agents.time_agent import TimeAgent
 from irma_api.config import get_settings
 from irma_api.logging import configure_logging
@@ -48,7 +48,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if settings.irma_codebase_agent_enabled:
         observers.append(CodebaseAgent(settings.irma_repos))
 
-    llm: LLMClient | None = build_llm_client(settings)
+    llm_registry, default_backend = build_llm_registry(settings)
+    llm: LLMClient | None = (
+        llm_registry[default_backend] if default_backend is not None else None
+    )
 
     tools: list[Tool] = []
     # Step 5 will register the ResendSendTool here once both env prereqs are set.
@@ -69,6 +72,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.bus = bus
     app.state.observers = observers
     app.state.llm = llm
+    app.state.llm_registry = llm_registry
+    app.state.default_backend = default_backend
     app.state.tools = registry
     app.state.lead_agent = lead_agent
 
@@ -87,6 +92,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         lead_agent=lead_agent is not None,
         llm_backend=llm.backend if llm else None,
         llm_model=llm.model if llm else None,
+        llm_registry=list(llm_registry.keys()),
         tools=registry.names(),
     )
 
@@ -94,8 +100,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         scheduler.shutdown()
-        if isinstance(llm, OllamaLLM):
-            await llm.aclose()
+        for client in llm_registry.values():
+            if isinstance(client, OllamaLLM):
+                await client.aclose()
         await store.close()
         logger.info("app.shutdown")
 

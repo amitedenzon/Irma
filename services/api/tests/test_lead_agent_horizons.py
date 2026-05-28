@@ -38,7 +38,9 @@ class FakeLLM:
         messages: Sequence[ChatTurn],
         tools: list[ToolSpec] | None = None,
         max_tokens: int = 1500,
+        session_id: str | None = None,
     ) -> CompleteResult:
+        del session_id  # LeadAgent doesn't use session_id; protocol accepts it.
         self.calls.append((system, list(messages)))
         return TextResult(text=self._responses.pop(0))
 
@@ -60,7 +62,7 @@ async def seeded_store(tmp_path: Path) -> SignalStore:
     p = await prepo.create(
         ProjectCreate(name="Thesis", goals=["Submit"], target_date=date(2026, 7, 15))
     )
-    await trepo.create(TaskCreate(project_id=p.id, title="today", scheduled_for=date(2026, 5, 27)))
+    await trepo.create(TaskCreate(project_id=p.id, title="today", scheduled_for=date.today()))
     await trepo.create(
         TaskCreate(project_id=p.id, title="next-week", scheduled_for=date(2026, 6, 3))
     )

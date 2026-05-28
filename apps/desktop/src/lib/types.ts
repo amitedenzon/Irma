@@ -46,6 +46,12 @@ export interface ChatResponse {
   model: string;
 }
 
+export interface ChatBackends {
+  default: string | null;
+  available: string[];
+  models: Record<string, string>;
+}
+
 // --- Projects + Tasks ----------------------------------------------------
 
 export type ProjectStatus = "active" | "paused" | "archived";

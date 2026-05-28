@@ -47,7 +47,7 @@ class _FakeLLM:
     backend = "fake"
     model = "fake-1"
 
-    async def complete(self, *, system, messages, tools=None, max_tokens=1500):
+    async def complete(self, *, system, messages, tools=None, max_tokens=1500, session_id=None):
         from irma_api.agents.llm import TextResult
 
         return TextResult(
