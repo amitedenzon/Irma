@@ -44,6 +44,18 @@ class Settings(BaseSettings):
     google_oauth_client_secret: SecretStr | None = None
     google_oauth_refresh_token: SecretStr | None = None
 
+    # --- Identity ------------------------------------------------------------
+    # Recipient lock for the send_email tool. Required when the Resend tool is
+    # enabled; if unset, the tool refuses to register at startup and chat
+    # continues without it.
+    irma_user_email: str | None = None
+
+    # --- Resend (send_email tool) -------------------------------------------
+    # The LLM-callable `send_email` tool routes through Resend's REST API.
+    # Without a key the tool is not registered and chat still works.
+    resend_api_key: SecretStr | None = None
+    resend_from_email: str = "onboarding@resend.dev"
+
     # --- Observers -----------------------------------------------------------
     # NoDecode → pydantic-settings hands us the raw env string (comma-separated
     # paths) instead of trying to JSON-decode the list.

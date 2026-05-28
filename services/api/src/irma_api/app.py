@@ -22,6 +22,7 @@ from irma_api.config import get_settings
 from irma_api.logging import configure_logging
 from irma_api.routers.brief import router as brief_router
 from irma_api.routers.chat import router as chat_router
+from irma_api.routers.integrations import router as integrations_router
 from irma_api.routers.projects import router as projects_router
 from irma_api.routers.signals import router as signals_router
 from irma_api.routers.signals import run_refresh
@@ -30,6 +31,7 @@ from irma_api.routers.tasks import router as tasks_router
 from irma_api.runtime.scheduler import Scheduler
 from irma_api.runtime.state import StateBus
 from irma_api.store.sqlite import SignalStore
+from irma_api.tools.base import Tool, ToolRegistry
 
 logger = structlog.get_logger(__name__)
 
@@ -48,6 +50,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     llm: LLMClient | None = build_llm_client(settings)
 
+    tools: list[Tool] = []
+    # Step 5 will register the ResendSendTool here once both env prereqs are set.
+    registry = ToolRegistry(tools)
+
     lead_agent: LeadAgentProtocol | None = None
     if llm is not None:
         # Imported lazily so Phase 2 deployments without the LeadAgent module
@@ -63,6 +69,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.bus = bus
     app.state.observers = observers
     app.state.llm = llm
+    app.state.tools = registry
     app.state.lead_agent = lead_agent
 
     async def tick() -> None:
@@ -80,6 +87,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         lead_agent=lead_agent is not None,
         llm_backend=llm.backend if llm else None,
         llm_model=llm.model if llm else None,
+        tools=registry.names(),
     )
 
     try:
@@ -121,6 +129,7 @@ def create_app() -> FastAPI:
     app.include_router(projects_router, prefix="/api/v1")
     app.include_router(tasks_router, prefix="/api/v1")
     app.include_router(brief_router, prefix="/api/v1")
+    app.include_router(integrations_router, prefix="/api/v1")
 
     @app.get("/", include_in_schema=False)
     async def root() -> dict[str, str]:
