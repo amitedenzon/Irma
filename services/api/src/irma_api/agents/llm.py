@@ -294,6 +294,10 @@ class ClaudeAuthError(RuntimeError):
     """Raised when the `claude` CLI reports the session is unauthenticated."""
 
 
+class _SessionAlreadyInUse(RuntimeError):
+    """Internal: caught by ClaudeCliLLM to flip create-mode → resume-mode."""
+
+
 class ClaudeCliLLM:
     """Shell out to ``claude -p`` so chat rides the user's Claude subscription.
 
@@ -325,25 +329,41 @@ class ClaudeCliLLM:
         self._configured_model = model
         self._cwd = str(cwd) if cwd is not None else None
         self._timeout = timeout_seconds
+        # session_ids we've already created in this process — switches the
+        # subsequent turns from `--session-id` (create) to `--resume` (continue),
+        # since claude refuses to re-create a UUID that already exists.
+        self._known_sessions: set[str] = set()
 
-    def _argv(self, *, system: str, last_user_message: str, session_id: str) -> list[str]:
-        argv: list[str] = [
-            self._binary,
-            "-p",
-            "--session-id",
-            session_id,
-            "--system-prompt",
-            system,
-            "--disallowedTools",
-            "*",
-            "--disable-slash-commands",
-            "--output-format",
-            "json",
-            "--permission-mode",
-            "default",
-        ]
-        if self._configured_model is not None:
-            argv.extend(["--model", self._configured_model])
+    def _argv(
+        self,
+        *,
+        system: str,
+        last_user_message: str,
+        session_id: str,
+        resume: bool,
+    ) -> list[str]:
+        argv: list[str] = [self._binary, "-p"]
+        if resume:
+            # `--resume` continues an existing session; system prompt + model
+            # are baked in at creation, so we don't repass them here.
+            argv.extend(["--resume", session_id])
+        else:
+            argv.extend(
+                [
+                    "--session-id", session_id,
+                    "--system-prompt", system,
+                ]
+            )
+            if self._configured_model is not None:
+                argv.extend(["--model", self._configured_model])
+        argv.extend(
+            [
+                "--disallowedTools", "*",
+                "--disable-slash-commands",
+                "--output-format", "json",
+                "--permission-mode", "default",
+            ]
+        )
         argv.append(last_user_message)
         return argv
 
@@ -353,6 +373,54 @@ class ClaudeCliLLM:
             if turn.role == "user" and turn.content:
                 return turn.content
         raise ValueError("claude_cli: no user message to send")
+
+    async def _run(self, argv: list[str]) -> dict[str, Any]:
+        """One `claude -p` invocation. Returns the parsed JSON envelope.
+
+        Raises ``_SessionAlreadyInUse`` so the caller can recover by switching
+        between `--session-id` and `--resume`. All other failures surface as
+        ``RuntimeError`` / ``TimeoutError`` / ``ClaudeAuthError`` directly.
+        """
+        proc = await asyncio.create_subprocess_exec(
+            *argv,
+            cwd=self._cwd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout_b, stderr_b = await asyncio.wait_for(
+                proc.communicate(), timeout=self._timeout
+            )
+        except TimeoutError as exc:
+            proc.kill()
+            await proc.wait()
+            raise TimeoutError(
+                f"claude timed out after {self._timeout:.0f}s"
+            ) from exc
+
+        if proc.returncode != 0:
+            tail = stderr_b.decode("utf-8", errors="replace")[-500:].strip()
+            if "already in use" in tail.lower():
+                raise _SessionAlreadyInUse(tail)
+            raise RuntimeError(f"claude exited {proc.returncode}: {tail}")
+
+        try:
+            envelope = json.loads(stdout_b.decode("utf-8", errors="replace"))
+        except json.JSONDecodeError as exc:
+            preview = stdout_b[:200].decode("utf-8", errors="replace")
+            raise RuntimeError(f"claude returned non-JSON: {preview!r}") from exc
+
+        if envelope.get("is_error"):
+            subtype = str(envelope.get("subtype") or "error")
+            detail = str(envelope.get("result") or envelope.get("message") or "").strip()
+            if "auth" in subtype.lower() or "login" in detail.lower():
+                raise ClaudeAuthError(
+                    "claude not authenticated — run `claude /login` once"
+                )
+            raise RuntimeError(f"claude {subtype}: {detail}")
+
+        assert isinstance(envelope, dict)
+        return envelope
 
     async def complete(
         self,
@@ -376,46 +444,35 @@ class ClaudeCliLLM:
         except ValueError as exc:
             raise ValueError(f"claude_cli session_id must be a UUID: {session_id!r}") from exc
 
-        argv = self._argv(
-            system=system,
-            last_user_message=self._last_user_text(messages),
-            session_id=session_id,
-        )
-        proc = await asyncio.create_subprocess_exec(
-            *argv,
-            cwd=self._cwd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        try:
-            stdout_b, stderr_b = await asyncio.wait_for(
-                proc.communicate(), timeout=self._timeout
-            )
-        except TimeoutError as exc:
-            proc.kill()
-            await proc.wait()
-            raise TimeoutError(
-                f"claude timed out after {self._timeout:.0f}s"
-            ) from exc
-
-        if proc.returncode != 0:
-            tail = stderr_b.decode("utf-8", errors="replace")[-500:].strip()
-            raise RuntimeError(f"claude exited {proc.returncode}: {tail}")
+        last_user = self._last_user_text(messages)
+        # Resume if we've already created this session in-process; create
+        # otherwise. If the in-memory hint is wrong (server restart against
+        # a session that survives on disk), we recover on the "already in
+        # use" error below.
+        resume = session_id in self._known_sessions
 
         try:
-            envelope = json.loads(stdout_b.decode("utf-8", errors="replace"))
-        except json.JSONDecodeError as exc:
-            preview = stdout_b[:200].decode("utf-8", errors="replace")
-            raise RuntimeError(f"claude returned non-JSON: {preview!r}") from exc
-
-        if envelope.get("is_error"):
-            subtype = str(envelope.get("subtype") or "error")
-            detail = str(envelope.get("result") or envelope.get("message") or "").strip()
-            if "auth" in subtype.lower() or "login" in detail.lower():
-                raise ClaudeAuthError(
-                    "claude not authenticated — run `claude /login` once"
+            envelope = await self._run(
+                self._argv(
+                    system=system,
+                    last_user_message=last_user,
+                    session_id=session_id,
+                    resume=resume,
                 )
-            raise RuntimeError(f"claude {subtype}: {detail}")
+            )
+        except _SessionAlreadyInUse:
+            logger.info("claude_cli.session_exists_falling_back_to_resume", session_id=session_id)
+            self._known_sessions.add(session_id)
+            envelope = await self._run(
+                self._argv(
+                    system=system,
+                    last_user_message=last_user,
+                    session_id=session_id,
+                    resume=True,
+                )
+            )
+
+        self._known_sessions.add(session_id)
 
         # Update self.model from the envelope so /chat's response reflects
         # what was actually used (`claude-opus-4-7[1m]` etc.).
