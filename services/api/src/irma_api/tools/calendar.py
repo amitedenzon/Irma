@@ -237,6 +237,11 @@ class CreateCalendarEventTool:
                 "invalid_args",
                 detail=f"start/end must be RFC3339 timestamps: {exc}",
             ) from exc
+        if start_dt.tzinfo is None or end_dt.tzinfo is None:
+            raise ToolError(
+                "invalid_args",
+                detail="start/end must include a timezone (e.g. trailing 'Z' or '+HH:MM')",
+            )
         if end_dt <= start_dt:
             raise ToolError("invalid_args", detail="end must be after start")
 

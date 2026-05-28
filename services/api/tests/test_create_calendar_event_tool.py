@@ -92,3 +92,38 @@ async def test_success_returns_html_link() -> None:
     assert captured["body"]["end"] == {"dateTime": "2026-05-28T12:00:00Z"}
     assert captured["body"]["description"] == "video model bench"
     assert captured["body"]["location"] == "home"
+
+
+@pytest.mark.asyncio
+async def test_naive_timestamp_raises_invalid_args() -> None:
+    tool = CreateCalendarEventTool(_settings())
+    with pytest.raises(ToolError) as exc_info:
+        await tool.call(
+            {
+                "summary": "x",
+                "start": "2026-05-28T10:00:00",
+                "end": "2026-05-28T11:00:00",
+            }
+        )
+    assert exc_info.value.code == "invalid_args"
+    assert "timezone" in (exc_info.value.detail or "")
+
+
+@pytest.mark.asyncio
+async def test_success_without_html_link_returns_bare_message() -> None:
+    tool = CreateCalendarEventTool(_settings())
+
+    async def fake_insert(
+        _self: Any, _client: Any, _user: Any, _body: dict[str, Any]
+    ) -> dict[str, Any]:
+        return {}
+
+    with patch.object(CreateCalendarEventTool, "_insert_event", new=fake_insert):
+        out = await tool.call(
+            {
+                "summary": "x",
+                "start": "2026-05-28T10:00:00Z",
+                "end": "2026-05-28T11:00:00Z",
+            }
+        )
+    assert out == "created event"
