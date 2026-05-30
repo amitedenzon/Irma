@@ -7,7 +7,7 @@ LLM-callable tool: the model can pull events on demand from inside /chat
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any, cast
 
 import structlog
@@ -169,15 +169,54 @@ class ReadCalendarTool:
 
     @staticmethod
     def _format_event(event: dict[str, Any]) -> str:
+        _DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
         start = event.get("start") or {}
         end = event.get("end") or {}
         raw_start = str(start.get("dateTime") or start.get("date") or "")
         raw_end = str(end.get("dateTime") or end.get("date") or "")
         title = str(event.get("summary") or "(no title)")
-        location = str(event.get("location") or "").strip()
-        when = f"{raw_start} → {raw_end}" if raw_end else raw_start
-        loc_part = f"  [{location}]" if location else ""
-        return f"- {when}  {title}{loc_part}"
+
+        timed = "T" in raw_start
+
+        try:
+            if timed:
+                dt_s = datetime.fromisoformat(raw_start.replace("Z", "+00:00"))
+                dt_e = datetime.fromisoformat(raw_end.replace("Z", "+00:00")) if raw_end else None
+                s_date = dt_s.strftime("%d/%m")
+                s_time = dt_s.strftime("%H:%M")
+                s_day  = _DAYS[dt_s.weekday()]
+                if dt_e is None or dt_s.date() == dt_e.date():
+                    e_time = dt_e.strftime("%H:%M") if dt_e else ""
+                    time_range = f"{s_time}-{e_time}" if e_time else s_time
+                    when = f"{s_date} ({s_day}), {time_range}"
+                else:
+                    e_date = dt_e.strftime("%d/%m")
+                    e_time = dt_e.strftime("%H:%M")
+                    e_day  = _DAYS[dt_e.weekday()]
+                    when = f"{s_date} {s_time} - {e_date} {e_time} ({s_day} - {e_day})"
+            else:
+                # all-day events — end date is exclusive in the Google API
+                d_s = date.fromisoformat(raw_start)
+                s_date = d_s.strftime("%d/%m")
+                s_day  = _DAYS[d_s.weekday()]
+                if raw_end:
+                    d_e = date.fromisoformat(raw_end)
+                    # subtract 1 to get the inclusive last day
+                    from datetime import timedelta as td
+                    d_e_incl = d_e - td(days=1)
+                    if d_s == d_e_incl:
+                        when = f"{s_date} ({s_day})"
+                    else:
+                        e_date = d_e_incl.strftime("%d/%m")
+                        e_day  = _DAYS[d_e_incl.weekday()]
+                        when = f"{s_date} - {e_date} ({s_day} - {e_day})"
+                else:
+                    when = f"{s_date} ({s_day})"
+        except (ValueError, AttributeError):
+            when = raw_start[:10] if raw_start else "?"
+
+        return f"{when} → {title}"
 
 
 # Module-level sanity: ReadCalendarTool conforms to Tool.

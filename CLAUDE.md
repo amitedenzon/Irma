@@ -154,3 +154,10 @@ Use `curl -sS` from your Bash tool to read/write. For reading calendar
 events use your already-authorized `mcp__claude_ai_Google_Calendar`
 server. For sending mail use `POST /email/send` above. The Gmail MCP
 is fine for drafting only; do not promise Amit a send through it.
+
+When formatting calendar events in any email, always use these formats — one event per line:
+- Timed, same day:  `dd/MM (Day), HH:mm-HH:mm → title`  e.g. `31/05 (Saturday), 14:30-15:00 → Ofir / Gal`
+- Timed, multi-day: `dd/MM HH:mm - dd/MM HH:mm (Day - Day) → title`
+- All-day, single:  `dd/MM (Day) → title`
+- All-day, multi:   `dd/MM - dd/MM (Day - Day) → title`  (Google end-date is exclusive — subtract 1 day)
+Never emit raw ISO timestamps.

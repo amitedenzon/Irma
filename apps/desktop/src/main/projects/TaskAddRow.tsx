@@ -11,7 +11,6 @@ export function TaskAddRow({
 }) {
   const [title, setTitle] = useState("");
   const [due, setDue] = useState("");
-  const [sched, setSched] = useState("");
   const [busy, setBusy] = useState(false);
   const [showDates, setShowDates] = useState(false);
 
@@ -24,9 +23,9 @@ export function TaskAddRow({
         project_id: projectId,
         title: t,
         due_date: due || null,
-        scheduled_for: sched || null,
+        scheduled_for: null,
       }));
-      setTitle(""); setDue(""); setSched(""); setShowDates(false);
+      setTitle(""); setDue(""); setShowDates(false);
     } catch (e: unknown) {
       alert(`create failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
@@ -48,7 +47,7 @@ export function TaskAddRow({
         />
         <button type="button" onClick={() => setShowDates((v) => !v)} className="btn-link"
                 style={{ color: showDates ? "var(--color-red)" : "var(--color-ink-mute)" }}>
-          {showDates ? "− dates" : "+ dates"}
+          {showDates ? "− due" : "+ due"}
         </button>
         <button type="submit" disabled={busy || !title.trim()} className="btn-red">
           add
@@ -60,11 +59,6 @@ export function TaskAddRow({
           <label className="flex items-center gap-1.5">
             due
             <input type="date" value={due} onChange={(e) => setDue(e.target.value)} className="input"
-                   style={{ width: "auto" }} />
-          </label>
-          <label className="flex items-center gap-1.5">
-            scheduled
-            <input type="date" value={sched} onChange={(e) => setSched(e.target.value)} className="input"
                    style={{ width: "auto" }} />
           </label>
         </div>
