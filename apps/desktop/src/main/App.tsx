@@ -223,13 +223,20 @@ function Header({
           type="button"
           onClick={() => onSendBrief()}
           disabled={briefSendState === "sending"}
-          aria-label="Email today's brief"
-          title="Email today's brief"
-          className="ml-auto px-4 py-2 text-[13px] font-medium transition-colors flex items-center gap-1.5 disabled:opacity-50"
-          style={{ color: "var(--color-ink-mute)", borderBottom: "2px solid transparent" }}
+          aria-label={briefSendState === "idle" ? "Email today's brief" : briefLabel}
+          title={briefSendState === "idle" ? "Email today's brief" : briefLabel}
+          className="ml-auto px-4 py-2 transition-colors flex items-center disabled:opacity-50"
+          style={{
+            color:
+              briefSendState === "sent"
+                ? "var(--color-moss)"
+                : briefSendState === "error"
+                  ? "var(--color-red)"
+                  : "var(--color-ink-mute)",
+            borderBottom: "2px solid transparent",
+          }}
         >
           <BriefIcon size={16} className={briefSendState === "sending" ? "animate-pulse" : undefined} />
-          {briefLabel}
         </button>
         <Tab id="settings" current={tab} onClick={onTabChange}
              aria-label="Settings" title="Settings">
