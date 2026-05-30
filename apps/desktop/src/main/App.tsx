@@ -5,9 +5,12 @@ import { subscribeAgentState } from "../lib/sse";
 import type { AgentState, Brief, Project } from "../lib/types";
 import { ProjectsView } from "./projects/ProjectsView";
 import { ChatView } from "./chat/ChatView";
+import { ClaudeTerminal } from "./claude/ClaudeTerminal";
 import { BriefView } from "./brief/BriefView";
+import { SettingsView } from "./settings/SettingsView";
+import { RefreshIcon, SettingsIcon } from "../lib/icons";
 
-type Tab = "projects" | "chat" | "brief";
+type Tab = "projects" | "chat" | "claude" | "brief" | "settings";
 
 export function App() {
   const [tab, setTab] = useState<Tab>("projects");
@@ -88,9 +91,11 @@ export function App() {
           />
         )}
         {tab === "chat" && <ChatView contextProjects={projects} onTaskMaybeCreated={loadProjects} />}
+        {tab === "claude" && <ClaudeTerminal />}
         {tab === "brief" && (
           <BriefView brief={brief} busy={briefBusy} error={briefError} onRefetch={synth} />
         )}
+        {tab === "settings" && <SettingsView />}
       </main>
     </div>
   );
@@ -136,39 +141,57 @@ function Header({
             {agentState}
           </span>
         </div>
-        <div className="flex items-center gap-2">
-          <button onClick={() => void onRefresh()} disabled={refreshBusy} className="btn-ghost">
-            {refreshBusy ? "refreshing…" : "refresh"}
-          </button>
-          <button onClick={onClose} aria-label="Close"
-                  className="px-2 py-1 text-[14px] leading-none rounded-md hover:bg-[var(--color-surface-2)]"
-                  style={{ color: "var(--color-ink-mute)" }}>
-            ×
-          </button>
-        </div>
+        <button onClick={onClose} aria-label="Close"
+                className="px-2 py-1 text-[14px] leading-none rounded-md hover:bg-[var(--color-surface-2)]"
+                style={{ color: "var(--color-ink-mute)" }}>
+          ×
+        </button>
       </div>
-      <nav className="flex gap-1 -mb-px">
+      <nav className="flex items-center gap-1 -mb-px">
         <Tab id="projects" current={tab} onClick={onTabChange}>Projects</Tab>
         <Tab id="chat"     current={tab} onClick={onTabChange}>Chat</Tab>
+        <Tab id="claude"   current={tab} onClick={onTabChange}>Claude</Tab>
         <Tab id="brief"    current={tab} onClick={onTabChange}>Brief</Tab>
+        <button
+          type="button"
+          onClick={() => void onRefresh()}
+          disabled={refreshBusy}
+          aria-label={refreshBusy ? "Refreshing" : "Refresh"}
+          title="Refresh"
+          className="ml-auto px-4 py-2 text-[13px] font-medium transition-colors flex items-center disabled:opacity-50"
+          style={{ color: "var(--color-ink-mute)", borderBottom: "2px solid transparent" }}
+        >
+          <RefreshIcon size={16} className={refreshBusy ? "animate-spin" : undefined} />
+        </button>
+        <Tab id="settings" current={tab} onClick={onTabChange}
+             aria-label="Settings" title="Settings">
+          <SettingsIcon size={16} />
+        </Tab>
       </nav>
     </header>
   );
 }
 
 function Tab({
-  id, current, onClick, children,
-}: { id: Tab; current: Tab; onClick: (t: Tab) => void; children: React.ReactNode }) {
+  id, current, onClick, children, className, ...rest
+}: {
+  id: Tab;
+  current: Tab;
+  onClick: (t: Tab) => void;
+  children: React.ReactNode;
+  className?: string;
+} & Pick<React.ButtonHTMLAttributes<HTMLButtonElement>, "aria-label" | "title">) {
   const active = current === id;
   return (
     <button
       type="button"
       onClick={() => onClick(id)}
-      className="px-4 py-2 text-[13px] font-medium transition-colors"
+      className={`px-4 py-2 text-[13px] font-medium transition-colors flex items-center${className ? ` ${className}` : ""}`}
       style={{
         color: active ? "var(--color-red)" : "var(--color-ink-mute)",
         borderBottom: `2px solid ${active ? "var(--color-red)" : "transparent"}`,
       }}
+      {...rest}
     >
       {children}
     </button>
