@@ -38,6 +38,7 @@ export type ChatRole = "user" | "assistant";
 export interface ChatMessage {
   role: ChatRole;
   content: string;
+  image_b64?: string;  // base64-encoded image for vision models
 }
 
 export interface ChatResponse {

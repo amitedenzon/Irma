@@ -45,12 +45,14 @@ class ChatTurn(BaseModel):
     Tool-use extensions are optional and additive:
     * ``tool_calls`` is set on an assistant turn that asked to call tools.
     * ``tool_results`` is set on a user turn that is replying with results.
+    * ``image_b64`` carries a base64-encoded image for vision-capable models.
     """
 
     role: Role
     content: str
     tool_calls: list[ToolCall] = Field(default_factory=list)
     tool_results: list[ToolResult] = Field(default_factory=list)
+    image_b64: str | None = None
 
 
 class TextResult(BaseModel):
@@ -194,9 +196,13 @@ class OllamaLLM:
 
     backend = "ollama"
 
-    def __init__(self, *, base_url: str, model: str) -> None:
+    def __init__(self, *, base_url: str = "", model: str = "", settings: "Settings | None" = None, model_override: str | None = None) -> None:
+        # Accept either explicit base_url/model or a Settings object.
+        if settings is not None:
+            base_url = base_url or settings.ollama_base_url
+            model = model or settings.ollama_model
         self._base_url = base_url.rstrip("/")
-        self.model = model
+        self.model = model_override or model
         self._http = httpx.AsyncClient(
             base_url=self._base_url,
             timeout=httpx.Timeout(connect=5.0, read=180.0, write=10.0, pool=5.0),
@@ -237,7 +243,10 @@ class OllamaLLM:
                 for r in m.tool_results:
                     wire.append({"role": "tool", "content": r.content})
             else:
-                wire.append({"role": m.role, "content": m.content})
+                entry: dict[str, Any] = {"role": m.role, "content": m.content}
+                if m.image_b64:
+                    entry["images"] = [m.image_b64]
+                wire.append(entry)
 
         payload: dict[str, Any] = {
             "model": self.model,

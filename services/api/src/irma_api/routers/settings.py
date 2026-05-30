@@ -7,8 +7,10 @@ keys). The GET endpoint reveals whether a key is set but never its value.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import re
+import sys
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
@@ -26,6 +28,8 @@ _ENV_PATH = Path(__file__).parent.parent.parent.parent / ".env"
 ALLOWED_KEYS: frozenset[str] = frozenset(
     [
         "ANTHROPIC_API_KEY",
+        "OLLAMA_BASE_URL",
+        "OLLAMA_MODEL",
         "GOOGLE_OAUTH_CLIENT_ID",
         "GOOGLE_OAUTH_CLIENT_SECRET",
         "GOOGLE_OAUTH_REFRESH_TOKEN",
@@ -150,3 +154,18 @@ async def save_settings(body: SaveKeysRequest) -> SettingsStatusResponse:
         statuses.append(KeyStatus(key=key, set=bool(env.get(key))))
 
     return SettingsStatusResponse(keys=statuses, restart_required=True)
+
+
+@router.post("/restart-backend", status_code=202)
+async def restart_backend() -> dict[str, str]:
+    """Replace the running process with a fresh copy that re-reads .env.
+
+    Uses os.execv so the PID changes but the restart is clean and immediate.
+    The response is sent before the exec so the caller gets an ACK.
+    """
+    async def _do_restart() -> None:
+        await asyncio.sleep(0.2)          # let the 202 response flush
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+
+    asyncio.ensure_future(_do_restart())
+    return {"status": "restarting"}
