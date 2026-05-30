@@ -215,7 +215,7 @@ fn compute_bounds(
         // API for the Dock's width, so use IRMA_DOCK_WIDTH as the estimated
         // Dock footprint (default DEFAULT_DOCK_WIDTH).
         let dock_w = dock_width().unwrap_or(DEFAULT_DOCK_WIDTH);
-        let dock_left = origin.x + area.width / 2.0 - dock_w / 2.0;
+        let dock_left = origin.x + area.width / 2.0 - dock_w / 2.0 - 20.0;
         (monitor_left, dock_left)
     } else {
         // In front of the Dock: a centred strip (IRMA_DOCK_WIDTH wide), or the
