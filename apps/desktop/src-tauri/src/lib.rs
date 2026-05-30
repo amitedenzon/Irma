@@ -2,7 +2,7 @@ mod claude_pty;
 mod tray;
 mod windows;
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -13,6 +13,7 @@ pub fn run() {
             windows::toggle_main,
             windows::get_companion_bounds,
             windows::set_companion_pos,
+            windows::show_companion_context_menu,
             claude_pty::claude_pty_spawn,
             claude_pty::claude_pty_write,
             claude_pty::claude_pty_resize,
@@ -21,6 +22,19 @@ pub fn run() {
         .setup(|app| {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
+            // Handle companion context-menu placement selections.
+            app.on_menu_event(|app, event| {
+                match event.id().as_ref() {
+                    "companion_beside_dock" => {
+                        let _ = app.emit("companion:placement", "beside-dock");
+                    }
+                    "companion_on_dock" => {
+                        let _ = app.emit("companion:placement", "on-dock");
+                    }
+                    _ => {}
+                }
+            });
 
             windows::wire_windows(app)?;
             tray::init(app.handle())?;

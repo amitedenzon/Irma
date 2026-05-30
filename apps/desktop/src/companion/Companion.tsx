@@ -7,6 +7,7 @@ import { subscribeAgentState } from "../lib/sse";
 import {
   getCompanion,
   loadSettings,
+  saveDockPosition,
   subscribeSettings,
   type DockPosition,
 } from "../lib/settings";
@@ -188,6 +189,22 @@ export function Companion() {
   useEffect(() => {
     const sub = subscribeAgentState(setAgentState);
     return () => sub.close();
+  }, []);
+
+  // Listen for placement changes emitted by the companion context menu.
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: UnlistenFn | undefined;
+    listen<string>("companion:placement", (event) => {
+      if (cancelled) return;
+      saveDockPosition(event.payload as DockPosition);
+    })
+      .then((u) => { if (cancelled) u(); else unlisten = u; })
+      .catch((e) => console.error("[companion] listen companion:placement failed", e));
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+    };
   }, []);
 
   // Dog brain.
@@ -375,6 +392,15 @@ export function Companion() {
     );
   };
 
+  const onContextMenu = (e: React.MouseEvent): void => {
+    e.preventDefault();
+    void invoke("show_companion_context_menu", {
+      besideDock: dockPosition === "beside-dock",
+    }).catch((e: unknown) =>
+      console.error("[companion] show_companion_context_menu failed", e),
+    );
+  };
+
   return (
     <div style={WRAPPER_STYLE}>
       <div style={{ position: "relative", pointerEvents: "none" }}>
@@ -396,6 +422,7 @@ export function Companion() {
             pointerEvents: "auto",
           }}
           onClick={onClick}
+          onContextMenu={onContextMenu}
           role="button"
           aria-label="Irma companion"
         />

@@ -24,6 +24,7 @@ from irma_api.routers.brief import router as brief_router
 from irma_api.routers.email import router as email_router
 from irma_api.routers.chat import router as chat_router
 from irma_api.routers.integrations import router as integrations_router
+from irma_api.routers.settings import router as settings_router
 from irma_api.routers.projects import router as projects_router
 from irma_api.routers.signals import router as signals_router
 from irma_api.routers.signals import run_refresh
@@ -214,6 +215,7 @@ def create_app() -> FastAPI:
     app.include_router(brief_router, prefix="/api/v1")
     app.include_router(email_router, prefix="/api/v1")
     app.include_router(integrations_router, prefix="/api/v1")
+    app.include_router(settings_router, prefix="/api/v1")
 
     @app.get("/", include_in_schema=False)
     async def root() -> dict[str, str]:
