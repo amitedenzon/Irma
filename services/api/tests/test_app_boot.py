@@ -139,6 +139,25 @@ def test_app_does_not_register_anthropic_with_blank_key(
         assert "anthropic" not in app.state.llm_registry
 
 
+def test_app_exposes_daily_brief_job_attr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """app.state.daily_brief_job is always set (None when LLM/Resend unconfigured)."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("IRMA_DB_PATH", str(tmp_path / "boot_brief.db"))
+    monkeypatch.setenv("IRMA_LLM_BACKEND", "anthropic")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("RESEND_API_KEY", raising=False)
+    monkeypatch.delenv("IRMA_USER_EMAIL", raising=False)
+    get_settings.cache_clear()
+
+    app = create_app()
+    with TestClient(app):
+        assert hasattr(app.state, "daily_brief_job")
+        # No LLM key + no Resend → job not built.
+        assert app.state.daily_brief_job is None
+
+
 def test_app_does_not_register_send_email_with_blank_resend_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -74,7 +74,7 @@ async def send_brief_email(request: Request) -> JSONResponse:
         )
     try:
         result = await job.run_once(force=True)
-    except Exception as exc:  # noqa: BLE001 — surface send failures as 502
+    except Exception as exc:  # surface send failures as 502
         return JSONResponse(
             status_code=502,
             content={"error": "email_send_failed", "detail": str(exc)},

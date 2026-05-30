@@ -59,8 +59,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     tools: list[Tool] = []
     resend_key = secret_value_or_none(settings.resend_api_key)
+    send_email_tool: ResendSendTool | None = None
     if resend_key is not None and settings.irma_user_email:
-        tools.append(ResendSendTool(settings))
+        send_email_tool = ResendSendTool(settings)
+        tools.append(send_email_tool)
     else:
         logger.info(
             "tools.send_email_disabled",
@@ -79,8 +81,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         "GOOGLE_OAUTH_REFRESH_TOKEN": secret_value_or_none(settings.google_oauth_refresh_token),
     }
     calendar_missing = [k for k, v in calendar_keys.items() if v is None]
+    read_calendar_tool: ReadCalendarTool | None = None
     if not calendar_missing:
-        tools.append(ReadCalendarTool(settings))
+        read_calendar_tool = ReadCalendarTool(settings)
+        tools.append(read_calendar_tool)
         tools.append(CreateCalendarEventTool(settings))
     else:
         logger.info("tools.calendar_disabled", missing=calendar_missing)
@@ -113,6 +117,30 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.tools = registry
     app.state.lead_agent = lead_agent
 
+    daily_brief_job = None
+    if llm is not None and send_email_tool is not None:
+        from irma_api.agents.daily_brief import DailyBriefService
+        from irma_api.runtime.daily_job import DailyBriefJob
+
+        daily_service = DailyBriefService(
+            settings=settings,
+            llm=llm,
+            store=store,
+            observers=observers,
+            bus=bus,
+            calendar=read_calendar_tool,
+        )
+        daily_brief_job = DailyBriefJob(
+            service=daily_service, sender=send_email_tool, settings=settings
+        )
+    else:
+        logger.info(
+            "app.daily_brief_disabled",
+            has_llm=llm is not None,
+            has_email=send_email_tool is not None,
+        )
+    app.state.daily_brief_job = daily_brief_job
+
     async def tick() -> None:
         await run_refresh(store=store, observers=observers, bus=bus)
 
@@ -122,6 +150,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     scheduler.start()
     app.state.scheduler = scheduler
+
+    if daily_brief_job is not None and settings.irma_daily_brief_enabled:
+        async def daily_tick() -> None:
+            await daily_brief_job.run_once()
+
+        scheduler.add_daily_job(
+            daily_tick,
+            hour=settings.irma_brief_hour,
+            timezone=settings.irma_brief_timezone,
+        )
     logger.info(
         "app.ready",
         observers=[o.name for o in observers],

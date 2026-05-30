@@ -124,7 +124,7 @@ class DailyBriefService:
 
         try:
             await run_refresh(store=self._store, observers=self._observers, bus=self._bus)
-        except Exception as exc:  # noqa: BLE001 — observers must never block the brief
+        except Exception as exc:  # observers must never block the brief
             logger.warning("daily_brief.refresh_failed", error=str(exc))
 
         today = self._today()
