@@ -97,3 +97,25 @@ def test_app_registers_create_calendar_event_when_oauth_present(
         names = set(app.state.tools.names())
         assert "read_calendar" in names
         assert "create_calendar_event" in names
+
+
+def test_app_does_not_register_calendar_tools_with_partial_oauth(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Refresh token alone is not enough — client id/secret are also required."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("IRMA_DB_PATH", str(tmp_path / "boot5.db"))
+    monkeypatch.setenv("IRMA_LLM_BACKEND", "anthropic")
+    monkeypatch.setenv("GOOGLE_OAUTH_REFRESH_TOKEN", "rt")
+    monkeypatch.delenv("GOOGLE_OAUTH_CLIENT_ID", raising=False)
+    monkeypatch.delenv("GOOGLE_OAUTH_CLIENT_SECRET", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("RESEND_API_KEY", raising=False)
+    monkeypatch.delenv("IRMA_USER_EMAIL", raising=False)
+    get_settings.cache_clear()
+
+    app = create_app()
+    with TestClient(app):
+        names = set(app.state.tools.names())
+        assert "read_calendar" not in names
+        assert "create_calendar_event" not in names

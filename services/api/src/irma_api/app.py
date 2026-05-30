@@ -72,14 +72,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 if val is None
             ],
         )
-    if settings.google_oauth_refresh_token is not None:
+    calendar_missing = [
+        key
+        for key, val in (
+            ("GOOGLE_OAUTH_CLIENT_ID", settings.google_oauth_client_id),
+            ("GOOGLE_OAUTH_CLIENT_SECRET", settings.google_oauth_client_secret),
+            ("GOOGLE_OAUTH_REFRESH_TOKEN", settings.google_oauth_refresh_token),
+        )
+        if val is None
+    ]
+    if not calendar_missing:
         tools.append(ReadCalendarTool(settings))
         tools.append(CreateCalendarEventTool(settings))
     else:
-        logger.info(
-            "tools.calendar_disabled",
-            missing=["GOOGLE_OAUTH_REFRESH_TOKEN"],
-        )
+        logger.info("tools.calendar_disabled", missing=calendar_missing)
 
     tools.append(ListProjectsTool(store))
     tools.append(CreateProjectTool(store))
