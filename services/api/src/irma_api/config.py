@@ -9,7 +9,7 @@ from typing import Annotated, Literal
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-LLMBackend = Literal["anthropic", "ollama", "claude_cli"]
+LLMBackend = Literal["anthropic", "ollama"]
 
 
 class Settings(BaseSettings):
@@ -38,14 +38,6 @@ class Settings(BaseSettings):
     # --- Ollama --------------------------------------------------------------
     ollama_base_url: str = "http://127.0.0.1:11434"
     ollama_model: str = "qwen2.5:7b"
-
-    # --- Claude CLI (subscription-backed) ------------------------------------
-    # Shells out to the `claude` binary for chat replies so we ride the user's
-    # Claude Code subscription instead of billing API tokens. No API key needed
-    # — claude authenticates via its own keychain/OAuth.
-    claude_cli_binary: str = "claude"
-    claude_cli_model: str | None = None
-    claude_cli_timeout_seconds: float = 90.0
 
     # --- Google Calendar -----------------------------------------------------
     google_oauth_client_id: SecretStr | None = None
@@ -77,6 +69,14 @@ class Settings(BaseSettings):
     irma_api_host: str = "127.0.0.1"
     irma_api_port: int = 8765
 
+    # --- Daily email brief ---------------------------------------------------
+    # The morning brief is emailed via the Resend tool. Disable to skip the
+    # 8am cron entirely (the on-demand Brief button still works).
+    irma_daily_brief_enabled: bool = True
+    irma_brief_timezone: str = "Asia/Jerusalem"
+    irma_brief_hour: int = 8
+    irma_brief_lookahead_days: int = 3
+
     @field_validator("irma_repos", mode="before")
     @classmethod
     def _split_repos(cls, raw: object) -> object:
@@ -91,3 +91,16 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Return the process-wide Settings singleton."""
     return Settings()
+
+
+def secret_value_or_none(s: SecretStr | None) -> str | None:
+    """Return the secret's value, or None if it's missing or blank.
+
+    pydantic-settings parses `KEY=` (defined-but-blank env) as an empty
+    SecretStr, which slips past `is not None`. Use this at config-consumer
+    sites so a blank value behaves identically to a missing one.
+    """
+    if s is None:
+        return None
+    value = s.get_secret_value()
+    return value or None

@@ -78,6 +78,7 @@ follow_untyped_imports = true
 module = [
     "irma_api.agents.time_agent",
     "irma_api.runtime.scheduler",
+    "irma_api.tools.calendar",
 ]
 disallow_untyped_calls = false
 

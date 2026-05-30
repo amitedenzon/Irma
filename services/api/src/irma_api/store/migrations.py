@@ -72,6 +72,14 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
         computed_at   TEXT NOT NULL
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS daily_snapshot (
+        snapshot_date       TEXT PRIMARY KEY,
+        per_project_counts  TEXT NOT NULL DEFAULT '{}',
+        completed_task_ids  TEXT NOT NULL DEFAULT '[]',
+        created_at          TEXT NOT NULL
+    )
+    """,
     "DROP TABLE IF EXISTS briefs",
 )
 

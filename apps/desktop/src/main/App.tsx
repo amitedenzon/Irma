@@ -1,23 +1,24 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { fetchBrief, forceRefresh, listProjects } from "../lib/api";
+import { sendBriefEmail, listProjects } from "../lib/api";
 import { subscribeAgentState } from "../lib/sse";
-import type { AgentState, Brief, Project } from "../lib/types";
+import type { AgentState, Project } from "../lib/types";
 import { ProjectsView } from "./projects/ProjectsView";
 import { ChatView } from "./chat/ChatView";
-import { BriefView } from "./brief/BriefView";
+import { SettingsView } from "./settings/SettingsView";
+import { BriefIcon, SettingsIcon } from "../lib/icons";
 
-type Tab = "projects" | "chat" | "brief";
+type Tab = "projects" | "chat" | "settings";
+
+type BriefSendState = "idle" | "sending" | "sent" | "error";
 
 export function App() {
   const [tab, setTab] = useState<Tab>("projects");
   const [agentState, setAgentState] = useState<AgentState>("idle");
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectsError, setProjectsError] = useState<string | null>(null);
-  const [brief, setBrief] = useState<Brief | null>(null);
-  const [briefBusy, setBriefBusy] = useState(false);
-  const [briefError, setBriefError] = useState<string | null>(null);
-  const [refreshBusy, setRefreshBusy] = useState(false);
+  const [briefSendState, setBriefSendState] = useState<BriefSendState>("idle");
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   const loadProjects = useCallback(async () => {
     setProjectsError(null);
@@ -38,28 +39,23 @@ export function App() {
     return () => sub.close();
   }, []);
 
-  const synth = useCallback(async () => {
-    setBriefBusy(true);
-    setBriefError(null);
-    try { setBrief(await fetchBrief("day")); }
-    catch (e: unknown) { setBriefError(e instanceof Error ? e.message : String(e)); }
-    finally { setBriefBusy(false); }
+  const sendBrief = useCallback(async () => {
+    setBriefSendState("sending");
+    try {
+      await sendBriefEmail();
+      setBriefSendState("sent");
+      setTimeout(() => setBriefSendState("idle"), 4000);
+    } catch (e) {
+      console.error("[dashboard] sendBriefEmail failed:", e);
+      setBriefSendState("error");
+      setTimeout(() => setBriefSendState("idle"), 4000);
+    }
   }, []);
 
-  // Pre-fetch the brief on mount so it's ready instantly when the user
-  // clicks the Brief tab. Refire if the prior attempt errored and the user
-  // later switches to the tab — gives them a retry path.
-  useEffect(() => { void synth(); }, [synth]);
-  useEffect(() => {
-    if (tab === "brief" && !brief && !briefBusy && briefError) void synth();
-  }, [tab, brief, briefBusy, briefError, synth]);
-
-  const refresh = useCallback(async () => {
-    setRefreshBusy(true);
-    try { await forceRefresh(); await loadProjects(); }
-    catch (e) { console.error(e); }
-    finally { setRefreshBusy(false); }
-  }, [loadProjects]);
+  const confirmSend = useCallback(() => {
+    setConfirmOpen(false);
+    void sendBrief();
+  }, [sendBrief]);
 
   const closeWindow = () => {
     void invoke("toggle_main").catch((e: unknown) =>
@@ -73,12 +69,12 @@ export function App() {
         tab={tab}
         onTabChange={setTab}
         agentState={agentState}
-        onRefresh={refresh}
-        refreshBusy={refreshBusy}
+        onSendBrief={() => setConfirmOpen(true)}
+        briefSendState={briefSendState}
         onClose={closeWindow}
       />
 
-      <main className="flex-1 overflow-y-auto">
+      <main className="flex-1 overflow-y-auto relative">
         {tab === "projects" && (
           <ProjectsView
             projects={projects}
@@ -87,23 +83,102 @@ export function App() {
             onReload={loadProjects}
           />
         )}
-        {tab === "chat" && <ChatView contextProjects={projects} onTaskMaybeCreated={loadProjects} />}
-        {tab === "brief" && (
-          <BriefView brief={brief} busy={briefBusy} error={briefError} onRefetch={synth} />
-        )}
+        {/* Chat stays mounted so the Claude PTY (and Local history) survives tab
+            switches. Absolute fill avoids the percent-height-through-flex chain
+            collapsing the chat area when the parent's height isn't explicit. */}
+        <div
+          style={{
+            display: tab === "chat" ? "block" : "none",
+            position: "absolute",
+            inset: 0,
+          }}
+        >
+          <ChatView
+            contextProjects={projects}
+            onTaskMaybeCreated={loadProjects}
+            tabVisible={tab === "chat"}
+          />
+        </div>
+        {tab === "settings" && <SettingsView />}
       </main>
+
+      <ConfirmDialog
+        open={confirmOpen}
+        title="Send daily brief?"
+        message="I'll email today's brief — progress since your last one, plus deadlines and events for the next few days — to your inbox now."
+        confirmLabel="Send it"
+        cancelLabel="Not now"
+        onConfirm={confirmSend}
+        onCancel={() => setConfirmOpen(false)}
+      />
+    </div>
+  );
+}
+
+function ConfirmDialog({
+  open, title, message, confirmLabel, cancelLabel, onConfirm, onCancel,
+}: {
+  open: boolean;
+  title: string;
+  message: string;
+  confirmLabel: string;
+  cancelLabel: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  if (!open) return null;
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+      onClick={onCancel}
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ background: "rgba(0,0,0,0.45)" }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="mx-4 w-full max-w-sm rounded-xl border p-5 shadow-xl"
+        style={{ background: "var(--color-surface)", borderColor: "var(--color-border)" }}
+      >
+        <h2 className="display text-[16px] font-semibold mb-2" style={{ color: "var(--color-ink)" }}>
+          {title}
+        </h2>
+        <p className="text-[13px] mb-5" style={{ color: "var(--color-ink-mute)" }}>
+          {message}
+        </p>
+        <div className="flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="px-3.5 py-1.5 text-[13px] font-medium rounded-md hover:bg-[var(--color-surface-2)]"
+            style={{ color: "var(--color-ink-mute)" }}
+          >
+            {cancelLabel}
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            autoFocus
+            className="px-3.5 py-1.5 text-[13px] font-semibold rounded-md text-white"
+            style={{ background: "var(--color-red)" }}
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
 
 function Header({
-  tab, onTabChange, agentState, onRefresh, refreshBusy, onClose,
+  tab, onTabChange, agentState, onSendBrief, briefSendState, onClose,
 }: {
   tab: Tab;
   onTabChange: (t: Tab) => void;
   agentState: AgentState;
-  onRefresh: () => void;
-  refreshBusy: boolean;
+  onSendBrief: () => void;
+  briefSendState: BriefSendState;
   onClose: () => void;
 }) {
   const stateColor = {
@@ -112,6 +187,13 @@ function Header({
     thinking: "var(--color-red-hover)",
     alert: "var(--color-red)",
   }[agentState];
+
+  const briefLabel = {
+    idle: "Brief",
+    sending: "Sending…",
+    sent: "Sent ✓",
+    error: "Failed",
+  }[briefSendState];
 
   return (
     <header
@@ -136,39 +218,65 @@ function Header({
             {agentState}
           </span>
         </div>
-        <div className="flex items-center gap-2">
-          <button onClick={() => void onRefresh()} disabled={refreshBusy} className="btn-ghost">
-            {refreshBusy ? "refreshing…" : "refresh"}
-          </button>
-          <button onClick={onClose} aria-label="Close"
-                  className="px-2 py-1 text-[14px] leading-none rounded-md hover:bg-[var(--color-surface-2)]"
-                  style={{ color: "var(--color-ink-mute)" }}>
-            ×
-          </button>
-        </div>
+        <button onClick={onClose} aria-label="Close"
+                className="px-2 py-1 text-[14px] leading-none rounded-md hover:bg-[var(--color-surface-2)]"
+                style={{ color: "var(--color-ink-mute)" }}>
+          ×
+        </button>
       </div>
-      <nav className="flex gap-1 -mb-px">
+      <nav className="flex items-center gap-1 -mb-px">
         <Tab id="projects" current={tab} onClick={onTabChange}>Projects</Tab>
         <Tab id="chat"     current={tab} onClick={onTabChange}>Chat</Tab>
-        <Tab id="brief"    current={tab} onClick={onTabChange}>Brief</Tab>
+        <div className="ml-auto flex items-center">
+          <button
+            type="button"
+            onClick={() => onSendBrief()}
+            disabled={briefSendState === "sending"}
+            aria-label={briefSendState === "idle" ? "Email today's brief" : briefLabel}
+            title={briefSendState === "idle" ? "Email today's brief" : briefLabel}
+            className="px-4 py-2 transition-colors flex items-center disabled:opacity-50"
+            style={{
+              color:
+                briefSendState === "sent"
+                  ? "var(--color-moss)"
+                  : briefSendState === "error"
+                    ? "var(--color-red)"
+                    : "var(--color-ink-mute)",
+              borderBottom: "2px solid transparent",
+            }}
+          >
+            <BriefIcon size={16} className={briefSendState === "sending" ? "animate-pulse" : undefined} />
+          </button>
+          <Tab id="settings" current={tab} onClick={onTabChange}
+               aria-label="Settings" title="Settings">
+            <SettingsIcon size={16} />
+          </Tab>
+        </div>
       </nav>
     </header>
   );
 }
 
 function Tab({
-  id, current, onClick, children,
-}: { id: Tab; current: Tab; onClick: (t: Tab) => void; children: React.ReactNode }) {
+  id, current, onClick, children, className, ...rest
+}: {
+  id: Tab;
+  current: Tab;
+  onClick: (t: Tab) => void;
+  children: React.ReactNode;
+  className?: string;
+} & Pick<React.ButtonHTMLAttributes<HTMLButtonElement>, "aria-label" | "title">) {
   const active = current === id;
   return (
     <button
       type="button"
       onClick={() => onClick(id)}
-      className="px-4 py-2 text-[13px] font-medium transition-colors"
+      className={`px-4 py-2 text-[13px] font-medium transition-colors flex items-center${className ? ` ${className}` : ""}`}
       style={{
         color: active ? "var(--color-red)" : "var(--color-ink-mute)",
         borderBottom: `2px solid ${active ? "var(--color-red)" : "transparent"}`,
       }}
+      {...rest}
     >
       {children}
     </button>
