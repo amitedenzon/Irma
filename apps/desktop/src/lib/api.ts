@@ -1,8 +1,6 @@
 import type {
-  Brief,
   ChatMessage,
   ChatResponse,
-  Horizon,
   Project,
   ProjectCreate,
   ProjectStatus,
@@ -136,16 +134,12 @@ export async function completeTask(id: string): Promise<Task> {
   );
 }
 
-// --- Brief ----------------------------------------------------------------
+// --- Brief (email-only) ---------------------------------------------------
 
-export async function fetchBrief(horizon: Horizon): Promise<Brief> {
-  const path = ({
-    day: "today",
-    week: "week",
-    month: "month",
-    all: "overview",
-  } as const)[horizon];
-  return jsonOrThrow(await fetch(url(`/api/v1/brief/${path}`)));
+export async function sendBriefEmail(): Promise<{ status: string; detail: string }> {
+  return jsonOrThrow(
+    await fetch(url("/api/v1/brief/email"), { method: "POST" }),
+  );
 }
 
 // --- Signals / refresh / chat (existing, kept) ----------------------------
