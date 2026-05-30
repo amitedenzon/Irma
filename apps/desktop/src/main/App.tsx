@@ -1,26 +1,24 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { fetchBrief, forceRefresh, listProjects } from "../lib/api";
+import { sendBriefEmail, listProjects } from "../lib/api";
 import { subscribeAgentState } from "../lib/sse";
-import type { AgentState, Brief, Project } from "../lib/types";
+import type { AgentState, Project } from "../lib/types";
 import { ProjectsView } from "./projects/ProjectsView";
 import { ChatView } from "./chat/ChatView";
 import { ClaudeTerminal } from "./claude/ClaudeTerminal";
-import { BriefView } from "./brief/BriefView";
 import { SettingsView } from "./settings/SettingsView";
-import { RefreshIcon, SettingsIcon } from "../lib/icons";
+import { MailIcon, SettingsIcon } from "../lib/icons";
 
-type Tab = "projects" | "chat" | "claude" | "brief" | "settings";
+type Tab = "projects" | "chat" | "claude" | "settings";
+
+type BriefSendState = "idle" | "sending" | "sent" | "error";
 
 export function App() {
   const [tab, setTab] = useState<Tab>("projects");
   const [agentState, setAgentState] = useState<AgentState>("idle");
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectsError, setProjectsError] = useState<string | null>(null);
-  const [brief, setBrief] = useState<Brief | null>(null);
-  const [briefBusy, setBriefBusy] = useState(false);
-  const [briefError, setBriefError] = useState<string | null>(null);
-  const [refreshBusy, setRefreshBusy] = useState(false);
+  const [briefSendState, setBriefSendState] = useState<BriefSendState>("idle");
 
   const loadProjects = useCallback(async () => {
     setProjectsError(null);
@@ -41,28 +39,18 @@ export function App() {
     return () => sub.close();
   }, []);
 
-  const synth = useCallback(async () => {
-    setBriefBusy(true);
-    setBriefError(null);
-    try { setBrief(await fetchBrief("day")); }
-    catch (e: unknown) { setBriefError(e instanceof Error ? e.message : String(e)); }
-    finally { setBriefBusy(false); }
+  const sendBrief = useCallback(async () => {
+    setBriefSendState("sending");
+    try {
+      await sendBriefEmail();
+      setBriefSendState("sent");
+      setTimeout(() => setBriefSendState("idle"), 4000);
+    } catch (e) {
+      console.error("[dashboard] sendBriefEmail failed:", e);
+      setBriefSendState("error");
+      setTimeout(() => setBriefSendState("idle"), 4000);
+    }
   }, []);
-
-  // Pre-fetch the brief on mount so it's ready instantly when the user
-  // clicks the Brief tab. Refire if the prior attempt errored and the user
-  // later switches to the tab — gives them a retry path.
-  useEffect(() => { void synth(); }, [synth]);
-  useEffect(() => {
-    if (tab === "brief" && !brief && !briefBusy && briefError) void synth();
-  }, [tab, brief, briefBusy, briefError, synth]);
-
-  const refresh = useCallback(async () => {
-    setRefreshBusy(true);
-    try { await forceRefresh(); await loadProjects(); }
-    catch (e) { console.error(e); }
-    finally { setRefreshBusy(false); }
-  }, [loadProjects]);
 
   const closeWindow = () => {
     void invoke("toggle_main").catch((e: unknown) =>
@@ -76,8 +64,8 @@ export function App() {
         tab={tab}
         onTabChange={setTab}
         agentState={agentState}
-        onRefresh={refresh}
-        refreshBusy={refreshBusy}
+        onSendBrief={sendBrief}
+        briefSendState={briefSendState}
         onClose={closeWindow}
       />
 
@@ -92,9 +80,6 @@ export function App() {
         )}
         {tab === "chat" && <ChatView contextProjects={projects} onTaskMaybeCreated={loadProjects} />}
         {tab === "claude" && <ClaudeTerminal />}
-        {tab === "brief" && (
-          <BriefView brief={brief} busy={briefBusy} error={briefError} onRefetch={synth} />
-        )}
         {tab === "settings" && <SettingsView />}
       </main>
     </div>
@@ -102,13 +87,13 @@ export function App() {
 }
 
 function Header({
-  tab, onTabChange, agentState, onRefresh, refreshBusy, onClose,
+  tab, onTabChange, agentState, onSendBrief, briefSendState, onClose,
 }: {
   tab: Tab;
   onTabChange: (t: Tab) => void;
   agentState: AgentState;
-  onRefresh: () => void;
-  refreshBusy: boolean;
+  onSendBrief: () => void;
+  briefSendState: BriefSendState;
   onClose: () => void;
 }) {
   const stateColor = {
@@ -117,6 +102,13 @@ function Header({
     thinking: "var(--color-red-hover)",
     alert: "var(--color-red)",
   }[agentState];
+
+  const briefLabel = {
+    idle: "Brief",
+    sending: "Sending…",
+    sent: "Sent ✓",
+    error: "Failed",
+  }[briefSendState];
 
   return (
     <header
@@ -151,17 +143,17 @@ function Header({
         <Tab id="projects" current={tab} onClick={onTabChange}>Projects</Tab>
         <Tab id="chat"     current={tab} onClick={onTabChange}>Chat</Tab>
         <Tab id="claude"   current={tab} onClick={onTabChange}>Claude</Tab>
-        <Tab id="brief"    current={tab} onClick={onTabChange}>Brief</Tab>
         <button
           type="button"
-          onClick={() => void onRefresh()}
-          disabled={refreshBusy}
-          aria-label={refreshBusy ? "Refreshing" : "Refresh"}
-          title="Refresh"
-          className="ml-auto px-4 py-2 text-[13px] font-medium transition-colors flex items-center disabled:opacity-50"
+          onClick={() => onSendBrief()}
+          disabled={briefSendState === "sending"}
+          aria-label="Email today's brief"
+          title="Email today's brief"
+          className="ml-auto px-4 py-2 text-[13px] font-medium transition-colors flex items-center gap-1.5 disabled:opacity-50"
           style={{ color: "var(--color-ink-mute)", borderBottom: "2px solid transparent" }}
         >
-          <RefreshIcon size={16} className={refreshBusy ? "animate-spin" : undefined} />
+          <MailIcon size={16} className={briefSendState === "sending" ? "animate-pulse" : undefined} />
+          {briefLabel}
         </button>
         <Tab id="settings" current={tab} onClick={onTabChange}
              aria-label="Settings" title="Settings">
