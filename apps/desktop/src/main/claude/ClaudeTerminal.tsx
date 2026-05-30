@@ -26,11 +26,62 @@ export function ClaudeTerminal({
   return (
     <div
       className="h-full w-full overflow-hidden px-3 py-2"
-      style={{ background: "#0f1117" }}
+      style={{ background: "var(--color-surface)" }}
     >
       <TerminalSession key={epoch} visible={visible} />
     </div>
   );
+}
+
+function readCssVar(name: string, fallback: string): string {
+  if (typeof window === "undefined") return fallback;
+  const v = getComputedStyle(document.documentElement)
+    .getPropertyValue(name)
+    .trim();
+  return v || fallback;
+}
+
+/**
+ * Pull Irma's CSS palette into an xterm theme so the terminal reads as
+ * "warm paper" rather than a black box dropped into the cream UI. ANSI
+ * slots without a direct token mapping fall back to derived warm tones.
+ */
+function buildTheme() {
+  const ink = readCssVar("--color-ink", "#2a1f17");
+  const surface = readCssVar("--color-surface", "#fdfaf4");
+  const inkMute = readCssVar("--color-ink-mute", "#7a6a52");
+  const red = readCssVar("--color-red", "#b8341c");
+  const redHover = readCssVar("--color-red-hover", "#d4543a");
+  const redDeep = readCssVar("--color-red-deep", "#8a3a14");
+  const moss = readCssVar("--color-moss", "#5a6b3a");
+  const amber = readCssVar("--color-amber", "#c98a1a");
+
+  return {
+    background: surface,
+    foreground: ink,
+    cursor: red,
+    cursorAccent: surface,
+    selectionBackground: "rgba(184, 52, 28, 0.25)",
+    selectionForeground: ink,
+
+    black: ink,
+    red,
+    green: moss,
+    yellow: amber,
+    blue: "#3a5b6b",
+    magenta: redDeep,
+    cyan: "#4a7a6a",
+    white: inkMute,
+
+    brightBlack: inkMute,
+    brightRed: redHover,
+    brightGreen: "#7a8b5a",
+    brightYellow: "#e0a83a",
+    brightBlue: "#5a7b8b",
+    brightMagenta: redHover,
+    brightCyan: "#6a9b8a",
+    brightWhite: ink,
+  };
 }
 
 function TerminalSession({ visible }: { visible: boolean }) {
@@ -49,18 +100,13 @@ function TerminalSession({ visible }: { visible: boolean }) {
 
     const term = new Terminal({
       fontFamily:
-        '"JetBrains Mono", "Menlo", "DejaVu Sans Mono", "Courier New", monospace',
+        '"Fira Code", "JetBrains Mono", "Menlo", "DejaVu Sans Mono", monospace',
       fontSize: 13,
       lineHeight: 1.2,
       cursorBlink: true,
       cursorStyle: "bar",
       scrollback: 5000,
-      theme: {
-        background: "#0f1117",
-        foreground: "#d8dee4",
-        cursor: "#d8dee4",
-        selectionBackground: "rgba(184, 52, 28, 0.35)",
-      },
+      theme: buildTheme(),
       allowProposedApi: true,
     });
     const fit = new FitAddon();
