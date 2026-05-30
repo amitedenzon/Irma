@@ -2,15 +2,17 @@
 
 **For the next Claude (any model — Sonnet recommended for cost):** finish Tasks 14–22 of the Apple Reminders implementation plan. Tasks 1–13 are done and committed. The remaining work is mostly verbatim transcription from the plan + a single design-heavy task (Task 14, the sync service).
 
-## Worktree
+## Where the work lives
 
-- Path: `/Users/amit/Documents/Code/Irma/.claude/worktrees/feat+reminders-sync`
-- Branch: `worktree-feat+reminders-sync`
-- Tip: `a0fedfc` (`feat(reminders): inbox-project bootstrapper`)
+The branch is **on GitHub**: [`feat/reminders-sync`](https://github.com/amitedenzon/Irma/tree/feat/reminders-sync) at `origin`. You can resume from any machine — clone Irma + `git checkout feat/reminders-sync` and you have everything.
+
+On the user's dev machine the local checkout is a git worktree at `/Users/amit/Documents/Code/Irma/.claude/worktrees/feat+reminders-sync` (local branch name `worktree-feat+reminders-sync`, tracks `origin/feat/reminders-sync`). Either path works — use whichever the user starts you in.
+
 - Plan: `docs/superpowers/plans/2026-05-30-apple-reminders-sync.md` (read-only — already amended)
 - Spec: `docs/superpowers/specs/2026-05-30-apple-reminders-sync-design.md` (read-only — already amended)
+- Tip when this handoff was committed: shown in the README section of `git log --oneline -1` after you check out; do `git log --oneline -10` to see recent context.
 
-**Hard rule:** stay inside this worktree. Never `cd` to `/Users/amit/Documents/Code/Irma`, never `git checkout` to another branch. A separate Claude session has uncommitted work on `feat/chat-tools-parity` at the main checkout — touching it breaks them. Verify `git branch --show-current` returns `worktree-feat+reminders-sync` before any commit.
+**Hard rule (if working on the user's dev machine):** stay inside the worktree if that's where the user puts you. Never `cd` to `/Users/amit/Documents/Code/Irma` (the main checkout), never `git checkout` to another branch. A separate Claude session has uncommitted work on `feat/chat-tools-parity` at the main checkout — touching it breaks them. Verify `git branch --show-current` shows your branch (worktree-feat+reminders-sync or feat/reminders-sync depending on how you cloned) before any commit.
 
 ## What's done
 
@@ -76,16 +78,17 @@ A subagent earlier today accidentally committed `9553173` (an old-architecture `
 ## Quick sanity check before starting
 
 ```bash
-cd /Users/amit/Documents/Code/Irma/.claude/worktrees/feat+reminders-sync
-git branch --show-current     # → worktree-feat+reminders-sync
-git rev-parse HEAD            # → a0fedfc...
+git branch --show-current     # → worktree-feat+reminders-sync or feat/reminders-sync
+git log --oneline -1          # → the handoff commit ("docs(handoff): apple reminders sync — evening pause...")
 git status                    # → clean
 cd services/api
-uv run pytest -q              # → all passing (no failures)
+uv run pytest -q              # → all passing
 ```
 
 If any of those don't match, stop and report back to the user before changing anything.
 
 ## After Task 22
 
-Final state should be: 9 new feature commits on top of `a0fedfc`, all tests green, the helper binary still in `tools/reminders-helper/bin/`. At that point the branch is ready for the user to merge or open a PR. They'll do the merge/PR themselves; you don't need to push or trigger anything.
+When you finish Task 22, all 9 remaining feature commits should be on top of the current handoff tip with tests green. **Push the result with `git push`** so the remote `feat/reminders-sync` stays current. Then the user can open a PR — don't open one yourself unless they explicitly ask. They'll handle merge/release.
+
+The opt-in e2e test (Task 21) won't have been exercised by you (it requires `IRMA_REMINDERS_E2E=1` and granting macOS Reminders permission to the helper binary). That's fine — the user will run it manually before merging. Just make sure it's syntactically valid and structurally correct against the bridge/sync interfaces.
