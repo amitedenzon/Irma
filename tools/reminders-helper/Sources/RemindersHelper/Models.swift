@@ -2,7 +2,6 @@ import Foundation
 
 struct HelperReminder: Codable, Equatable {
     let uuid: String
-    let parentUuid: String?
     let title: String
     let notes: String
     let dueDate: String?       // ISO date (YYYY-MM-DD) or nil
@@ -13,7 +12,6 @@ struct HelperReminder: Codable, Equatable {
 
     enum CodingKeys: String, CodingKey {
         case uuid
-        case parentUuid = "parent_uuid"
         case title
         case notes
         case dueDate = "due_date"
@@ -30,7 +28,6 @@ struct ReminderFields: Codable, Equatable {
     let dueDate: String?
     let startDate: String?
     let isCompleted: Bool?
-    let parentUuid: String?
 
     enum CodingKeys: String, CodingKey {
         case title
@@ -38,8 +35,21 @@ struct ReminderFields: Codable, Equatable {
         case dueDate = "due_date"
         case startDate = "start_date"
         case isCompleted = "is_completed"
-        case parentUuid = "parent_uuid"
     }
+}
+
+struct CalendarSummary: Codable, Equatable {
+    let calendarId: String
+    let title: String
+
+    enum CodingKeys: String, CodingKey {
+        case calendarId = "calendar_id"
+        case title
+    }
+}
+
+struct ListCalendarsOutput: Codable {
+    let calendars: [CalendarSummary]
 }
 
 enum BatchOp: Codable, Equatable {

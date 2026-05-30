@@ -17,6 +17,8 @@ protocol RemindersClient {
     func requestAccess() async throws -> Bool
     func accessStatus() -> AccessStatus
     func ensureList(name: String) async throws -> String
+    func listCalendars(prefix: String) async throws -> [CalendarSummary]
+    func renameCalendar(calendarId: String, title: String) async throws -> Bool
     func list(calendarId: String) async throws -> [HelperReminder]
     func batch(
         calendarId: String,
