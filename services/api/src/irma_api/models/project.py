@@ -63,6 +63,7 @@ class Project(_ProjectFields):
     id: str
     created_at: datetime
     updated_at: datetime
+    reminder_calendar_id: str | None = None
 
 
 class ProjectCreate(_ProjectFields):

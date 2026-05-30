@@ -81,6 +81,13 @@ async def _signals_has_project_id(conn: aiosqlite.Connection) -> bool:
     return any(row[1] == "project_id" for row in await cur.fetchall())
 
 
+async def _table_has_column(
+    conn: aiosqlite.Connection, table: str, column: str
+) -> bool:
+    cur = await conn.execute(f"PRAGMA table_info({table})")
+    return any(row[1] == column for row in await cur.fetchall())
+
+
 async def ensure_schema(conn: aiosqlite.Connection) -> None:
     for statement in SCHEMA_STATEMENTS:
         await conn.execute(statement)
@@ -88,4 +95,20 @@ async def ensure_schema(conn: aiosqlite.Connection) -> None:
     if not await _signals_has_project_id(conn):
         await conn.execute("ALTER TABLE signals ADD COLUMN project_id TEXT")
     await conn.execute("CREATE INDEX IF NOT EXISTS idx_signals_project_id ON signals(project_id)")
+
+    # Reminders linkage (added 2026-05-30): a TEXT column with a partial-unique
+    # index so NULL (unlinked) rows don't collide. Task carries the reminder's
+    # calendarItemIdentifier; Project carries its calendar's calendarIdentifier.
+    if not await _table_has_column(conn, "task", "reminder_uuid"):
+        await conn.execute("ALTER TABLE task ADD COLUMN reminder_uuid TEXT")
+        await conn.execute(
+            "CREATE UNIQUE INDEX idx_task_reminder_uuid "
+            "ON task(reminder_uuid) WHERE reminder_uuid IS NOT NULL"
+        )
+    if not await _table_has_column(conn, "project", "reminder_calendar_id"):
+        await conn.execute("ALTER TABLE project ADD COLUMN reminder_calendar_id TEXT")
+        await conn.execute(
+            "CREATE UNIQUE INDEX idx_project_reminder_calendar_id "
+            "ON project(reminder_calendar_id) WHERE reminder_calendar_id IS NOT NULL"
+        )
     await conn.commit()
