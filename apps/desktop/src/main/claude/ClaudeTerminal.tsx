@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { Terminal } from "@xterm/xterm";
@@ -9,6 +9,63 @@ const DATA_EVENT = "claude-pty:data";
 const EXIT_EVENT = "claude-pty:exit";
 
 export function ClaudeTerminal() {
+  // Bumping the epoch unmounts the inner TerminalSession; cleanup kills the
+  // current PTY and the next mount spawns a fresh one. Cheaper than wiring
+  // an explicit restart command across the Tauri boundary.
+  const [epoch, setEpoch] = useState(0);
+
+  return (
+    <div className="px-6 py-6 max-w-3xl mx-auto h-full flex flex-col">
+      <div className="mb-3 flex items-center justify-between">
+        <div className="flex items-baseline gap-2">
+          <span
+            className="text-[13px] font-medium"
+            style={{ color: "var(--color-ink)" }}
+          >
+            Claude
+          </span>
+          <span
+            className="text-[11px]"
+            style={{
+              color: "var(--color-ink-faint)",
+              fontFamily: "var(--font-mono)",
+            }}
+          >
+            interactive · cwd: repo root
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={() => setEpoch((n) => n + 1)}
+          className="text-[11px] underline"
+          style={{ color: "var(--color-ink-mute)" }}
+        >
+          restart session
+        </button>
+      </div>
+
+      <div
+        className="flex-1 overflow-hidden rounded-xl p-3"
+        style={{
+          background: "#0f1117",
+          border: "1px solid var(--color-border)",
+          boxShadow: "inset 0 1px 0 rgba(255,255,255,0.04)",
+        }}
+      >
+        <TerminalSession key={epoch} />
+      </div>
+
+      <div
+        className="mt-2 text-[11px] text-right"
+        style={{ color: "var(--color-ink-faint)" }}
+      >
+        claude --dangerously-skip-permissions
+      </div>
+    </div>
+  );
+}
+
+function TerminalSession() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -21,7 +78,7 @@ export function ClaudeTerminal() {
       fontFamily:
         '"JetBrains Mono", "Menlo", "DejaVu Sans Mono", "Courier New", monospace',
       fontSize: 13,
-      lineHeight: 1.15,
+      lineHeight: 1.2,
       cursorBlink: true,
       cursorStyle: "bar",
       scrollback: 5000,
@@ -29,6 +86,7 @@ export function ClaudeTerminal() {
         background: "#0f1117",
         foreground: "#d8dee4",
         cursor: "#d8dee4",
+        selectionBackground: "rgba(184, 52, 28, 0.35)",
       },
       allowProposedApi: true,
     });
@@ -89,11 +147,5 @@ export function ClaudeTerminal() {
     };
   }, []);
 
-  return (
-    <div
-      ref={containerRef}
-      className="h-full w-full"
-      style={{ background: "#0f1117" }}
-    />
-  );
+  return <div ref={containerRef} className="h-full w-full" />;
 }
