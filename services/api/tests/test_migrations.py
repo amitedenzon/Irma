@@ -20,7 +20,7 @@ async def test_ensure_schema_creates_all_tables(tmp_path: Path) -> None:
         cur = await conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
         names = {r[0] for r in await cur.fetchall()}
 
-    assert {"signals", "project", "task", "brief_cache"} <= names
+    assert {"signals", "project", "task", "brief_cache", "daily_snapshot"} <= names
     assert "briefs" not in names  # old cache dropped
 
 

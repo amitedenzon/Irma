@@ -52,6 +52,7 @@ export function Sprite({
       backgroundRepeat: "no-repeat",
       imageRendering: "pixelated",
       userSelect: "none",
+      pointerEvents: "none",
       transform: mirror ? "scaleX(-1)" : undefined,
     };
     return <div style={sheetStyle} aria-label="Irma sprite" />;
@@ -65,6 +66,7 @@ export function Sprite({
     borderRadius: "50%",
     boxShadow: "0 6px 22px rgba(0, 0, 0, 0.45)",
     userSelect: "none",
+    pointerEvents: "none",
   };
   return (
     <div

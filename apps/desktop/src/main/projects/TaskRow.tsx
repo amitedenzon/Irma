@@ -14,12 +14,7 @@ export function TaskRow({
   onDeleted: (id: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [status, setStatus] = useState<TaskStatus>(task.status);
   const [due, setDue] = useState(task.due_date ?? "");
-  const [sched, setSched] = useState(task.scheduled_for ?? "");
-  const [estimate, setEstimate] = useState(
-    task.estimated_minutes !== null ? String(task.estimated_minutes) : "",
-  );
 
   const isDone = task.status === "done";
 
@@ -28,24 +23,21 @@ export function TaskRow({
       ? await updateTask(task.id, { status: "todo" })
       : await completeTask(task.id);
     onChanged(next);
-    setStatus(next.status);
   };
 
-  const save = async () => {
-    const updated = await updateTask(task.id, {
-      status,
-      due_date: due || null,
-      scheduled_for: sched || null,
-      estimated_minutes: estimate ? Number(estimate) : null,
-    });
-    onChanged(updated);
+  const saveStatus = async (newStatus: TaskStatus) => {
+    onChanged(await updateTask(task.id, { status: newStatus }));
+  };
+
+  const saveDue = async () => {
+    onChanged(await updateTask(task.id, { due_date: due || null }));
   };
 
   const dueChip = task.due_date ? overdueLabel(task.due_date) : null;
 
   return (
     <li className="border-b last:border-b-0" style={{ borderColor: "var(--color-border)" }}>
-      <div className="flex items-center gap-2.5 py-1.5 group">
+      <div className="flex items-center gap-2.5 py-1.5">
         <input
           type="checkbox"
           checked={isDone}
@@ -66,53 +58,41 @@ export function TaskRow({
         </button>
 
         {task.status === "blocked" && (
-          <span className="badge" style={{ color: "var(--color-red)", borderColor: "var(--color-red)" }}>
-            blocked
-          </span>
+          <span title="blocked" style={{ color: "var(--color-red)", fontSize: 14, lineHeight: 1 }}>⊘</span>
         )}
-        {task.status === "doing" && !isDone && (
-          <span className="badge" style={{ color: "var(--color-amber)" }}>
-            doing
-          </span>
+        {task.status === "doing" && (
+          <span title="doing" style={{ color: "var(--color-amber)", fontSize: 11, lineHeight: 1 }}>▶</span>
         )}
         {dueChip && !isDone && (
           <span className={`badge ${dueChip.urgent ? "badge-urgent" : ""}`}>{dueChip.label}</span>
         )}
-        {task.scheduled_for && !isDone && (
-          <span className="text-[11px]" style={{ color: "var(--color-ink-faint)" }}>
-            ↦ {task.scheduled_for.slice(5)}
-          </span>
-        )}
       </div>
 
       {open && (
-        <div className="grid grid-cols-4 gap-2 pb-2.5 pl-7 pr-1 text-[12px]">
+        <div className="flex gap-2 pb-2.5 pl-7 pr-1 text-[12px]">
           <FieldS label="status">
-            <select value={status}
-                    onChange={(e) => { const s = e.target.value as TaskStatus; setStatus(s); void save(); }}
-                    className="input">
+            <select
+              value={task.status}
+              onChange={(e) => void saveStatus(e.target.value as TaskStatus)}
+              className="input"
+            >
               {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
             </select>
           </FieldS>
-          <FieldS label="est. min">
-            <input type="number" min={1} value={estimate}
-                   onChange={(e) => setEstimate(e.target.value)} onBlur={() => void save()}
-                   className="input" />
-          </FieldS>
           <FieldS label="due">
-            <input type="date" value={due} onChange={(e) => setDue(e.target.value)} onBlur={() => void save()}
+            <input type="date" value={due}
+                   onChange={(e) => setDue(e.target.value)}
+                   onBlur={() => void saveDue()}
                    className="input" />
           </FieldS>
-          <FieldS label="scheduled">
-            <input type="date" value={sched} onChange={(e) => setSched(e.target.value)} onBlur={() => void save()}
-                   className="input" />
-          </FieldS>
-          <button type="button"
-                  onClick={async () => { await deleteTask(task.id); onDeleted(task.id); }}
-                  className="col-span-4 text-left text-[12px] mt-1"
-                  style={{ color: "var(--color-red)" }}>
-            delete task
-          </button>
+          <div className="flex items-end pb-0.5">
+            <button type="button"
+                    onClick={async () => { await deleteTask(task.id); onDeleted(task.id); }}
+                    className="text-[12px]"
+                    style={{ color: "var(--color-red)" }}>
+              delete
+            </button>
+          </div>
         </div>
       )}
     </li>

@@ -7,7 +7,7 @@ LLM-callable tool: the model can pull events on demand from inside /chat
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any, cast
 
 import structlog
@@ -76,7 +76,7 @@ class ReadCalendarTool:
         if not self._has_credentials():
             raise ToolError(
                 "calendar_unlinked",
-                detail="run `irma-api auth google` to grant calendar.readonly",
+                detail="run `irma-api auth google` to grant calendar.events",
             )
 
         days = int(args.get("days") or _DEFAULT_DAYS)
@@ -98,7 +98,10 @@ class ReadCalendarTool:
                     events = await self._fetch_events(client, user, time_min, time_max)
         except (AuthError, RetryError) as exc:
             logger.warning("read_calendar.auth_failed", error=str(exc))
-            raise ToolError("calendar_auth_failed", detail=str(exc)) from exc
+            raise ToolError(
+                "calendar_auth_failed",
+                detail=f"{exc}; if the token is stale or narrow-scoped, re-run `irma-api auth google`",
+            ) from exc
         except HTTPError as exc:
             status = getattr(getattr(exc, "res", None), "status_code", None)
             logger.warning("read_calendar.http_error", status=status, error=str(exc))
@@ -131,7 +134,7 @@ class ReadCalendarTool:
         client = ClientCreds(
             client_id=s.google_oauth_client_id.get_secret_value(),
             client_secret=s.google_oauth_client_secret.get_secret_value(),
-            scopes=["https://www.googleapis.com/auth/calendar.readonly"],
+            scopes=["https://www.googleapis.com/auth/calendar.events"],
         )
         user = UserCreds(
             refresh_token=s.google_oauth_refresh_token.get_secret_value(),
@@ -166,16 +169,204 @@ class ReadCalendarTool:
 
     @staticmethod
     def _format_event(event: dict[str, Any]) -> str:
+        _DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
         start = event.get("start") or {}
         end = event.get("end") or {}
         raw_start = str(start.get("dateTime") or start.get("date") or "")
         raw_end = str(end.get("dateTime") or end.get("date") or "")
         title = str(event.get("summary") or "(no title)")
-        location = str(event.get("location") or "").strip()
-        when = f"{raw_start} → {raw_end}" if raw_end else raw_start
-        loc_part = f"  [{location}]" if location else ""
-        return f"- {when}  {title}{loc_part}"
+
+        timed = "T" in raw_start
+
+        try:
+            if timed:
+                dt_s = datetime.fromisoformat(raw_start.replace("Z", "+00:00"))
+                dt_e = datetime.fromisoformat(raw_end.replace("Z", "+00:00")) if raw_end else None
+                s_date = dt_s.strftime("%d/%m")
+                s_time = dt_s.strftime("%H:%M")
+                s_day  = _DAYS[dt_s.weekday()]
+                if dt_e is None or dt_s.date() == dt_e.date():
+                    e_time = dt_e.strftime("%H:%M") if dt_e else ""
+                    time_range = f"{s_time}-{e_time}" if e_time else s_time
+                    when = f"{s_date} ({s_day}), {time_range}"
+                else:
+                    e_date = dt_e.strftime("%d/%m")
+                    e_time = dt_e.strftime("%H:%M")
+                    e_day  = _DAYS[dt_e.weekday()]
+                    when = f"{s_date} {s_time} - {e_date} {e_time} ({s_day} - {e_day})"
+            else:
+                # all-day events — end date is exclusive in the Google API
+                d_s = date.fromisoformat(raw_start)
+                s_date = d_s.strftime("%d/%m")
+                s_day  = _DAYS[d_s.weekday()]
+                if raw_end:
+                    d_e = date.fromisoformat(raw_end)
+                    # subtract 1 to get the inclusive last day
+                    from datetime import timedelta as td
+                    d_e_incl = d_e - td(days=1)
+                    if d_s == d_e_incl:
+                        when = f"{s_date} ({s_day})"
+                    else:
+                        e_date = d_e_incl.strftime("%d/%m")
+                        e_day  = _DAYS[d_e_incl.weekday()]
+                        when = f"{s_date} - {e_date} ({s_day} - {e_day})"
+                else:
+                    when = f"{s_date} ({s_day})"
+        except (ValueError, AttributeError):
+            when = raw_start[:10] if raw_start else "?"
+
+        return f"{when} → {title}"
 
 
 # Module-level sanity: ReadCalendarTool conforms to Tool.
 _: Tool = ReadCalendarTool.__new__(ReadCalendarTool)
+
+
+class CreateCalendarEventTool:
+    """Creates an event on the operator's primary Google Calendar."""
+
+    spec = ToolSpec(
+        name="create_calendar_event",
+        description=(
+            "Create an event on the operator's primary Google Calendar. "
+            "Times must be RFC3339 (e.g. '2026-05-28T10:00:00Z'). "
+            "Use this for scheduling focus blocks, reminders, or meetings."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "summary": {"type": "string", "description": "Event title."},
+                "start": {
+                    "type": "string",
+                    "description": "Start time, RFC3339 (e.g. 2026-05-28T10:00:00Z).",
+                },
+                "end": {
+                    "type": "string",
+                    "description": "End time, RFC3339. Must be strictly after start.",
+                },
+                "description": {"type": "string", "description": "Optional body text."},
+                "location": {"type": "string", "description": "Optional location."},
+            },
+            "required": ["summary", "start", "end"],
+            "additionalProperties": False,
+        },
+    )
+
+    def __init__(self, settings: Settings) -> None:
+        self._settings = settings
+
+    async def call(self, args: dict[str, Any]) -> str:
+        if not self._has_credentials():
+            raise ToolError(
+                "calendar_unlinked",
+                detail="run `irma-api auth google` to grant calendar.events",
+            )
+
+        summary = str(args.get("summary", "")).strip()
+        start_raw = str(args.get("start", "")).strip()
+        end_raw = str(args.get("end", "")).strip()
+        if not summary or not start_raw or not end_raw:
+            raise ToolError(
+                "invalid_args",
+                detail="summary, start, end are required",
+            )
+        try:
+            start_dt = datetime.fromisoformat(start_raw.replace("Z", "+00:00"))
+            end_dt = datetime.fromisoformat(end_raw.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ToolError(
+                "invalid_args",
+                detail=f"start/end must be RFC3339 timestamps: {exc}",
+            ) from exc
+        if start_dt.tzinfo is None or end_dt.tzinfo is None:
+            raise ToolError(
+                "invalid_args",
+                detail="start/end must include a timezone (e.g. trailing 'Z' or '+HH:MM')",
+            )
+        if end_dt <= start_dt:
+            raise ToolError("invalid_args", detail="end must be after start")
+
+        body: dict[str, Any] = {
+            "summary": summary,
+            "start": {"dateTime": start_raw},
+            "end": {"dateTime": end_raw},
+        }
+        description = str(args.get("description", "")).strip()
+        if description:
+            body["description"] = description
+        location = str(args.get("location", "")).strip()
+        if location:
+            body["location"] = location
+
+        client, user = self._build_creds()
+        try:
+            async for attempt in AsyncRetrying(
+                stop=stop_after_attempt(4),
+                wait=wait_exponential_jitter(initial=1, max=30),
+                retry=retry_if_exception(_is_rate_limited),
+                reraise=True,
+            ):
+                with attempt:
+                    created = await self._insert_event(client, user, body)
+        except (AuthError, RetryError) as exc:
+            logger.warning("create_calendar_event.auth_failed", error=str(exc))
+            raise ToolError(
+                "calendar_auth_failed",
+                detail=f"{exc}; if the token is stale or narrow-scoped, re-run `irma-api auth google`",
+            ) from exc
+        except HTTPError as exc:
+            status = getattr(getattr(exc, "res", None), "status_code", None)
+            logger.warning(
+                "create_calendar_event.http_error", status=status, error=str(exc)
+            )
+            raise ToolError("calendar_http_error", detail=str(exc)) from exc
+
+        link = str(created.get("htmlLink") or "")
+        return f"created event {link}".strip()
+
+    # --- internals -----------------------------------------------------------
+
+    def _has_credentials(self) -> bool:
+        s = self._settings
+        return all(
+            v is not None
+            for v in (
+                s.google_oauth_client_id,
+                s.google_oauth_client_secret,
+                s.google_oauth_refresh_token,
+            )
+        )
+
+    def _build_creds(self) -> tuple[ClientCreds, UserCreds]:
+        s = self._settings
+        assert s.google_oauth_client_id is not None
+        assert s.google_oauth_client_secret is not None
+        assert s.google_oauth_refresh_token is not None
+        client = ClientCreds(
+            client_id=s.google_oauth_client_id.get_secret_value(),
+            client_secret=s.google_oauth_client_secret.get_secret_value(),
+            scopes=["https://www.googleapis.com/auth/calendar.events"],
+        )
+        user = UserCreds(
+            refresh_token=s.google_oauth_refresh_token.get_secret_value(),
+        )
+        return client, user
+
+    async def _insert_event(
+        self,
+        client: ClientCreds,
+        user: UserCreds,
+        body: dict[str, Any],
+    ) -> dict[str, Any]:
+        async with Aiogoogle(user_creds=user, client_creds=client) as g:
+            calendar = await g.discover("calendar", "v3")
+            req = calendar.events.insert(calendarId="primary", json=body)
+            resp = await g.as_user(req)
+            return cast(dict[str, Any], resp)
+
+
+# Module-level sanity: CreateCalendarEventTool conforms to Tool.
+_create_calendar_event_tool_sanity: Tool = CreateCalendarEventTool.__new__(
+    CreateCalendarEventTool
+)

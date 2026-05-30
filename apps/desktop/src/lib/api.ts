@@ -1,9 +1,6 @@
 import type {
-  Brief,
-  ChatBackends,
   ChatMessage,
   ChatResponse,
-  Horizon,
   Project,
   ProjectCreate,
   ProjectStatus,
@@ -137,16 +134,12 @@ export async function completeTask(id: string): Promise<Task> {
   );
 }
 
-// --- Brief ----------------------------------------------------------------
+// --- Brief (email-only) ---------------------------------------------------
 
-export async function fetchBrief(horizon: Horizon): Promise<Brief> {
-  const path = ({
-    day: "today",
-    week: "week",
-    month: "month",
-    all: "overview",
-  } as const)[horizon];
-  return jsonOrThrow(await fetch(url(`/api/v1/brief/${path}`)));
+export async function sendBriefEmail(): Promise<{ status: string; detail: string }> {
+  return jsonOrThrow(
+    await fetch(url("/api/v1/brief/email"), { method: "POST" }),
+  );
 }
 
 // --- Signals / refresh / chat (existing, kept) ----------------------------
@@ -159,22 +152,12 @@ export async function forceRefresh(): Promise<void> {
   await noContent(await fetch(url("/api/v1/refresh"), { method: "POST" }));
 }
 
-export async function sendChat(
-  messages: ChatMessage[],
-  opts: { backend?: string; sessionId?: string } = {},
-): Promise<ChatResponse> {
-  const payload: Record<string, unknown> = { messages };
-  if (opts.backend) payload.backend = opts.backend;
-  if (opts.sessionId) payload.session_id = opts.sessionId;
+export async function sendChat(messages: ChatMessage[]): Promise<ChatResponse> {
   return jsonOrThrow(
     await fetch(url("/api/v1/chat"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ messages }),
     }),
   );
-}
-
-export async function getChatBackends(): Promise<ChatBackends> {
-  return jsonOrThrow(await fetch(url("/api/v1/chat/backends")));
 }
