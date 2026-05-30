@@ -7,8 +7,8 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from irma_api.app import create_app
 from irma_api.agents.llm import ChatTurn, TextResult
+from irma_api.app import create_app
 from irma_api.config import get_settings
 from irma_api.tools.base import ToolSpec
 
