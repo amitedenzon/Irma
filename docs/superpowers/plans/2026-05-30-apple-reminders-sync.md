@@ -31,6 +31,32 @@ Task sections below have been edited inline to reflect this; original commit mes
 
 ---
 
+## Amendment 2026-05-30 (afternoon): one Reminders list per Project
+
+**Reason:** the original plan mapped Project → parent reminder, Task → subtask of project. Verification against public EventKit headers (macOS 15.x / 26.x SDKs) confirmed there is no public `parentReminder` / subtask API — Apple's Reminders.app uses a private framework extension. Spec was amended (commit `7ad1abd`); Swift helper was refit (commit `d9e74ad`).
+
+**New architecture:** each Project maps to its own `EKCalendar` named `Irma · <ProjectName>`. The Inbox is `Irma · Inbox`. Tasks are flat reminders within their project's calendar. Calendar discovery is a new helper command `list-calendars --prefix "Irma · "`; rename and delete are also calendar-level operations.
+
+**Per-task effects** (see inline amendment notes in each task section below):
+
+- **Task 6 (EventKitRemindersClient)** — already implemented under the new spec in commit `d9e74ad`, alongside `Models.swift` / `RemindersClient.swift` / `CommandHandler.swift` updates (drop `parent_uuid`, add `listCalendars` and `renameCalendar`). This task is **complete**; subagents should skip ahead to Task 7.
+- **Task 7** — unaffected; main.swift dispatches all commands generically.
+- **Task 8 (Python DTOs)** — drop `parent_uuid` from `HelperReminder` and `ReminderFields`. Add Pydantic `CalendarSummary` mirroring the Swift type.
+- **Task 9 (Bridge + fake helper)** — add `list_calendars(prefix)` and `rename_calendar(calendar_id, title)` to `ReminderBridge`. Fake helper supports the two new commands.
+- **Task 10 (Schema migration)** — Project column is **`reminder_calendar_id`** (an `EKCalendar.calendarIdentifier`), NOT `reminder_uuid`. Task still gets `reminder_uuid` (an `EKReminder.calendarItemIdentifier`).
+- **Task 11 (Models + repos)** — Project model gains `reminder_calendar_id: str | None`. `ProjectRepo.set_reminder_calendar_id(...)`. Task model gains `reminder_uuid: str | None` (unchanged).
+- **Task 12 (Planner)** — fundamentally rewritten. The pure function is now `plan(irma_snapshot, helper_state) -> SyncPlan` where `helper_state` is a dict keyed by calendar uuid → list of reminders, plus a separate map of calendar uuid → title. Output includes calendar-level operations (`create_calendar`, `rename_calendar`, `delete_calendar`) in addition to per-reminder ones. See the rewritten task body below.
+- **Task 13 (Inbox bootstrapper)** — unchanged (still ensures the Inbox `Project` row).
+- **Task 14 (SyncService)** — `_apply` rewritten as a four-pass algorithm (calendar reconcile → per-project snapshot → per-project reminder reconcile → apply). See the rewritten task body below.
+- **Task 15 (Settings)** — drop `reminders_calendar_id`. Add `reminders_linked: bool = False` and `reminders_calendar_prefix: str = "Irma · "`.
+- **Task 17 (Router)** — link flow no longer calls `ensure-list --name Irma`. Just `request-access`, set `reminders_linked=true`, trigger `sync_once()`. Unlink clears `reminder_calendar_id` (projects) and `reminder_uuid` (tasks).
+- **Task 21 (E2E test)** — creates per-project test calendars; tears down by deleting them.
+- **Task 22 (README)** — describes the `Irma · <Project>` naming convention.
+
+Tasks not listed (16, 18, 19, 20) are architecturally unaffected.
+
+---
+
 ## File Structure
 
 ### New files
@@ -899,6 +925,8 @@ git commit -m "feat(reminders): wire CLI and ship universal-binary artifact"
 
 ### Task 8: Python integrations package + Pydantic DTOs
 
+> **Amendment 2026-05-30 (afternoon):** drop `parent_uuid` from both `HelperReminder` and `ReminderFields` (Swift side no longer carries it after the architectural pivot). Add a `CalendarSummary` Pydantic class mirroring the Swift type — `ReminderBridge.list_calendars` (Task 9) returns a list of these.
+
 **Files:**
 - Create: `services/api/src/irma_api/integrations/__init__.py`
 - Create: `services/api/src/irma_api/integrations/reminders/__init__.py`
@@ -920,6 +948,7 @@ import pytest
 from irma_api.integrations.reminders.models import (
     BatchOp,
     BatchResult,
+    CalendarSummary,
     HelperReminder,
     ReminderFields,
 )
@@ -928,7 +957,6 @@ from irma_api.integrations.reminders.models import (
 def test_helper_reminder_parses_helper_json() -> None:
     raw = {
         "uuid": "U-1",
-        "parent_uuid": "P-1",
         "title": "buy milk",
         "notes": "",
         "due_date": "2026-06-01",
@@ -945,9 +973,7 @@ def test_helper_reminder_parses_helper_json() -> None:
 
 
 def test_batch_op_create_serialises_with_op_discriminator() -> None:
-    op = BatchOp.create_op(
-        ReminderFields(title="hello", parent_uuid=None)
-    )
+    op = BatchOp.create_op(ReminderFields(title="hello"))
     dumped = op.model_dump(by_alias=True, exclude_none=True)
     assert dumped == {"op": "create", "fields": {"title": "hello"}}
 
@@ -968,7 +994,6 @@ def test_helper_reminder_rejects_bad_date() -> None:
     with pytest.raises(ValueError):
         HelperReminder.model_validate({
             "uuid": "U-1",
-            "parent_uuid": None,
             "title": "x",
             "notes": "",
             "due_date": "not-a-date",
@@ -977,6 +1002,13 @@ def test_helper_reminder_rejects_bad_date() -> None:
             "completion_date": None,
             "last_modified": "2026-05-30T10:00:00Z",
         })
+
+
+def test_calendar_summary_parses() -> None:
+    raw = {"calendar_id": "CAL-1", "title": "Irma · Inbox"}
+    cs = CalendarSummary.model_validate(raw)
+    assert cs.calendar_id == "CAL-1"
+    assert cs.title == "Irma · Inbox"
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -1016,7 +1048,6 @@ class HelperReminder(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     uuid: str
-    parent_uuid: str | None = None
     title: str
     notes: str = ""
     due_date: date | None = None
@@ -1036,7 +1067,15 @@ class ReminderFields(BaseModel):
     due_date: date | None = None
     start_date: date | None = None
     is_completed: bool | None = None
-    parent_uuid: str | None = None
+
+
+class CalendarSummary(BaseModel):
+    """One calendar entry from `helper list-calendars`."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    calendar_id: str
+    title: str
 
 
 class _Create(BaseModel):
@@ -1116,6 +1155,15 @@ git commit -m "feat(reminders): pydantic DTOs for helper JSON surface"
 ---
 
 ### Task 9: `ReminderBridge` (async subprocess wrapper) + fake helper
+
+> **Amendment 2026-05-30 (afternoon):** add two new bridge methods and matching fake-helper commands:
+>
+> - `ReminderBridge.list_calendars(prefix: str) -> list[CalendarSummary]` → calls `helper list-calendars --prefix <s>`.
+> - `ReminderBridge.rename_calendar(calendar_id: str, title: str) -> bool` → calls `helper rename-calendar --calendar-id <s> --title <s>`.
+>
+> Pattern follows existing methods: use `_invoke_json`, parse the result. The fake helper script gains two corresponding handlers (`cmd_list_calendars`, `cmd_rename_calendar`) and an in-memory `lists` dict that supports prefix filtering and rename. Add two new bridge tests: `test_list_calendars_filters_by_prefix` and `test_rename_calendar_updates_title`.
+>
+> Drop `parent_uuid` from every reference in this task (test inputs, fake helper, bridge code) — per Task 8 amendment the field no longer exists.
 
 **Files:**
 - Create: `services/api/src/irma_api/integrations/reminders/bridge.py`
@@ -1615,7 +1663,9 @@ git commit -m "feat(reminders): async bridge to helper binary"
 
 ---
 
-### Task 10: Schema migration for `reminder_uuid` columns
+### Task 10: Schema migration for reminder linkage columns
+
+> **Amendment 2026-05-30 (afternoon):** Task gets `reminder_uuid TEXT` (an `EKReminder.calendarItemIdentifier`). Project gets `reminder_calendar_id TEXT` (an `EKCalendar.calendarIdentifier`), NOT `reminder_uuid` — because Projects map to whole calendars under the new architecture, not to single reminders. Tests and migration logic below already reflect this.
 
 **Files:**
 - Modify: `services/api/src/irma_api/store/migrations.py`
@@ -1644,18 +1694,18 @@ async def test_task_has_reminder_uuid_column(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_project_has_reminder_uuid_column(tmp_path: Path) -> None:
+async def test_project_has_reminder_calendar_id_column(tmp_path: Path) -> None:
     db_path = tmp_path / "test.db"
     async with aiosqlite.connect(db_path) as conn:
         conn.row_factory = aiosqlite.Row
         await ensure_schema(conn)
         cur = await conn.execute("PRAGMA table_info(project)")
         cols = {row[1] for row in await cur.fetchall()}
-    assert "reminder_uuid" in cols
+    assert "reminder_calendar_id" in cols
 
 
 @pytest.mark.asyncio
-async def test_reminder_uuid_migration_is_idempotent(tmp_path: Path) -> None:
+async def test_reminder_columns_migration_is_idempotent(tmp_path: Path) -> None:
     db_path = tmp_path / "test.db"
     async with aiosqlite.connect(db_path) as conn:
         conn.row_factory = aiosqlite.Row
@@ -1663,8 +1713,11 @@ async def test_reminder_uuid_migration_is_idempotent(tmp_path: Path) -> None:
         await ensure_schema(conn)
         await ensure_schema(conn)
         cur = await conn.execute("PRAGMA table_info(task)")
-        cols = {row[1] for row in await cur.fetchall()}
-    assert "reminder_uuid" in cols
+        task_cols = {row[1] for row in await cur.fetchall()}
+        cur = await conn.execute("PRAGMA table_info(project)")
+        proj_cols = {row[1] for row in await cur.fetchall()}
+    assert "reminder_uuid" in task_cols
+    assert "reminder_calendar_id" in proj_cols
 ```
 
 (If `pytest`, `aiosqlite`, `Path`, or `ensure_schema` are not yet imported in the file, add the imports at the top.)
@@ -1672,10 +1725,10 @@ async def test_reminder_uuid_migration_is_idempotent(tmp_path: Path) -> None:
 - [ ] **Step 3: Run to verify it fails**
 
 ```bash
-cd services/api && uv run pytest tests/test_migrations.py -v -k reminder_uuid
+cd services/api && uv run pytest tests/test_migrations.py -v -k reminder
 ```
 
-Expected: AssertionError — column missing.
+Expected: AssertionError — columns missing.
 
 - [ ] **Step 4: Extend `migrations.py`**
 
@@ -1688,11 +1741,11 @@ Add inside `ensure_schema`, immediately before `await conn.commit()` at the end:
             "CREATE UNIQUE INDEX idx_task_reminder_uuid "
             "ON task(reminder_uuid) WHERE reminder_uuid IS NOT NULL"
         )
-    if not await _table_has_column(conn, "project", "reminder_uuid"):
-        await conn.execute("ALTER TABLE project ADD COLUMN reminder_uuid TEXT")
+    if not await _table_has_column(conn, "project", "reminder_calendar_id"):
+        await conn.execute("ALTER TABLE project ADD COLUMN reminder_calendar_id TEXT")
         await conn.execute(
-            "CREATE UNIQUE INDEX idx_project_reminder_uuid "
-            "ON project(reminder_uuid) WHERE reminder_uuid IS NOT NULL"
+            "CREATE UNIQUE INDEX idx_project_reminder_calendar_id "
+            "ON project(reminder_calendar_id) WHERE reminder_calendar_id IS NOT NULL"
         )
 ```
 
@@ -1722,12 +1775,14 @@ Expected: all migration tests pass, including the three new ones.
 cd ../..
 git add services/api/src/irma_api/store/migrations.py \
         services/api/tests/test_migrations.py
-git commit -m "feat(reminders): schema migration for reminder_uuid columns"
+git commit -m "feat(reminders): schema migration for reminder linkage columns"
 ```
 
 ---
 
 ### Task 11: Extend `Task` and `Project` Pydantic models + repos
+
+> **Amendment 2026-05-30 (afternoon):** Task gets `reminder_uuid: str | None` (an `EKReminder.calendarItemIdentifier`). Project gets `reminder_calendar_id: str | None` (an `EKCalendar.calendarIdentifier`) — different column, different repo method (`set_reminder_calendar_id`), different semantics. Task half of this task is unchanged; Project half differs from the original plan.
 
 **Files:**
 - Modify: `services/api/src/irma_api/models/task.py`
@@ -1765,20 +1820,29 @@ async def test_set_reminder_uuid_to_none_clears(task_repo: TaskRepo, project: Pr
 
 ```python
 @pytest.mark.asyncio
-async def test_project_set_reminder_uuid(project_repo: ProjectRepo) -> None:
+async def test_project_set_reminder_calendar_id(project_repo: ProjectRepo) -> None:
     p = await project_repo.create(ProjectCreate(name="P1"))
-    await project_repo.set_reminder_uuid(p.id, "REM-P1")
+    await project_repo.set_reminder_calendar_id(p.id, "CAL-P1")
     refreshed = await project_repo.get(p.id)
-    assert refreshed.reminder_uuid == "REM-P1"
+    assert refreshed.reminder_calendar_id == "CAL-P1"
+
+
+@pytest.mark.asyncio
+async def test_project_set_reminder_calendar_id_to_none_clears(project_repo: ProjectRepo) -> None:
+    p = await project_repo.create(ProjectCreate(name="P1"))
+    await project_repo.set_reminder_calendar_id(p.id, "CAL-X")
+    await project_repo.set_reminder_calendar_id(p.id, None)
+    refreshed = await project_repo.get(p.id)
+    assert refreshed.reminder_calendar_id is None
 ```
 
 - [ ] **Step 3: Run to verify failures**
 
 ```bash
-cd services/api && uv run pytest tests/test_task_repo.py tests/test_project_repo.py -v -k reminder_uuid
+cd services/api && uv run pytest tests/test_task_repo.py tests/test_project_repo.py -v -k "reminder_uuid or reminder_calendar_id"
 ```
 
-Expected: errors — `Task` has no `reminder_uuid` attribute; `set_reminder_uuid` not defined.
+Expected: errors — fields and methods undefined.
 
 - [ ] **Step 4: Extend `models/task.py`**
 
@@ -1804,7 +1868,7 @@ class Project(_ProjectFields):
     id: str
     created_at: datetime
     updated_at: datetime
-    reminder_uuid: str | None = None
+    reminder_calendar_id: str | None = None
 ```
 
 - [ ] **Step 6: Extend `store/repos/task_repo.py`**
@@ -1847,7 +1911,18 @@ Append a new method to `TaskRepo`:
 
 - [ ] **Step 7: Extend `store/repos/project_repo.py`**
 
-Mirror the same pattern: update `_COLUMNS`, `_row_to_project`, the INSERT, and add `set_reminder_uuid`. Project's INSERT becomes:
+Update `_COLUMNS`:
+
+```python
+_COLUMNS = (
+    "id, name, description, status, priority, "
+    "calendar_keywords, goals, target_date, created_at, updated_at, reminder_calendar_id"
+)
+```
+
+Update `_row_to_project` to set `reminder_calendar_id=row["reminder_calendar_id"]`.
+
+Update the INSERT in `create()`:
 
 ```python
             await self._conn.execute(
@@ -1859,13 +1934,17 @@ Mirror the same pattern: update `_COLUMNS`, `_row_to_project`, the INSERT, and a
             )
 ```
 
-And `_COLUMNS`:
+Append a new method to `ProjectRepo`:
 
 ```python
-_COLUMNS = (
-    "id, name, description, status, priority, "
-    "calendar_keywords, goals, target_date, created_at, updated_at, reminder_uuid"
-)
+    async def set_reminder_calendar_id(self, project_id: str, calendar_id: str | None) -> None:
+        cur = await self._conn.execute(
+            "UPDATE project SET reminder_calendar_id = ?, updated_at = ? WHERE id = ?",
+            (calendar_id, _now().isoformat(), project_id),
+        )
+        await self._conn.commit()
+        if cur.rowcount == 0:
+            raise NotFoundError("project", project_id)
 ```
 
 - [ ] **Step 8: Run tests to verify they pass**
@@ -1874,7 +1953,7 @@ _COLUMNS = (
 uv run pytest tests/test_task_repo.py tests/test_project_repo.py tests/test_routers_projects.py tests/test_routers_tasks.py -v
 ```
 
-Expected: all pass — including new reminder_uuid tests and unchanged existing ones.
+Expected: all pass.
 
 - [ ] **Step 9: Commit**
 
@@ -1884,7 +1963,7 @@ git add services/api/src/irma_api/models \
         services/api/src/irma_api/store/repos \
         services/api/tests/test_task_repo.py \
         services/api/tests/test_project_repo.py
-git commit -m "feat(reminders): persist reminder_uuid on Task and Project rows"
+git commit -m "feat(reminders): persist linkage columns on Task and Project rows"
 ```
 
 ---
