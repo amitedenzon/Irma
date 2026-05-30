@@ -74,7 +74,7 @@ export function App() {
         onClose={closeWindow}
       />
 
-      <main className="flex-1 overflow-y-auto">
+      <main className="flex-1 overflow-y-auto relative">
         {tab === "projects" && (
           <ProjectsView
             projects={projects}
@@ -83,8 +83,16 @@ export function App() {
             onReload={loadProjects}
           />
         )}
-        {/* Chat stays mounted so the Claude PTY (and Local history) survives tab switches. */}
-        <div style={{ display: tab === "chat" ? "block" : "none", height: "100%" }}>
+        {/* Chat stays mounted so the Claude PTY (and Local history) survives tab
+            switches. Absolute fill avoids the percent-height-through-flex chain
+            collapsing the chat area when the parent's height isn't explicit. */}
+        <div
+          style={{
+            display: tab === "chat" ? "block" : "none",
+            position: "absolute",
+            inset: 0,
+          }}
+        >
           <ChatView
             contextProjects={projects}
             onTaskMaybeCreated={loadProjects}
