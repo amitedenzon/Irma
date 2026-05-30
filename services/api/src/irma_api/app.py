@@ -32,8 +32,10 @@ from irma_api.runtime.scheduler import Scheduler
 from irma_api.runtime.state import StateBus
 from irma_api.store.sqlite import SignalStore
 from irma_api.tools.base import Tool, ToolRegistry
-from irma_api.tools.calendar import ReadCalendarTool
+from irma_api.tools.calendar import CreateCalendarEventTool, ReadCalendarTool
+from irma_api.tools.projects import CreateProjectTool, ListProjectsTool
 from irma_api.tools.resend import ResendSendTool
+from irma_api.tools.tasks import CompleteTaskTool, CreateTaskTool, ListTasksTool
 
 logger = structlog.get_logger(__name__)
 
@@ -72,11 +74,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
     if settings.google_oauth_refresh_token is not None:
         tools.append(ReadCalendarTool(settings))
+        tools.append(CreateCalendarEventTool(settings))
     else:
         logger.info(
-            "tools.read_calendar_disabled",
+            "tools.calendar_disabled",
             missing=["GOOGLE_OAUTH_REFRESH_TOKEN"],
         )
+
+    tools.append(ListProjectsTool(store))
+    tools.append(CreateProjectTool(store))
+    tools.append(ListTasksTool(store))
+    tools.append(CreateTaskTool(store))
+    tools.append(CompleteTaskTool(store))
+
     registry = ToolRegistry(tools)
 
     lead_agent: LeadAgentProtocol | None = None
