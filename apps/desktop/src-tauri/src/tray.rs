@@ -4,12 +4,39 @@
 //! Toggle Irma / Settings / Quit.
 
 use tauri::{
-    menu::{Menu, MenuItem},
+    menu::{CheckMenuItem, Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle,
+    AppHandle, Manager,
 };
 
 use crate::windows;
+
+/// Show a native popup context menu on the companion window with placement options.
+/// `beside_dock` = current setting; the active item gets a checkmark.
+pub fn show_companion_menu(app: &AppHandle, beside_dock: bool) -> tauri::Result<()> {
+    let beside = CheckMenuItem::with_id(
+        app,
+        "companion_beside_dock",
+        "Beside the Dock",
+        true,
+        beside_dock,
+        None::<&str>,
+    )?;
+    let on_dock = CheckMenuItem::with_id(
+        app,
+        "companion_on_dock",
+        "On the Dock",
+        true,
+        !beside_dock,
+        None::<&str>,
+    )?;
+    let menu = Menu::with_items(app, &[&beside, &on_dock])?;
+
+    if let Some(window) = app.get_webview_window("companion") {
+        let _ = window.popup_menu(&menu);
+    }
+    Ok(())
+}
 
 pub fn init(app: &AppHandle) -> tauri::Result<()> {
     let toggle = MenuItem::with_id(app, "toggle", "Toggle Irma", true, None::<&str>)?;
