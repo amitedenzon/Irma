@@ -88,6 +88,12 @@ pub fn claude_pty_spawn(
     let binary = std::env::var("IRMA_CLAUDE_BINARY").unwrap_or_else(|_| "claude".to_string());
     let mut cmd = CommandBuilder::new(binary);
     cmd.arg("--dangerously-skip-permissions");
+    // Pin Sonnet (latest) at medium effort so the in-Irma session stays fast and
+    // cheap. Heavy reasoning belongs in Amit's own Claude Code window.
+    cmd.arg("--model");
+    cmd.arg("sonnet");
+    cmd.arg("--effort");
+    cmd.arg("medium");
     cmd.cwd(&workdir);
     // Inherit the user's interactive shell environment as best we can.
     for (k, v) in std::env::vars() {
