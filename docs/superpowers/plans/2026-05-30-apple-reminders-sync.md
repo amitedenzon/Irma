@@ -17,6 +17,20 @@
 
 ---
 
+## Amendment 2026-05-30: Swift unit tests dropped
+
+**Reason:** macOS Xcode Command Line Tools (the dev environment in use) does not ship the `XCTest` or `swift-testing` modules — they are full-Xcode-only. Installing full Xcode (~12 GB) is not warranted for a ~250-line helper.
+
+**Effect on Tasks 1–5:** the SwiftPM `testTarget` is removed, no `*Tests.swift` files are written, and the verification gate switches from `swift test` to `swift build`. Tasks 6 and 7 are unaffected (they were already test-free). Tasks 8+ (Python side) are unaffected.
+
+**Regression coverage shifts entirely to the Python side:**
+- The Python `ReminderBridge` (Task 9) is tested against a Python fake helper that re-implements the JSON protocol — so any regression in the protocol contract surfaces in Python tests.
+- The opt-in end-to-end test (Task 21) exercises the real Swift binary against the real macOS Reminders DB.
+
+Task sections below have been edited inline to reflect this; original commit messages are preserved.
+
+---
+
 ## File Structure
 
 ### New files
@@ -79,7 +93,6 @@
 - Create: `tools/reminders-helper/Package.swift`
 - Create: `tools/reminders-helper/Sources/RemindersHelper/main.swift`
 - Create: `tools/reminders-helper/Sources/RemindersHelper/Info.plist`
-- Create: `tools/reminders-helper/Tests/RemindersHelperTests/SmokeTests.swift`
 - Create: `tools/reminders-helper/.gitignore`
 - Create: `tools/reminders-helper/README.md`
 
@@ -118,11 +131,6 @@ let package = Package(
                 ]),
             ]
         ),
-        .testTarget(
-            name: "RemindersHelperTests",
-            dependencies: ["RemindersHelper"],
-            path: "Tests/RemindersHelperTests"
-        ),
     ]
 )
 ```
@@ -146,7 +154,7 @@ let package = Package(
 </plist>
 ```
 
-- [ ] **Step 4: Write a placeholder `main.swift` and a smoke test that just builds**
+- [ ] **Step 4: Write a placeholder `main.swift`**
 
 `Sources/RemindersHelper/main.swift`:
 
@@ -162,25 +170,13 @@ FileHandle.standardError.write(Data("unknown command\n".utf8))
 exit(2)
 ```
 
-`Tests/RemindersHelperTests/SmokeTests.swift`:
-
-```swift
-import XCTest
-
-final class SmokeTests: XCTestCase {
-    func testPackageCompiles() {
-        XCTAssertTrue(true)
-    }
-}
-```
-
-- [ ] **Step 5: Run `swift test` to verify the package compiles**
+- [ ] **Step 5: Run `swift build` to verify the package compiles**
 
 ```bash
-cd tools/reminders-helper && swift test
+cd tools/reminders-helper && swift build
 ```
 
-Expected: all tests pass; package builds successfully.
+Expected: `Build complete!`.
 
 - [ ] **Step 6: Write `.gitignore` and minimal `README.md`**
 
@@ -229,64 +225,8 @@ git commit -m "feat(reminders): scaffold Swift helper package"
 
 **Files:**
 - Create: `tools/reminders-helper/Sources/RemindersHelper/Models.swift`
-- Create: `tools/reminders-helper/Tests/RemindersHelperTests/ModelsTests.swift`
 
-- [ ] **Step 1: Write the failing test**
-
-`Tests/RemindersHelperTests/ModelsTests.swift`:
-
-```swift
-import XCTest
-@testable import RemindersHelper
-
-final class ModelsTests: XCTestCase {
-    func testReminderRoundTripsThroughJSON() throws {
-        let rem = HelperReminder(
-            uuid: "ABC-123",
-            parentUuid: "PARENT-1",
-            title: "buy milk",
-            notes: "2%",
-            dueDate: "2026-06-01",
-            startDate: nil,
-            isCompleted: false,
-            completionDate: nil,
-            lastModified: "2026-05-30T12:00:00Z"
-        )
-        let data = try JSONEncoder().encode(rem)
-        let back = try JSONDecoder().decode(HelperReminder.self, from: data)
-        XCTAssertEqual(back, rem)
-    }
-
-    func testBatchOpDiscriminatedByOpField() throws {
-        let json = #"""
-        {"op":"create","fields":{"title":"x","parent_uuid":"P1"}}
-        """#.data(using: .utf8)!
-        let op = try JSONDecoder().decode(BatchOp.self, from: json)
-        guard case let .create(fields) = op else {
-            return XCTFail("expected .create")
-        }
-        XCTAssertEqual(fields.title, "x")
-        XCTAssertEqual(fields.parentUuid, "P1")
-    }
-
-    func testBatchResultOmitsLastModifiedForDelete() throws {
-        let res = BatchResult(index: 0, ok: true, uuid: "U", lastModified: nil, error: nil)
-        let json = try JSONEncoder().encode(res)
-        let dict = try JSONSerialization.jsonObject(with: json) as! [String: Any]
-        XCTAssertNil(dict["last_modified"])
-    }
-}
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-```bash
-cd tools/reminders-helper && swift test
-```
-
-Expected: compile failure — `HelperReminder`, `BatchOp`, `BatchResult` undefined.
-
-- [ ] **Step 3: Write `Models.swift`**
+- [ ] **Step 1: Write `Models.swift`**
 
 `Sources/RemindersHelper/Models.swift`:
 
@@ -418,78 +358,32 @@ struct ListOutput: Codable {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 2: Run `swift build` to verify it compiles**
 
 ```bash
-swift test
+cd tools/reminders-helper && swift build
 ```
 
-Expected: 3 tests pass.
+Expected: `Build complete!`.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
 cd ../..
-git add tools/reminders-helper/Sources/RemindersHelper/Models.swift \
-        tools/reminders-helper/Tests/RemindersHelperTests/ModelsTests.swift
+git add tools/reminders-helper/Sources/RemindersHelper/Models.swift
 git commit -m "feat(reminders): codable JSON DTOs for the helper"
 ```
 
 ---
 
-### Task 3: `RemindersClient` protocol + fake for tests
+### Task 3: `RemindersClient` protocol
 
 **Files:**
 - Create: `tools/reminders-helper/Sources/RemindersHelper/RemindersClient.swift`
-- Create: `tools/reminders-helper/Tests/RemindersHelperTests/FakeRemindersClient.swift`
-- Create: `tools/reminders-helper/Tests/RemindersHelperTests/FakeClientTests.swift`
 
-- [ ] **Step 1: Write the failing test**
+> Amendment 2026-05-30: per the testing-strategy note at the top of this plan, the `FakeRemindersClient` and its XCTest exerciser are dropped — the fake existed solely to back Swift unit tests. The protocol itself is still production code (it's the injection seam between `CommandHandler` and `EventKitRemindersClient`).
 
-`Tests/RemindersHelperTests/FakeClientTests.swift`:
-
-```swift
-import XCTest
-@testable import RemindersHelper
-
-final class FakeClientTests: XCTestCase {
-    func testEnsureListIsIdempotent() async throws {
-        let client = FakeRemindersClient()
-        let id1 = try await client.ensureList(name: "Irma")
-        let id2 = try await client.ensureList(name: "Irma")
-        XCTAssertEqual(id1, id2)
-    }
-
-    func testCreateThenListRoundTrip() async throws {
-        let client = FakeRemindersClient()
-        let calId = try await client.ensureList(name: "Irma")
-        let parent = ReminderFields(
-            title: "Project A", notes: nil, dueDate: nil, startDate: nil,
-            isCompleted: false, parentUuid: nil
-        )
-        let r1 = try await client.batch(
-            calendarId: calId,
-            ops: [.create(parent)],
-            continueOnError: false
-        )
-        XCTAssertEqual(r1.count, 1)
-        XCTAssertTrue(r1[0].ok)
-        let listed = try await client.list(calendarId: calId)
-        XCTAssertEqual(listed.count, 1)
-        XCTAssertEqual(listed[0].title, "Project A")
-    }
-}
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-```bash
-swift test
-```
-
-Expected: compile failure — `RemindersClient`, `FakeRemindersClient` undefined.
-
-- [ ] **Step 3: Write the protocol**
+- [ ] **Step 1: Write the protocol**
 
 `Sources/RemindersHelper/RemindersClient.swift`:
 
@@ -523,144 +417,20 @@ protocol RemindersClient {
 }
 ```
 
-- [ ] **Step 4: Write the fake**
-
-`Tests/RemindersHelperTests/FakeRemindersClient.swift`:
-
-```swift
-import Foundation
-@testable import RemindersHelper
-
-final class FakeRemindersClient: RemindersClient, @unchecked Sendable {
-    private var lists: [String: String] = [:]   // name → id
-    private var store: [String: [String: HelperReminder]] = [:]  // calId → uuid → reminder
-    private var counter = 0
-    var status: AccessStatus = .authorized
-    var grantOnRequest: Bool = true
-    private let clock: () -> String
-
-    init(clock: @escaping () -> String = { ISO8601DateFormatter().string(from: Date()) }) {
-        self.clock = clock
-    }
-
-    private func nextUuid(_ prefix: String = "R") -> String {
-        counter += 1
-        return "\(prefix)-\(counter)"
-    }
-
-    func requestAccess() async throws -> Bool {
-        status = grantOnRequest ? .authorized : .denied
-        return grantOnRequest
-    }
-
-    func accessStatus() -> AccessStatus { status }
-
-    func ensureList(name: String) async throws -> String {
-        if let existing = lists[name] { return existing }
-        let id = "cal-\(name)"
-        lists[name] = id
-        store[id] = [:]
-        return id
-    }
-
-    func list(calendarId: String) async throws -> [HelperReminder] {
-        guard let rems = store[calendarId] else {
-            throw RemindersClientError.calendarNotFound(calendarId)
-        }
-        return Array(rems.values).sorted { $0.uuid < $1.uuid }
-    }
-
-    func batch(
-        calendarId: String,
-        ops: [BatchOp],
-        continueOnError: Bool
-    ) async throws -> [BatchResult] {
-        guard var rems = store[calendarId] else {
-            throw RemindersClientError.calendarNotFound(calendarId)
-        }
-        var results: [BatchResult] = []
-        for (idx, op) in ops.enumerated() {
-            do {
-                let res = try applyOne(op, store: &rems, index: idx)
-                results.append(res)
-            } catch {
-                results.append(BatchResult(
-                    index: idx, ok: false, uuid: nil, lastModified: nil,
-                    error: "\(error)"
-                ))
-                if !continueOnError { break }
-            }
-        }
-        store[calendarId] = rems
-        return results
-    }
-
-    private func applyOne(
-        _ op: BatchOp, store: inout [String: HelperReminder], index: Int
-    ) throws -> BatchResult {
-        let now = clock()
-        switch op {
-        case .create(let f):
-            let uuid = nextUuid()
-            let r = HelperReminder(
-                uuid: uuid, parentUuid: f.parentUuid,
-                title: f.title ?? "", notes: f.notes ?? "",
-                dueDate: f.dueDate, startDate: f.startDate,
-                isCompleted: f.isCompleted ?? false,
-                completionDate: (f.isCompleted == true) ? now : nil,
-                lastModified: now
-            )
-            store[uuid] = r
-            return BatchResult(index: index, ok: true, uuid: uuid, lastModified: now, error: nil)
-        case .update(let uuid, let f):
-            guard let cur = store[uuid] else {
-                throw RemindersClientError.reminderNotFound(uuid)
-            }
-            let r = HelperReminder(
-                uuid: cur.uuid,
-                parentUuid: f.parentUuid ?? cur.parentUuid,
-                title: f.title ?? cur.title,
-                notes: f.notes ?? cur.notes,
-                dueDate: f.dueDate ?? cur.dueDate,
-                startDate: f.startDate ?? cur.startDate,
-                isCompleted: f.isCompleted ?? cur.isCompleted,
-                completionDate: (f.isCompleted == true) ? now : cur.completionDate,
-                lastModified: now
-            )
-            store[uuid] = r
-            return BatchResult(index: index, ok: true, uuid: uuid, lastModified: now, error: nil)
-        case .delete(let uuid):
-            guard store.removeValue(forKey: uuid) != nil else {
-                throw RemindersClientError.reminderNotFound(uuid)
-            }
-            return BatchResult(index: index, ok: true, uuid: uuid, lastModified: nil, error: nil)
-        }
-    }
-
-    func deleteCalendar(calendarId: String) async throws -> Bool {
-        guard store.removeValue(forKey: calendarId) != nil else { return false }
-        lists = lists.filter { $0.value != calendarId }
-        return true
-    }
-}
-```
-
-- [ ] **Step 5: Run test to verify it passes**
+- [ ] **Step 2: Run `swift build` to verify it compiles**
 
 ```bash
-swift test
+cd tools/reminders-helper && swift build
 ```
 
-Expected: 2 new tests pass plus existing 4.
+Expected: `Build complete!`.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
 cd ../..
-git add tools/reminders-helper/Sources/RemindersHelper/RemindersClient.swift \
-        tools/reminders-helper/Tests/RemindersHelperTests/FakeRemindersClient.swift \
-        tools/reminders-helper/Tests/RemindersHelperTests/FakeClientTests.swift
-git commit -m "feat(reminders): RemindersClient protocol + in-memory fake"
+git add tools/reminders-helper/Sources/RemindersHelper/RemindersClient.swift
+git commit -m "feat(reminders): RemindersClient protocol"
 ```
 
 ---
@@ -669,79 +439,8 @@ git commit -m "feat(reminders): RemindersClient protocol + in-memory fake"
 
 **Files:**
 - Create: `tools/reminders-helper/Sources/RemindersHelper/CommandHandler.swift`
-- Create: `tools/reminders-helper/Tests/RemindersHelperTests/CommandHandlerTests.swift`
 
-- [ ] **Step 1: Write the failing test**
-
-`Tests/RemindersHelperTests/CommandHandlerTests.swift`:
-
-```swift
-import XCTest
-@testable import RemindersHelper
-
-final class CommandHandlerTests: XCTestCase {
-    func testAccessStatusAuthorized() async throws {
-        let client = FakeRemindersClient()
-        client.status = .authorized
-        let handler = CommandHandler(client: client)
-        let out = try await handler.handle(args: ["access-status"], stdin: Data())
-        let json = try JSONSerialization.jsonObject(with: out) as! [String: Any]
-        XCTAssertEqual(json["status"] as? String, "authorized")
-    }
-
-    func testRequestAccessGranted() async throws {
-        let client = FakeRemindersClient()
-        client.grantOnRequest = true
-        let handler = CommandHandler(client: client)
-        let out = try await handler.handle(args: ["request-access"], stdin: Data())
-        let json = try JSONSerialization.jsonObject(with: out) as! [String: Any]
-        XCTAssertEqual(json["granted"] as? Bool, true)
-    }
-
-    func testRequestAccessDenied() async throws {
-        let client = FakeRemindersClient()
-        client.grantOnRequest = false
-        let handler = CommandHandler(client: client)
-        let out = try await handler.handle(args: ["request-access"], stdin: Data())
-        let json = try JSONSerialization.jsonObject(with: out) as! [String: Any]
-        XCTAssertEqual(json["granted"] as? Bool, false)
-        XCTAssertEqual(json["reason"] as? String, "denied")
-    }
-
-    func testEnsureListReturnsStableId() async throws {
-        let client = FakeRemindersClient()
-        let handler = CommandHandler(client: client)
-        let out1 = try await handler.handle(args: ["ensure-list", "--name", "Irma"], stdin: Data())
-        let out2 = try await handler.handle(args: ["ensure-list", "--name", "Irma"], stdin: Data())
-        let j1 = try JSONSerialization.jsonObject(with: out1) as! [String: Any]
-        let j2 = try JSONSerialization.jsonObject(with: out2) as! [String: Any]
-        XCTAssertEqual(j1["calendar_id"] as? String, j2["calendar_id"] as? String)
-    }
-
-    func testUnknownCommandThrows() async {
-        let client = FakeRemindersClient()
-        let handler = CommandHandler(client: client)
-        do {
-            _ = try await handler.handle(args: ["bogus"], stdin: Data())
-            XCTFail("expected throw")
-        } catch let e as CommandError {
-            XCTAssertEqual(e.code, "unknown_command")
-        } catch {
-            XCTFail("wrong error type")
-        }
-    }
-}
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-```bash
-swift test
-```
-
-Expected: compile failure — `CommandHandler`, `CommandError` undefined.
-
-- [ ] **Step 3: Write `CommandHandler.swift`**
+- [ ] **Step 1: Write `CommandHandler.swift`**
 
 `Sources/RemindersHelper/CommandHandler.swift`:
 
@@ -799,20 +498,19 @@ struct CommandHandler {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 2: Run `swift build` to verify it compiles**
 
 ```bash
-swift test
+cd tools/reminders-helper && swift build
 ```
 
-Expected: all CommandHandlerTests pass.
+Expected: `Build complete!`.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
 cd ../..
-git add tools/reminders-helper/Sources/RemindersHelper/CommandHandler.swift \
-        tools/reminders-helper/Tests/RemindersHelperTests/CommandHandlerTests.swift
+git add tools/reminders-helper/Sources/RemindersHelper/CommandHandler.swift
 git commit -m "feat(reminders): handler for access-status / request-access / ensure-list"
 ```
 
@@ -822,82 +520,8 @@ git commit -m "feat(reminders): handler for access-status / request-access / ens
 
 **Files:**
 - Modify: `tools/reminders-helper/Sources/RemindersHelper/CommandHandler.swift`
-- Modify: `tools/reminders-helper/Tests/RemindersHelperTests/CommandHandlerTests.swift`
 
-- [ ] **Step 1: Add failing tests**
-
-Append to `CommandHandlerTests.swift`:
-
-```swift
-    func testListEmpty() async throws {
-        let client = FakeRemindersClient()
-        let calId = try await client.ensureList(name: "Irma")
-        let handler = CommandHandler(client: client)
-        let out = try await handler.handle(
-            args: ["list", "--calendar-id", calId], stdin: Data()
-        )
-        let parsed = try JSONDecoder().decode(ListOutput.self, from: out)
-        XCTAssertEqual(parsed.reminders.count, 0)
-    }
-
-    func testBatchCreateThenList() async throws {
-        let client = FakeRemindersClient()
-        let calId = try await client.ensureList(name: "Irma")
-        let handler = CommandHandler(client: client)
-        let input = BatchInput(ops: [
-            .create(ReminderFields(
-                title: "Parent", notes: nil, dueDate: nil, startDate: nil,
-                isCompleted: false, parentUuid: nil
-            ))
-        ])
-        let stdin = try JSONEncoder().encode(input)
-        let out = try await handler.handle(
-            args: ["batch", "--calendar-id", calId], stdin: stdin
-        )
-        let parsed = try JSONDecoder().decode(BatchOutput.self, from: out)
-        XCTAssertEqual(parsed.results.count, 1)
-        XCTAssertTrue(parsed.results[0].ok)
-
-        let listOut = try await handler.handle(
-            args: ["list", "--calendar-id", calId], stdin: Data()
-        )
-        let listed = try JSONDecoder().decode(ListOutput.self, from: listOut)
-        XCTAssertEqual(listed.reminders.count, 1)
-        XCTAssertEqual(listed.reminders[0].title, "Parent")
-    }
-
-    func testBatchContinueOnErrorReportsBothResults() async throws {
-        let client = FakeRemindersClient()
-        let calId = try await client.ensureList(name: "Irma")
-        let handler = CommandHandler(client: client)
-        let input = BatchInput(ops: [
-            .delete(uuid: "nonexistent"),
-            .create(ReminderFields(
-                title: "OK", notes: nil, dueDate: nil, startDate: nil,
-                isCompleted: false, parentUuid: nil
-            )),
-        ])
-        let stdin = try JSONEncoder().encode(input)
-        let out = try await handler.handle(
-            args: ["batch", "--calendar-id", calId, "--continue-on-error"],
-            stdin: stdin
-        )
-        let parsed = try JSONDecoder().decode(BatchOutput.self, from: out)
-        XCTAssertEqual(parsed.results.count, 2)
-        XCTAssertFalse(parsed.results[0].ok)
-        XCTAssertTrue(parsed.results[1].ok)
-    }
-```
-
-- [ ] **Step 2: Run tests to verify they fail**
-
-```bash
-cd tools/reminders-helper && swift test
-```
-
-Expected: list/batch tests fail with `unknown command`.
-
-- [ ] **Step 3: Extend `CommandHandler.swift`**
+- [ ] **Step 1: Extend `CommandHandler.swift`**
 
 Replace the `switch cmd` block in `handle(args:stdin:)` with:
 
@@ -939,20 +563,19 @@ Replace the `switch cmd` block in `handle(args:stdin:)` with:
         }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [ ] **Step 2: Run `swift build` to verify it compiles**
 
 ```bash
-swift test
+cd tools/reminders-helper && swift build
 ```
 
-Expected: all CommandHandlerTests pass.
+Expected: `Build complete!`.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
 cd ../..
-git add tools/reminders-helper/Sources/RemindersHelper/CommandHandler.swift \
-        tools/reminders-helper/Tests/RemindersHelperTests/CommandHandlerTests.swift
+git add tools/reminders-helper/Sources/RemindersHelper/CommandHandler.swift
 git commit -m "feat(reminders): list / batch / delete-calendar handlers"
 ```
 
