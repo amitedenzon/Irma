@@ -152,12 +152,38 @@ export async function forceRefresh(): Promise<void> {
   await noContent(await fetch(url("/api/v1/refresh"), { method: "POST" }));
 }
 
-export async function sendChat(messages: ChatMessage[]): Promise<ChatResponse> {
+export async function sendChat(
+  messages: ChatMessage[],
+  opts: { model?: string } = {},
+): Promise<ChatResponse> {
   return jsonOrThrow(
     await fetch(url("/api/v1/chat"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages }),
+      body: JSON.stringify({ messages, model: opts.model ?? null }),
     }),
+  );
+}
+
+export interface LocalModel {
+  name: string;
+  display_name: string;
+  source: "ollama" | "file";
+  size_bytes: number;
+  size_label: string;
+  proficiency: string[];
+  quantization: string | null;
+  path: string | null;
+}
+
+export interface LocalModelsResponse {
+  models: LocalModel[];
+  ollama_reachable: boolean;
+  scan_path: string | null;
+}
+
+export async function fetchLocalModels(path?: string): Promise<LocalModelsResponse> {
+  return jsonOrThrow(
+    await fetch(url("/api/v1/local-models", path ? { path } : undefined)),
   );
 }

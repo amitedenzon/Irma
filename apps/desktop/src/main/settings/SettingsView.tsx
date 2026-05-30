@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { enable, disable, isEnabled } from "@tauri-apps/plugin-autostart";
+import { invoke } from "@tauri-apps/api/core";
+import { fetchLocalModels } from "../../lib/api";
+import type { LocalModel } from "../../lib/api";
 import {
   COMPANIONS,
   loadSettings,
@@ -13,7 +16,7 @@ const API = "http://127.0.0.1:8765/api/v1";
 // ---------------------------------------------------------------------------
 // Sub-tab
 // ---------------------------------------------------------------------------
-type SettingsTab = "general" | "api";
+type SettingsTab = "general" | "local" | "api";
 
 // ---------------------------------------------------------------------------
 // API Keys metadata
@@ -182,32 +185,75 @@ export function SettingsView() {
         className="flex items-center gap-1 px-6 pt-4 border-b shrink-0"
         style={{ borderColor: "var(--color-border)" }}
       >
-        {(["general", "api"] as SettingsTab[]).map((t) => {
+        {(["general", "local", "api"] as SettingsTab[]).map((t) => {
           const active = activeTab === t;
+          const label = t === "api" ? "API Keys" : t === "local" ? "Local Models" : "General";
           return (
             <button
               key={t}
               type="button"
               onClick={() => setActiveTab(t)}
-              className="px-3 py-1.5 text-[12px] font-medium capitalize transition-colors"
+              className="px-3 py-1.5 text-[12px] font-medium transition-colors"
               style={{
                 color: active ? "var(--color-red)" : "var(--color-ink-mute)",
                 borderBottom: `2px solid ${active ? "var(--color-red)" : "transparent"}`,
                 marginBottom: -1,
               }}
             >
-              {t === "api" ? "API Keys" : "General"}
+              {label}
             </button>
           );
         })}
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto">
-        {activeTab === "general" && <GeneralTab />}
-        {activeTab === "api" && <ApiTab />}
+      <div className="flex-1 overflow-y-auto flex flex-col items-center">
+        <div className="w-full max-w-lg px-6 py-5">
+          {activeTab === "general" && <GeneralTab />}
+          {activeTab === "local" && <LocalTab />}
+          {activeTab === "api" && <ApiTab />}
+        </div>
       </div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Restart button — restarts only the FastAPI backend (not Tauri)
+// ---------------------------------------------------------------------------
+function RestartButton() {
+  const [state, setState] = useState<"idle" | "restarting" | "done">("idle");
+
+  const restart = async () => {
+    setState("restarting");
+    try {
+      await fetch(`${API}/settings/restart-backend`, { method: "POST" });
+    } catch { /* expected — process is replacing itself */ }
+    // Poll until the backend is back up
+    for (let i = 0; i < 30; i++) {
+      await new Promise((r) => setTimeout(r, 600));
+      try {
+        const res = await fetch(`${API}/state`, { signal: AbortSignal.timeout(1000) });
+        if (res.ok) { setState("done"); setTimeout(() => setState("idle"), 2500); return; }
+      } catch { /* still starting */ }
+    }
+    setState("idle"); // timed out
+  };
+
+  return (
+    <button
+      type="button"
+      disabled={state === "restarting"}
+      onClick={() => void restart()}
+      className="shrink-0 text-[12px] font-medium px-3 py-1.5 rounded-lg transition-colors disabled:opacity-60"
+      style={{
+        background: state === "done" ? "color-mix(in srgb, var(--color-moss) 15%, transparent)" : "var(--color-surface-2)",
+        color: state === "done" ? "var(--color-moss)" : "var(--color-ink-mute)",
+        border: `1px solid ${state === "done" ? "color-mix(in srgb, var(--color-moss) 35%, transparent)" : "var(--color-border)"}`,
+      }}
+    >
+      {state === "restarting" ? "Restarting…" : state === "done" ? "✓ Applied" : "Restart"}
+    </button>
   );
 }
 
@@ -222,12 +268,20 @@ function GeneralTab() {
     () => loadSettings().dockPosition,
   );
   const [autostart, setAutostart] = useState<boolean | null>(null);
+  const [loadingScreen, setLoadingScreen] = useState<boolean>(
+    () => localStorage.getItem("irma.settings.loadingScreen") !== "false",
+  );
 
   useEffect(() => {
     isEnabled()
       .then((v) => setAutostart(v))
       .catch(() => setAutostart(false));
   }, []);
+
+  const onLoadingScreenChange = (checked: boolean) => {
+    setLoadingScreen(checked);
+    localStorage.setItem("irma.settings.loadingScreen", checked ? "true" : "false");
+  };
 
   const onAutostartChange = async (checked: boolean) => {
     try {
@@ -249,7 +303,7 @@ function GeneralTab() {
   };
 
   return (
-    <div className="px-6 py-5 max-w-xl space-y-4">
+    <div className="space-y-4 w-full">
       {/* Companion */}
       <section className="card p-4 space-y-3">
         <div>
@@ -362,6 +416,346 @@ function GeneralTab() {
           </button>
         </div>
       </section>
+
+      {/* Loading screen */}
+      <section className="card p-4">
+        <div className="flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-[13px] font-medium" style={{ color: "var(--color-ink)" }}>
+              Show loading screen
+            </p>
+            <p className="text-[12px] mt-0.5" style={{ color: "var(--color-ink-faint)" }}>
+              Display a progress screen while Irma's backend is starting up.
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={loadingScreen}
+            onClick={() => onLoadingScreenChange(!loadingScreen)}
+            className="shrink-0"
+            style={{
+              position: "relative",
+              width: 44,
+              height: 26,
+              borderRadius: 13,
+              background: loadingScreen ? "var(--color-red)" : "var(--color-surface-2)",
+              border: `1.5px solid ${loadingScreen ? "var(--color-red)" : "var(--color-border)"}`,
+              cursor: "pointer",
+              transition: "background 0.15s ease, border-color 0.15s ease",
+              flexShrink: 0,
+            }}
+          >
+            <span style={{
+              position: "absolute", top: 2,
+              left: loadingScreen ? 18 : 2,
+              width: 18, height: 18, borderRadius: "50%",
+              background: "white",
+              boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
+              transition: "left 0.15s ease",
+            }} />
+          </button>
+        </div>
+      </section>
+
+      {/* Restart backend */}
+      <section className="card p-4">
+        <div className="flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-[13px] font-medium" style={{ color: "var(--color-ink)" }}>
+              Apply changes
+            </p>
+            <p className="text-[12px] mt-0.5" style={{ color: "var(--color-ink-faint)" }}>
+              Restarts the backend to pick up new API keys or Ollama settings.
+            </p>
+          </div>
+          <RestartButton />
+        </div>
+      </section>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Local Models tab
+// ---------------------------------------------------------------------------
+
+const PROFICIENCY_COLORS: Record<string, string> = {
+  chat: "var(--color-moss)",
+  coding: "var(--color-amber)",
+  vision: "#8b5cf6",
+  math: "#06b6d4",
+  embeddings: "var(--color-ink-faint)",
+};
+
+function LocalTab() {
+  const [ollamaUrl, setOllamaUrl] = useState<string>("http://127.0.0.1:11434");
+  const [modelsPath, setModelsPath] = useState<string>(
+    () => localStorage.getItem("irma.settings.modelsPath") ?? "",
+  );
+  const [models, setModels] = useState<LocalModel[]>([]);
+  const [reachable, setReachable] = useState<boolean | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  // Load current Ollama URL from .env status on mount
+  useEffect(() => {
+    fetch(`${API}/settings`)
+      .then((r) => r.json())
+      .then((d: { keys: { key: string; set: boolean }[] }) => {
+        // If server has it set, show a placeholder — we can't read the value
+        const has = d.keys.find((k) => k.key === "OLLAMA_BASE_URL")?.set;
+        if (!has) setOllamaUrl("http://127.0.0.1:11434");
+      })
+      .catch(() => {});
+  }, []);
+
+  const scan = async (path?: string) => {
+    setScanning(true);
+    try {
+      const res = await fetchLocalModels(path ?? (modelsPath || undefined));
+      setModels(res.models);
+      setReachable(res.ollama_reachable);
+    } catch {
+      setReachable(false);
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  // Auto-scan on mount
+  useEffect(() => { void scan(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const browseFolder = async () => {
+    try {
+      const selected = await invoke<string | null>("browse_folder");
+      if (!selected) return; // User cancelled
+      setModelsPath(selected);
+      localStorage.setItem("irma.settings.modelsPath", selected);
+      void scan(selected);
+    } catch (err) {
+      console.error("[settings] browse failed:", err);
+    }
+  };
+
+  const setDefault = async (model: string) => {
+    setSaving(true);
+    try {
+      await fetch(`${API}/settings`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ keys: { OLLAMA_MODEL: model } }),
+      });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4 w-full">
+      {/* Ollama server */}
+      <section className="card p-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <h3 className="display text-[11px] font-semibold uppercase tracking-wider"
+              style={{ color: "var(--color-ink-mute)" }}>
+            Ollama Server
+          </h3>
+          <span className="flex items-center gap-1.5 text-[10px] font-medium px-2 py-0.5 rounded-full"
+                style={{
+                  background: reachable === true
+                    ? "color-mix(in srgb, var(--color-moss) 15%, transparent)"
+                    : reachable === false
+                      ? "color-mix(in srgb, var(--color-red) 12%, transparent)"
+                      : "var(--color-surface-2)",
+                  color: reachable === true
+                    ? "var(--color-moss)"
+                    : reachable === false
+                      ? "var(--color-red)"
+                      : "var(--color-ink-faint)",
+                }}>
+            <span className="w-1.5 h-1.5 rounded-full shrink-0"
+                  style={{
+                    background: reachable === true
+                      ? "var(--color-moss)"
+                      : reachable === false
+                        ? "var(--color-red)"
+                        : "var(--color-ink-faint)",
+                  }} />
+            {reachable === true ? "Connected" : reachable === false ? "Unreachable" : "Checking…"}
+          </span>
+        </div>
+        <div>
+          <label className="block text-[11px] uppercase tracking-wider mb-1"
+                 style={{ color: "var(--color-ink-mute)" }}>
+            Base URL
+          </label>
+          <input
+            type="text"
+            className="input w-full font-mono text-[12px]"
+            value={ollamaUrl}
+            onChange={(e) => setOllamaUrl(e.target.value)}
+            placeholder="http://127.0.0.1:11434"
+          />
+          <p className="text-[11px] mt-1" style={{ color: "var(--color-ink-faint)" }}>
+            Saved to .env — restart Irma to apply.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className="btn-primary text-[12px] px-3 py-1.5 rounded-lg disabled:opacity-40"
+            disabled={saving}
+            onClick={async () => {
+              setSaving(true);
+              try {
+                await fetch(`${API}/settings`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ keys: { OLLAMA_BASE_URL: ollamaUrl } }),
+                });
+                void scan();
+                setSaved(true);
+                setTimeout(() => setSaved(false), 2500);
+              } finally { setSaving(false); }
+            }}
+          >
+            {saving ? "Saving…" : "Save & Test"}
+          </button>
+          {saved && <span className="text-[12px]" style={{ color: "var(--color-moss)" }}>Saved</span>}
+        </div>
+      </section>
+
+      {/* Models folder */}
+      <section className="card p-4 space-y-3">
+        <h3 className="display text-[11px] font-semibold uppercase tracking-wider"
+            style={{ color: "var(--color-ink-mute)" }}>
+          Models Folder
+        </h3>
+        <p className="text-[12px]" style={{ color: "var(--color-ink-faint)" }}>
+          Optional — point to a folder of .gguf files to include them alongside Ollama models.
+        </p>
+        <div className="flex items-center gap-2">
+          <input
+            type="text"
+            className="input flex-1 text-[12px] font-mono"
+            value={modelsPath}
+            readOnly
+            placeholder="No folder selected"
+          />
+          <button
+            type="button"
+            className="btn-primary text-[12px] px-3 py-1.5 rounded-lg shrink-0"
+            onClick={() => void browseFolder()}
+          >
+            Browse…
+          </button>
+        </div>
+        <button
+          type="button"
+          className="text-[12px] underline disabled:opacity-40"
+          style={{ color: "var(--color-ink-mute)" }}
+          disabled={scanning}
+          onClick={() => void scan()}
+        >
+          {scanning ? "Scanning…" : "↺ Refresh"}
+        </button>
+      </section>
+
+      {/* Detected models */}
+      {models.length > 0 && (
+        <section className="card p-4 space-y-3">
+          <h3 className="display text-[11px] font-semibold uppercase tracking-wider"
+              style={{ color: "var(--color-ink-mute)" }}>
+            Detected Models ({models.length})
+          </h3>
+          <div className="space-y-2">
+            {models.map((m) => (
+              <div
+                key={m.name}
+                className="flex items-start justify-between gap-3 rounded-lg p-3"
+                style={{ background: "var(--color-bg)", border: "1px solid var(--color-border)" }}
+              >
+                <div className="min-w-0 space-y-1.5">
+                  <p className="text-[13px] font-medium truncate" style={{ color: "var(--color-ink)" }}>
+                    {m.display_name}
+                  </p>
+                  <div className="flex flex-wrap gap-1.5 items-center">
+                    {/* Size */}
+                    <span className="text-[10px] px-1.5 py-0.5 rounded font-medium"
+                          style={{ background: "var(--color-surface-2)", color: "var(--color-ink-mute)" }}>
+                      {m.size_label}
+                    </span>
+                    {/* Quantization */}
+                    {m.quantization && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded font-medium font-mono"
+                            style={{ background: "var(--color-surface-2)", color: "var(--color-ink-mute)" }}>
+                        {m.quantization}
+                      </span>
+                    )}
+                    {/* Proficiency chips */}
+                    {m.proficiency.map((p) => (
+                      <span key={p} className="text-[10px] px-1.5 py-0.5 rounded font-medium"
+                            style={{
+                              background: `color-mix(in srgb, ${PROFICIENCY_COLORS[p] ?? "var(--color-ink-faint)"} 15%, transparent)`,
+                              color: PROFICIENCY_COLORS[p] ?? "var(--color-ink-faint)",
+                            }}>
+                        {p}
+                      </span>
+                    ))}
+                    {/* Source */}
+                    <span className="text-[10px]" style={{ color: "var(--color-ink-faint)" }}>
+                      {m.source}
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="shrink-0 text-[11px] px-2 py-1 rounded-md transition-colors"
+                  style={{
+                    background: "var(--color-surface-2)",
+                    color: "var(--color-ink-mute)",
+                  }}
+                  onClick={() => void setDefault(m.name)}
+                >
+                  Set default
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {models.length === 0 && !scanning && reachable === false && (
+        <section className="card p-4 space-y-1.5">
+          <p className="text-[13px] font-medium" style={{ color: "var(--color-ink)" }}>Ollama isn't running</p>
+          <p className="text-[12px]" style={{ color: "var(--color-ink-faint)" }}>
+            Start it from the terminal or the Ollama app, then click ↺ Refresh above.
+          </p>
+          <code className="block text-[11px] font-mono px-2 py-1 rounded mt-1"
+                style={{ background: "var(--color-surface-2)", color: "var(--color-ink-mute)" }}>
+            ollama serve
+          </code>
+          <p className="text-[11px]" style={{ color: "var(--color-ink-faint)" }}>
+            If your models are on an external drive, make sure it's mounted and the symlink at
+            {" "}<code className="font-mono">~/.ollama/models</code> resolves before starting.
+          </p>
+        </section>
+      )}
+      {models.length === 0 && !scanning && reachable === true && (
+        <section className="card p-4 space-y-1.5">
+          <p className="text-[13px] font-medium" style={{ color: "var(--color-ink)" }}>No models installed</p>
+          <p className="text-[12px]" style={{ color: "var(--color-ink-faint)" }}>
+            Pull a model from the terminal to get started.
+          </p>
+          <code className="block text-[11px] font-mono px-2 py-1 rounded mt-1"
+                style={{ background: "var(--color-surface-2)", color: "var(--color-ink-mute)" }}>
+            ollama pull llama3.2
+          </code>
+        </section>
+      )}
     </div>
   );
 }
@@ -490,7 +884,7 @@ function ApiTab() {
   };
 
   return (
-    <div className="px-6 py-5 max-w-xl space-y-4">
+    <div className="space-y-4 w-full">
       {activeGuide && (
         <GuideModal guide={activeGuide} onClose={() => setActiveGuide(null)} />
       )}

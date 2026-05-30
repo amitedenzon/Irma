@@ -65,10 +65,12 @@ def _build_system_prompt(tool_names: list[str]) -> str:
 class ChatMessage(BaseModel):
     role: Role
     content: str = Field(min_length=1)
+    image_b64: str | None = None   # base64-encoded image for vision models
 
 
 class ChatRequest(BaseModel):
     messages: list[ChatMessage] = Field(min_length=1)
+    model: str | None = None       # override the default model for this request
 
 
 class ChatResponse(BaseModel):
@@ -77,7 +79,9 @@ class ChatResponse(BaseModel):
     model: str
 
 
-def _resolve_llm(request: Request) -> LLMClient:
+def _resolve_llm(request: Request, model_override: str | None = None) -> LLMClient:
+    from irma_api.agents.llm import OllamaLLM
+
     registry: dict[str, LLMClient] = getattr(request.app.state, "llm_registry", {}) or {}
     default: str | None = getattr(request.app.state, "default_backend", None)
 
@@ -91,7 +95,14 @@ def _resolve_llm(request: Request) -> LLMClient:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="no default LLM backend available",
         )
-    return registry[default]
+    llm = registry[default]
+
+    # If a model override was requested and the backend is Ollama, swap the model.
+    if model_override and hasattr(llm, "model") and llm.backend == "ollama":
+        settings = request.app.state.settings
+        llm = OllamaLLM(settings=settings, model_override=model_override)
+
+    return llm
 
 
 async def _run_tool_calls(
@@ -118,13 +129,14 @@ async def _run_tool_calls(
 
 @router.post("/chat", response_model=ChatResponse)
 async def post_chat(request: Request, body: ChatRequest) -> ChatResponse:
-    llm = _resolve_llm(request)
+    llm = _resolve_llm(request, body.model)
 
     bus: StateBus = request.app.state.bus
     tools: ToolRegistry | None = getattr(request.app.state, "tools", None)
 
     turns: list[ChatTurn] = [
-        ChatTurn(role=m.role, content=m.content) for m in body.messages
+        ChatTurn(role=m.role, content=m.content, image_b64=m.image_b64)
+        for m in body.messages
     ]
 
     await bus.publish(AgentState.THINKING)

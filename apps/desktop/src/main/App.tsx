@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { sendBriefEmail, listProjects } from "../lib/api";
 import { subscribeAgentState } from "../lib/sse";
@@ -7,6 +7,51 @@ import { ProjectsView } from "./projects/ProjectsView";
 import { ChatView } from "./chat/ChatView";
 import { SettingsView } from "./settings/SettingsView";
 import { BriefIcon, SettingsIcon } from "../lib/icons";
+
+const LOADING_SCREEN_KEY = "irma.settings.loadingScreen";
+const API_BASE = "http://127.0.0.1:8765";
+
+function useApiReady() {
+  const [ready, setReady] = useState(false);
+  const [dots, setDots] = useState(".");
+  const attemptsRef = useRef(0);
+
+  useEffect(() => {
+    // Skip loading screen if disabled in settings
+    if (localStorage.getItem(LOADING_SCREEN_KEY) === "false") {
+      setReady(true);
+      return;
+    }
+
+    const dotsInterval = setInterval(() => {
+      setDots((d) => (d.length >= 3 ? "." : d + "."));
+    }, 400);
+
+    const poll = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/v1/state`, { signal: AbortSignal.timeout(1500) });
+        if (res.ok) {
+          clearInterval(dotsInterval);
+          setReady(true);
+          return;
+        }
+      } catch { /* not ready yet */ }
+      attemptsRef.current += 1;
+      // Give up after 30s and show the app anyway
+      if (attemptsRef.current > 60) {
+        clearInterval(dotsInterval);
+        setReady(true);
+        return;
+      }
+      setTimeout(() => void poll(), 500);
+    };
+
+    void poll();
+    return () => clearInterval(dotsInterval);
+  }, []);
+
+  return { ready, dots };
+}
 
 type Tab = "projects" | "chat" | "settings";
 
@@ -19,6 +64,7 @@ export function App() {
   const [projectsError, setProjectsError] = useState<string | null>(null);
   const [briefSendState, setBriefSendState] = useState<BriefSendState>("idle");
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const { ready, dots } = useApiReady();
 
   const loadProjects = useCallback(async () => {
     setProjectsError(null);
@@ -63,6 +109,31 @@ export function App() {
     );
   };
 
+  if (!ready) {
+    return (
+      <div
+        className="min-h-screen w-full flex flex-col items-center justify-center gap-4"
+        style={{ background: "var(--color-bg)" }}
+      >
+        {/* Pulsing logo mark */}
+        <div
+          className="w-12 h-12 rounded-2xl flex items-center justify-center animate-pulse"
+          style={{ background: "color-mix(in srgb, var(--color-red) 15%, transparent)" }}
+        >
+          <span style={{ fontSize: 24 }}>🐾</span>
+        </div>
+        <div className="text-center space-y-1">
+          <p className="display text-[16px] font-semibold" style={{ color: "var(--color-ink)" }}>
+            Irma
+          </p>
+          <p className="text-[12px]" style={{ color: "var(--color-ink-mute)" }}>
+            Starting up{dots}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen w-full flex flex-col" style={{ background: "var(--color-bg)" }}>
       <Header
@@ -74,14 +145,17 @@ export function App() {
         onClose={closeWindow}
       />
 
-      <main className="flex-1 overflow-y-auto relative">
+      <main className="flex-1 min-h-0 overflow-hidden relative flex flex-col">
+        {/* Projects — scrolls inside its own wrapper */}
         {tab === "projects" && (
-          <ProjectsView
-            projects={projects}
-            error={projectsError}
-            onProjectsChanged={setProjects}
-            onReload={loadProjects}
-          />
+          <div className="absolute inset-0 overflow-y-auto">
+            <ProjectsView
+              projects={projects}
+              error={projectsError}
+              onProjectsChanged={setProjects}
+              onReload={loadProjects}
+            />
+          </div>
         )}
         {/* Chat stays mounted so the Claude PTY (and Local history) survives tab
             switches. Absolute fill avoids the percent-height-through-flex chain
@@ -99,7 +173,12 @@ export function App() {
             tabVisible={tab === "chat"}
           />
         </div>
-        {tab === "settings" && <SettingsView />}
+        {/* Settings fills the pane; inner tab bar is sticky, content scrolls */}
+        {tab === "settings" && (
+          <div className="absolute inset-0 flex flex-col">
+            <SettingsView />
+          </div>
+        )}
       </main>
 
       <ConfirmDialog
