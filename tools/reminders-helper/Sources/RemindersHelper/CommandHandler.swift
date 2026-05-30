@@ -27,6 +27,24 @@ struct CommandHandler {
             let name = try requireOption(rest, "--name")
             let id = try await client.ensureList(name: name)
             return try encode(["calendar_id": id])
+        case "list":
+            let calId = try requireOption(rest, "--calendar-id")
+            let rems = try await client.list(calendarId: calId)
+            return try encodeCodable(ListOutput(reminders: rems))
+        case "batch":
+            let calId = try requireOption(rest, "--calendar-id")
+            let continueOnError = rest.contains("--continue-on-error")
+            let input = try JSONDecoder().decode(BatchInput.self, from: stdin)
+            let results = try await client.batch(
+                calendarId: calId,
+                ops: input.ops,
+                continueOnError: continueOnError
+            )
+            return try encodeCodable(BatchOutput(results: results))
+        case "delete-calendar":
+            let calId = try requireOption(rest, "--calendar-id")
+            let deleted = try await client.deleteCalendar(calendarId: calId)
+            return try encode(["deleted": deleted])
         default:
             throw CommandError(code: "unknown_command", message: "unknown command '\(cmd)'")
         }
