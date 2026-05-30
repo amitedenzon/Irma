@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { emitTo } from "@tauri-apps/api/event";
 import { sendBriefEmail, listProjects } from "../lib/api";
 import { subscribeAgentState } from "../lib/sse";
 import type { AgentState, Project } from "../lib/types";
@@ -65,6 +66,7 @@ export function App() {
   const [briefSendState, setBriefSendState] = useState<BriefSendState>("idle");
   const [confirmOpen, setConfirmOpen] = useState(false);
   const { ready, dots } = useApiReady();
+  const [snacking, setSnacking] = useState(false);
 
   const loadProjects = useCallback(async () => {
     setProjectsError(null);
@@ -143,6 +145,12 @@ export function App() {
         onSendBrief={() => setConfirmOpen(true)}
         briefSendState={briefSendState}
         onClose={closeWindow}
+        stateLabel={snacking ? "Snacking" : agentState}
+        onTreat={() => {
+          void emitTo("companion", "companion:treat");
+          setSnacking(true);
+          setTimeout(() => setSnacking(false), 2000);
+        }}
       />
 
       <main className="flex-1 min-h-0 overflow-hidden relative flex flex-col">
@@ -251,14 +259,16 @@ function ConfirmDialog({
 }
 
 function Header({
-  tab, onTabChange, agentState, onSendBrief, briefSendState, onClose,
+  tab, onTabChange, agentState, stateLabel, onSendBrief, briefSendState, onClose, onTreat,
 }: {
   tab: Tab;
   onTabChange: (t: Tab) => void;
   agentState: AgentState;
+  stateLabel: string;
   onSendBrief: () => void;
   briefSendState: BriefSendState;
   onClose: () => void;
+  onTreat: () => void;
 }) {
   const stateColor = {
     idle: "var(--color-moss)",
@@ -294,8 +304,18 @@ function Header({
             Irma
           </h1>
           <span className="text-[11px]" style={{ color: "var(--color-ink-faint)", fontFamily: "var(--font-mono)" }}>
-            {agentState}
+            {stateLabel}
           </span>
+          <button
+            type="button"
+            onClick={onTreat}
+            aria-label="Give Irma a treat"
+            title="Give Irma a treat"
+            className="text-[14px] leading-none rounded hover:opacity-70 transition-opacity"
+            style={{ lineHeight: 1 }}
+          >
+            🧀
+          </button>
         </div>
         <button onClick={onClose} aria-label="Close"
                 className="px-2 py-1 text-[14px] leading-none rounded-md hover:bg-[var(--color-surface-2)]"

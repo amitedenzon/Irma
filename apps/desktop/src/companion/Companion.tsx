@@ -34,6 +34,7 @@ const FALLBACK_MANIFEST: SpriteManifest = {
     sit: { frames: [8, 9, 10, 11, 12, 13], fps: 4, loop: true },
     lay: { frames: [16, 17, 18, 19, 20, 21], fps: 4, loop: true },
     sit_bark: { frames: [8, 9, 10, 11, 12, 13, 14, 15], fps: 6, loop: true },
+    treat: { frames: [56, 57, 58, 59, 60, 61, 62, 63], fps: 8, loop: true },
   },
 };
 
@@ -80,7 +81,8 @@ type DogVariant =
   | "sit"
   | "lay"
   | "cuddle"
-  | "sit_bark";
+  | "sit_bark"
+  | "treat";
 
 interface DogRender {
   variant: DogVariant;
@@ -212,8 +214,10 @@ export function Companion() {
     let cancelled = false;
     let raf = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    let mode: "autonomous" | "bark" = "autonomous";
+    let mode: "autonomous" | "bark" | "treat" = "autonomous";
+    let modeBeforeTreat: "autonomous" | "bark" = "autonomous";
     let unlistenVis: UnlistenFn | undefined;
+    let unlistenTreat: UnlistenFn | undefined;
 
     const clearTimers = (): void => {
       if (raf) cancelAnimationFrame(raf);
@@ -350,6 +354,31 @@ export function Companion() {
       console.info("[companion] exit bark mode → lay → cuddle → walk");
     };
 
+    // ---- Treat mode (steak button) ------------------------------------
+    const TREAT_FRAMES = 8;
+    const TREAT_FPS = 8;
+    const TREAT_LOOPS = 2;
+    const TREAT_DURATION_MS = (TREAT_FRAMES / TREAT_FPS) * TREAT_LOOPS * 1000;
+
+    const enterTreatMode = (): void => {
+      if (cancelled) return;
+      if (mode !== "treat") modeBeforeTreat = mode as "autonomous" | "bark";
+      mode = "treat";
+      clearTimers();
+      setDog((d) => ({ variant: "treat", facingRight: d.facingRight }));
+      timer = setTimeout(() => {
+        if (cancelled) return;
+        if (modeBeforeTreat === "bark") {
+          mode = "bark";
+          enterBarkMode();
+        } else {
+          mode = "autonomous";
+          setDog((d) => ({ variant: "lay", facingRight: d.facingRight }));
+          timer = setTimeout(() => startCuddle(), LAY_MS);
+        }
+      }, TREAT_DURATION_MS);
+    };
+
     // ---- Bootstrap ----------------------------------------------------
     (async () => {
       const bounds = await refreshBounds();
@@ -375,10 +404,20 @@ export function Companion() {
       })
       .catch((e) => console.error("[companion] listen main:visibility failed", e));
 
+    listen<void>("companion:treat", () => {
+      if (cancelled) return;
+      enterTreatMode();
+    })
+      .then((u) => {
+        unlistenTreat = u;
+      })
+      .catch((e) => console.error("[companion] listen companion:treat failed", e));
+
     return () => {
       cancelled = true;
       clearTimers();
       if (unlistenVis) unlistenVis();
+      if (unlistenTreat) unlistenTreat();
     };
   }, [dockPosition]);
 
