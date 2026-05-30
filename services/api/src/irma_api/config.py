@@ -91,3 +91,16 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Return the process-wide Settings singleton."""
     return Settings()
+
+
+def secret_value_or_none(s: SecretStr | None) -> str | None:
+    """Return the secret's value, or None if it's missing or blank.
+
+    pydantic-settings parses `KEY=` (defined-but-blank env) as an empty
+    SecretStr, which slips past `is not None`. Use this at config-consumer
+    sites so a blank value behaves identically to a missing one.
+    """
+    if s is None:
+        return None
+    value = s.get_secret_value()
+    return value or None

@@ -18,7 +18,7 @@ from irma_api.agents.base import LeadAgentProtocol, Observer
 from irma_api.agents.codebase_agent import CodebaseAgent
 from irma_api.agents.llm import LLMClient, OllamaLLM, build_llm_registry
 from irma_api.agents.time_agent import TimeAgent
-from irma_api.config import get_settings
+from irma_api.config import get_settings, secret_value_or_none
 from irma_api.logging import configure_logging
 from irma_api.routers.brief import router as brief_router
 from irma_api.routers.chat import router as chat_router
@@ -58,7 +58,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
 
     tools: list[Tool] = []
-    if settings.resend_api_key is not None and settings.irma_user_email is not None:
+    resend_key = secret_value_or_none(settings.resend_api_key)
+    if resend_key is not None and settings.irma_user_email:
         tools.append(ResendSendTool(settings))
     else:
         logger.info(
@@ -66,21 +67,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             missing=[
                 key
                 for key, val in (
-                    ("RESEND_API_KEY", settings.resend_api_key),
+                    ("RESEND_API_KEY", resend_key),
                     ("IRMA_USER_EMAIL", settings.irma_user_email),
                 )
-                if val is None
+                if not val
             ],
         )
-    calendar_missing = [
-        key
-        for key, val in (
-            ("GOOGLE_OAUTH_CLIENT_ID", settings.google_oauth_client_id),
-            ("GOOGLE_OAUTH_CLIENT_SECRET", settings.google_oauth_client_secret),
-            ("GOOGLE_OAUTH_REFRESH_TOKEN", settings.google_oauth_refresh_token),
-        )
-        if val is None
-    ]
+    calendar_keys = {
+        "GOOGLE_OAUTH_CLIENT_ID": secret_value_or_none(settings.google_oauth_client_id),
+        "GOOGLE_OAUTH_CLIENT_SECRET": secret_value_or_none(settings.google_oauth_client_secret),
+        "GOOGLE_OAUTH_REFRESH_TOKEN": secret_value_or_none(settings.google_oauth_refresh_token),
+    }
+    calendar_missing = [k for k, v in calendar_keys.items() if v is None]
     if not calendar_missing:
         tools.append(ReadCalendarTool(settings))
         tools.append(CreateCalendarEventTool(settings))

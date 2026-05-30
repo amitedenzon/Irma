@@ -119,3 +119,39 @@ def test_app_does_not_register_calendar_tools_with_partial_oauth(
         names = set(app.state.tools.names())
         assert "read_calendar" not in names
         assert "create_calendar_event" not in names
+
+
+def test_app_does_not_register_anthropic_with_blank_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Defined-but-blank ANTHROPIC_API_KEY must be treated as unset."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("IRMA_DB_PATH", str(tmp_path / "boot_blank_anthropic.db"))
+    monkeypatch.setenv("IRMA_LLM_BACKEND", "ollama")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")  # defined but blank
+    monkeypatch.delenv("GOOGLE_OAUTH_REFRESH_TOKEN", raising=False)
+    monkeypatch.delenv("RESEND_API_KEY", raising=False)
+    monkeypatch.delenv("IRMA_USER_EMAIL", raising=False)
+    get_settings.cache_clear()
+
+    app = create_app()
+    with TestClient(app):
+        assert "anthropic" not in app.state.llm_registry
+
+
+def test_app_does_not_register_send_email_with_blank_resend_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Defined-but-blank RESEND_API_KEY must be treated as unset."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("IRMA_DB_PATH", str(tmp_path / "boot_blank_resend.db"))
+    monkeypatch.setenv("IRMA_LLM_BACKEND", "ollama")
+    monkeypatch.setenv("RESEND_API_KEY", "")
+    monkeypatch.setenv("IRMA_USER_EMAIL", "amit@example.com")
+    monkeypatch.delenv("GOOGLE_OAUTH_REFRESH_TOKEN", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    get_settings.cache_clear()
+
+    app = create_app()
+    with TestClient(app):
+        assert "send_email" not in app.state.tools.names()

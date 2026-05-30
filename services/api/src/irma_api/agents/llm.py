@@ -20,7 +20,7 @@ import structlog
 from anthropic import AsyncAnthropic
 from pydantic import BaseModel, Field
 
-from irma_api.config import Settings
+from irma_api.config import Settings, secret_value_or_none
 from irma_api.tools.base import ToolSpec
 
 logger = structlog.get_logger(__name__)
@@ -499,8 +499,9 @@ def build_llm_registry(settings: Settings) -> tuple[dict[str, LLMClient], str | 
     """
     registry: dict[str, LLMClient] = {}
 
-    if settings.anthropic_api_key is not None:
-        client = AsyncAnthropic(api_key=settings.anthropic_api_key.get_secret_value())
+    anthropic_key = secret_value_or_none(settings.anthropic_api_key)
+    if anthropic_key is not None:
+        client = AsyncAnthropic(api_key=anthropic_key)
         registry["anthropic"] = AnthropicLLM(client=client, model=settings.anthropic_model)
     else:
         logger.info("llm.anthropic_unconfigured")
