@@ -4,10 +4,16 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { AgentState, SpriteFrameSpec, SpriteManifest } from "../lib/types";
 import { subscribeAgentState } from "../lib/sse";
+import {
+  getCompanion,
+  loadSettings,
+  subscribeSettings,
+  type DockPosition,
+} from "../lib/settings";
 import { Sprite } from "./Sprite";
 
 const FALLBACK_MANIFEST: SpriteManifest = {
-  image: "Dogs-Remastered-12.png",
+  image: "Irma.png",
   frameWidth: 64,
   frameHeight: 48,
   columns: 8,
@@ -109,6 +115,12 @@ function monitorsDiffer(a: CompanionBounds | null, b: CompanionBounds): boolean 
 export function Companion() {
   const [manifest, setManifest] = useState<SpriteManifest>(FALLBACK_MANIFEST);
   const [sheetAvailable, setSheetAvailable] = useState<boolean>(false);
+  const [companionId, setCompanionId] = useState<string>(
+    () => loadSettings().companionId,
+  );
+  const [dockPosition, setDockPosition] = useState<DockPosition>(
+    () => loadSettings().dockPosition,
+  );
   const [agentState, setAgentState] = useState<AgentState>("idle");
   const [dog, setDog] = useState<DogRender>({
     variant: "cuddle",
@@ -118,7 +130,12 @@ export function Companion() {
   const boundsRef = useRef<CompanionBounds | null>(null);
   const xRef = useRef<number>(0);
 
-  // Load manifest + probe for real spritesheet.
+  // The selected companion overrides the manifest's sheet image. Frame layout
+  // (grid, fps, state→frame maps) is shared across the dog sheets.
+  const selectedImage = getCompanion(companionId).image;
+  const effectiveManifest: SpriteManifest = { ...manifest, image: selectedImage };
+
+  // Load manifest JSON (frame layout) once.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -129,12 +146,8 @@ export function Companion() {
           return;
         }
         const m = (await res.json()) as SpriteManifest;
-        if (cancelled) return;
-        setManifest(m);
-        const probe = await fetch(`/sprites/dogs/${m.image}`, { method: "HEAD" });
-        const ct = probe.headers.get("content-type") ?? "";
-        if (!cancelled) setSheetAvailable(probe.ok && ct.startsWith("image/"));
-        console.info("[companion] manifest loaded; sheet=", probe.ok && ct.startsWith("image/"));
+        if (!cancelled) setManifest(m);
+        console.info("[companion] manifest loaded");
       } catch (e) {
         console.warn("[companion] manifest fetch failed", e);
       }
@@ -142,6 +155,33 @@ export function Companion() {
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  // Probe the selected companion's spritesheet whenever it changes.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const probe = await fetch(`/sprites/dogs/${selectedImage}`, { method: "HEAD" });
+        const ct = probe.headers.get("content-type") ?? "";
+        if (!cancelled) setSheetAvailable(probe.ok && ct.startsWith("image/"));
+      } catch (e) {
+        if (!cancelled) setSheetAvailable(false);
+        console.warn("[companion] sheet probe failed", e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedImage]);
+
+  // React to settings changes made in the settings window (and on launch).
+  useEffect(() => {
+    const unsub = subscribeSettings((s) => {
+      setCompanionId(s.companionId);
+      setDockPosition(s.dockPosition);
+    });
+    return unsub;
   }, []);
 
   // Agent-state SSE — kept for future use; doesn't drive the dog brain.
@@ -176,7 +216,9 @@ export function Companion() {
 
     const refreshBounds = async (): Promise<CompanionBounds | null> => {
       try {
-        const b = (await invoke("get_companion_bounds")) as CompanionBounds;
+        const b = (await invoke("get_companion_bounds", {
+          besideDock: dockPosition === "beside-dock",
+        })) as CompanionBounds;
         const migrating = monitorsDiffer(boundsRef.current, b);
         boundsRef.current = b;
         if (migrating) {
@@ -321,11 +363,11 @@ export function Companion() {
       clearTimers();
       if (unlistenVis) unlistenVis();
     };
-  }, []);
+  }, [dockPosition]);
 
-  const extras = manifest.extras ?? {};
+  const extras = effectiveManifest.extras ?? {};
   const spec: SpriteFrameSpec =
-    extras[dog.variant] ?? manifest.states[agentState];
+    extras[dog.variant] ?? effectiveManifest.states[agentState];
 
   const onClick = (): void => {
     void invoke("toggle_main").catch((e: unknown) =>
@@ -334,19 +376,29 @@ export function Companion() {
   };
 
   return (
-    <div
-      style={WRAPPER_STYLE}
-      onClick={onClick}
-      role="button"
-      aria-label="Irma companion"
-    >
-      <Sprite
-        spec={spec}
-        manifest={manifest}
-        sheetAvailable={sheetAvailable}
-        fallbackState={agentState}
-        mirror={dog.facingRight}
-      />
+    <div style={WRAPPER_STYLE}>
+      <div style={{ position: "relative" }}>
+        <Sprite
+          spec={spec}
+          manifest={effectiveManifest}
+          sheetAvailable={sheetAvailable}
+          fallbackState={agentState}
+          mirror={dog.facingRight}
+        />
+        <div
+          style={{
+            position: "absolute",
+            bottom: 0,
+            left: 0,
+            right: 0,
+            height: "50%",
+            cursor: "pointer",
+          }}
+          onClick={onClick}
+          role="button"
+          aria-label="Irma companion"
+        />
+      </div>
     </div>
   );
 }
