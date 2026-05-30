@@ -94,7 +94,16 @@ def _resolve_llm(request: Request, requested: str | None) -> LLMClient:
             detail="LLM backend not configured — set IRMA_LLM_BACKEND and creds",
         )
 
-    key = requested or default
+    if requested is None:
+        # Same fallback as GET /chat/backends — never silently dispatch to a
+        # hidden backend just because it's the configured default.
+        if default in _HIDDEN_BACKENDS or default not in registry:
+            visible = [name for name in registry if name not in _HIDDEN_BACKENDS]
+            default = visible[0] if visible else None
+        key = default
+    else:
+        key = requested
+
     if key is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
