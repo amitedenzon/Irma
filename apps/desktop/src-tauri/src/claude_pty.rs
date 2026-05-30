@@ -5,17 +5,18 @@
 //! Claude Code experience (streaming, slash commands, MCP servers) inside
 //! the Irma window.
 //!
-//! Lifetime: at most one PTY at a time, held in app state. Closing the panel
-//! (or quitting the app) kills the process via the portable-pty Child::kill
-//! API. The panel re-spawns on remount.
+//! Lifetime: at most one PTY at a time, held in app state. We keep a
+//! `ChildKiller` handle in `PtyState` and hand the owned `Child` to a
+//! dedicated wait thread, so both natural exits (user types `/exit`,
+//! claude crashes) and forced kills emit a single `claude-pty:exit` event
+//! through the same code path.
 
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::thread;
-use std::time::Duration;
 
-use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
+use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 
@@ -28,7 +29,7 @@ pub struct ClaudePty(pub Mutex<Option<PtyState>>);
 pub struct PtyState {
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
-    pub child: Box<dyn Child + Send>,
+    pub killer: Box<dyn ChildKiller + Send + Sync>,
 }
 
 #[derive(Serialize, Clone)]
@@ -58,11 +59,14 @@ pub fn claude_pty_spawn(
     rows: u16,
     cols: u16,
 ) -> Result<(), String> {
-    // Kill any existing session before opening a new one.
+    // Kill any existing session before opening a new one. The previous wait
+    // thread will observe exit and emit `claude-pty:exit` — harmless even if
+    // the frontend is about to re-mount, because the new terminal won't have
+    // subscribed yet.
     {
         let mut slot = state.0.lock().map_err(|e| e.to_string())?;
         if let Some(mut prev) = slot.take() {
-            let _ = prev.child.kill();
+            let _ = prev.killer.kill();
         }
     }
 
@@ -90,11 +94,13 @@ pub fn claude_pty_spawn(
         cmd.env(k, v);
     }
 
-    let child = pair
+    let mut child = pair
         .slave
         .spawn_command(cmd)
         .map_err(|e| format!("spawn claude failed: {e}"))?;
     drop(pair.slave);
+
+    let killer = child.clone_killer();
 
     let mut reader = pair
         .master
@@ -106,7 +112,8 @@ pub fn claude_pty_spawn(
         .map_err(|e| format!("take pty writer failed: {e}"))?;
 
     // Reader thread: blocking read on the PTY, emit each chunk to the
-    // frontend as `claude-pty:data` events.
+    // frontend as `claude-pty:data` events. Exits cleanly on EOF (which
+    // happens when the child dies and the slave side closes).
     let reader_app = app.clone();
     thread::spawn(move || {
         let mut buf = [0u8; 4096];
@@ -128,12 +135,26 @@ pub fn claude_pty_spawn(
         }
     });
 
+    // Wait thread: blocks on the owned Child until it exits (naturally OR
+    // because claude_pty_kill / app shutdown invoked the killer). Emits
+    // PTY_EXIT_EVENT exactly once when the process terminates.
+    let wait_app = app.clone();
+    thread::spawn(move || {
+        let code = child
+            .wait()
+            .ok()
+            .and_then(|s| i32::try_from(s.exit_code()).ok());
+        if let Err(err) = wait_app.emit(PTY_EXIT_EVENT, PtyExit { code }) {
+            eprintln!("[claude_pty] emit exit failed: {err}");
+        }
+    });
+
     {
         let mut slot = state.0.lock().map_err(|e| e.to_string())?;
         *slot = Some(PtyState {
             master: pair.master,
             writer,
-            child,
+            killer,
         });
     }
 
@@ -172,22 +193,12 @@ pub fn claude_pty_resize(
 }
 
 #[tauri::command]
-pub fn claude_pty_kill(
-    app: AppHandle,
-    state: State<'_, ClaudePty>,
-) -> Result<(), String> {
+pub fn claude_pty_kill(state: State<'_, ClaudePty>) -> Result<(), String> {
     let mut slot = state.0.lock().map_err(|e| e.to_string())?;
     if let Some(mut pty) = slot.take() {
-        let _ = pty.child.kill();
-        // Give it a moment to flush; portable-pty's `kill()` already sends
-        // SIGKILL on Unix, but yield to let the reader thread observe EOF.
-        thread::sleep(Duration::from_millis(50));
-        let code = pty
-            .child
-            .wait()
-            .ok()
-            .and_then(|s| i32::try_from(s.exit_code()).ok());
-        let _ = app.emit(PTY_EXIT_EVENT, PtyExit { code });
+        // The wait thread will emit PTY_EXIT_EVENT once the process actually
+        // dies — kill() is the trigger, not the announcement.
+        let _ = pty.killer.kill();
     }
     Ok(())
 }

@@ -32,7 +32,7 @@ pub fn run() {
                     if let Some(state) = window.app_handle().try_state::<claude_pty::ClaudePty>() {
                         if let Ok(mut slot) = state.0.lock() {
                             if let Some(mut pty) = slot.take() {
-                                let _ = pty.child.kill();
+                                let _ = pty.killer.kill();
                             }
                         }
                     }
