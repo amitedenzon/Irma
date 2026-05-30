@@ -6,7 +6,7 @@ import type { AgentState, Project } from "../lib/types";
 import { ProjectsView } from "./projects/ProjectsView";
 import { ChatView } from "./chat/ChatView";
 import { SettingsView } from "./settings/SettingsView";
-import { MailIcon, SettingsIcon } from "../lib/icons";
+import { BriefIcon, SettingsIcon } from "../lib/icons";
 
 type Tab = "projects" | "chat" | "settings";
 
@@ -18,6 +18,7 @@ export function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectsError, setProjectsError] = useState<string | null>(null);
   const [briefSendState, setBriefSendState] = useState<BriefSendState>("idle");
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   const loadProjects = useCallback(async () => {
     setProjectsError(null);
@@ -51,6 +52,11 @@ export function App() {
     }
   }, []);
 
+  const confirmSend = useCallback(() => {
+    setConfirmOpen(false);
+    void sendBrief();
+  }, [sendBrief]);
+
   const closeWindow = () => {
     void invoke("toggle_main").catch((e: unknown) =>
       console.error("[dashboard] toggle_main failed:", e),
@@ -63,7 +69,7 @@ export function App() {
         tab={tab}
         onTabChange={setTab}
         agentState={agentState}
-        onSendBrief={sendBrief}
+        onSendBrief={() => setConfirmOpen(true)}
         briefSendState={briefSendState}
         onClose={closeWindow}
       />
@@ -87,6 +93,72 @@ export function App() {
         </div>
         {tab === "settings" && <SettingsView />}
       </main>
+
+      <ConfirmDialog
+        open={confirmOpen}
+        title="Send daily brief?"
+        message="I'll email today's brief — progress since your last one, plus deadlines and events for the next few days — to your inbox now."
+        confirmLabel="Send it"
+        cancelLabel="Not now"
+        onConfirm={confirmSend}
+        onCancel={() => setConfirmOpen(false)}
+      />
+    </div>
+  );
+}
+
+function ConfirmDialog({
+  open, title, message, confirmLabel, cancelLabel, onConfirm, onCancel,
+}: {
+  open: boolean;
+  title: string;
+  message: string;
+  confirmLabel: string;
+  cancelLabel: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  if (!open) return null;
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+      onClick={onCancel}
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ background: "rgba(0,0,0,0.45)" }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="mx-4 w-full max-w-sm rounded-xl border p-5 shadow-xl"
+        style={{ background: "var(--color-surface)", borderColor: "var(--color-border)" }}
+      >
+        <h2 className="display text-[16px] font-semibold mb-2" style={{ color: "var(--color-ink)" }}>
+          {title}
+        </h2>
+        <p className="text-[13px] mb-5" style={{ color: "var(--color-ink-mute)" }}>
+          {message}
+        </p>
+        <div className="flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="px-3.5 py-1.5 text-[13px] font-medium rounded-md hover:bg-[var(--color-surface-2)]"
+            style={{ color: "var(--color-ink-mute)" }}
+          >
+            {cancelLabel}
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            autoFocus
+            className="px-3.5 py-1.5 text-[13px] font-semibold rounded-md text-white"
+            style={{ background: "var(--color-red)" }}
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -156,7 +228,7 @@ function Header({
           className="ml-auto px-4 py-2 text-[13px] font-medium transition-colors flex items-center gap-1.5 disabled:opacity-50"
           style={{ color: "var(--color-ink-mute)", borderBottom: "2px solid transparent" }}
         >
-          <MailIcon size={16} className={briefSendState === "sending" ? "animate-pulse" : undefined} />
+          <BriefIcon size={16} className={briefSendState === "sending" ? "animate-pulse" : undefined} />
           {briefLabel}
         </button>
         <Tab id="settings" current={tab} onClick={onTabChange}

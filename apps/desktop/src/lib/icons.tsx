@@ -38,6 +38,19 @@ export function MailIcon(props: IconProps) {
   );
 }
 
+export function BriefIcon(props: IconProps) {
+  // A document/report glyph — represents the daily brief.
+  return (
+    <svg {...base(props)} aria-hidden="true">
+      <path d="M14 3v4a1 1 0 0 0 1 1h4" />
+      <path d="M5 3h9l5 5v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" />
+      <path d="M8 13h8" />
+      <path d="M8 17h8" />
+      <path d="M8 9h2" />
+    </svg>
+  );
+}
+
 export function SettingsIcon(props: IconProps) {
   return (
     <svg {...base(props)} aria-hidden="true">
