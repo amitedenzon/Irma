@@ -770,10 +770,10 @@ final class EventKitRemindersClient: RemindersClient {
 - [ ] **Step 2: Verify it compiles**
 
 ```bash
-cd tools/reminders-helper && swift test
+cd tools/reminders-helper && swift build
 ```
 
-Expected: all existing tests still pass; no new tests, but compilation must succeed.
+Expected: `Build complete!`. Compilation must succeed.
 
 - [ ] **Step 3: Commit**
 
