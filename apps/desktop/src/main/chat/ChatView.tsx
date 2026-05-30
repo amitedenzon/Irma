@@ -1,17 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { getChatBackends, sendChat } from "../../lib/api";
-import type { ChatBackends, ChatMessage, Project } from "../../lib/types";
-
-const BACKEND_STORAGE_KEY = "irma.chat.backend";
-
-const BACKEND_LABEL: Record<string, string> = {
-  ollama: "Local",
-  claude_cli: "Claude",
-};
-
-function labelFor(backend: string): string {
-  return BACKEND_LABEL[backend] ?? backend;
-}
+import { useEffect, useRef, useState } from "react";
+import { sendChat } from "../../lib/api";
+import type { ChatMessage, Project } from "../../lib/types";
 
 export function ChatView({
   contextProjects: _ctx,
@@ -25,56 +14,16 @@ export function ChatView({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [meta, setMeta] = useState<{ backend: string; model: string } | null>(null);
-  const [backends, setBackends] = useState<ChatBackends | null>(null);
-  const [selected, setSelected] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
-  // sessionId is regenerated on every conversation clear. Required by the
-  // claude_cli backend; ignored by stateless ones (the wire field is optional).
-  const sessionIdRef = useRef<string>(crypto.randomUUID());
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, busy]);
 
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const info = await getChatBackends();
-        if (cancelled) return;
-        setBackends(info);
-        const stored = localStorage.getItem(BACKEND_STORAGE_KEY);
-        const initial =
-          stored && info.available.includes(stored)
-            ? stored
-            : info.default && info.available.includes(info.default)
-              ? info.default
-              : info.available[0] ?? null;
-        setSelected(initial);
-      } catch (e: unknown) {
-        if (!cancelled) {
-          // Backend not up yet — leave selected null; the chat call will 503
-          // with a clear message when the user tries to send.
-          setBackends({ default: null, available: [], models: {} });
-          setError(e instanceof Error ? e.message : String(e));
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  function pickBackend(name: string): void {
-    setSelected(name);
-    localStorage.setItem(BACKEND_STORAGE_KEY, name);
-  }
-
   function clearConversation(): void {
     setMessages([]);
     setMeta(null);
     setError(null);
-    sessionIdRef.current = crypto.randomUUID();
   }
 
   async function submit(): Promise<void> {
@@ -86,10 +35,7 @@ export function ChatView({
     setBusy(true);
     setError(null);
     try {
-      const res = await sendChat(next, {
-        backend: selected ?? undefined,
-        sessionId: sessionIdRef.current,
-      });
+      const res = await sendChat(next);
       setMessages([...next, { role: "assistant", content: res.reply }]);
       setMeta({ backend: res.backend, model: res.model });
     } catch (e: unknown) {
@@ -106,42 +52,18 @@ export function ChatView({
     }
   }
 
-  const backendOptions = useMemo(() => backends?.available ?? [], [backends]);
-
   return (
     <div className="px-6 py-6 max-w-3xl mx-auto h-full flex flex-col">
-      {backendOptions.length > 1 && (
-        <div className="mb-3 flex items-center gap-2 text-[12px]">
-          <span style={{ color: "var(--color-ink-mute)" }}>backend</span>
-          <div className="flex rounded-full overflow-hidden" style={{ border: "1px solid var(--color-border)" }}>
-            {backendOptions.map((name) => {
-              const active = name === selected;
-              return (
-                <button
-                  key={name}
-                  type="button"
-                  onClick={() => pickBackend(name)}
-                  className="px-3 py-1 text-[12px]"
-                  style={{
-                    background: active ? "var(--color-red)" : "transparent",
-                    color: active ? "#fff" : "var(--color-ink)",
-                  }}
-                >
-                  {labelFor(name)}
-                </button>
-              );
-            })}
-          </div>
-          {messages.length > 0 && (
-            <button
-              type="button"
-              onClick={clearConversation}
-              className="ml-auto text-[11px] underline"
-              style={{ color: "var(--color-ink-mute)" }}
-            >
-              new conversation
-            </button>
-          )}
+      {messages.length > 0 && (
+        <div className="mb-3 flex items-center justify-end">
+          <button
+            type="button"
+            onClick={clearConversation}
+            className="text-[11px] underline"
+            style={{ color: "var(--color-ink-mute)" }}
+          >
+            new conversation
+          </button>
         </div>
       )}
 

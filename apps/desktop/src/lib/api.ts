@@ -1,6 +1,5 @@
 import type {
   Brief,
-  ChatBackends,
   ChatMessage,
   ChatResponse,
   Horizon,
@@ -159,22 +158,12 @@ export async function forceRefresh(): Promise<void> {
   await noContent(await fetch(url("/api/v1/refresh"), { method: "POST" }));
 }
 
-export async function sendChat(
-  messages: ChatMessage[],
-  opts: { backend?: string; sessionId?: string } = {},
-): Promise<ChatResponse> {
-  const payload: Record<string, unknown> = { messages };
-  if (opts.backend) payload.backend = opts.backend;
-  if (opts.sessionId) payload.session_id = opts.sessionId;
+export async function sendChat(messages: ChatMessage[]): Promise<ChatResponse> {
   return jsonOrThrow(
     await fetch(url("/api/v1/chat"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ messages }),
     }),
   );
-}
-
-export async function getChatBackends(): Promise<ChatBackends> {
-  return jsonOrThrow(await fetch(url("/api/v1/chat/backends")));
 }
