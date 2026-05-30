@@ -51,6 +51,14 @@ def test_resend_from_email_override(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.resend_from_email == "irma@example.com"
 
 
+def test_daily_brief_defaults() -> None:
+    s = Settings(_env_file=None)
+    assert s.irma_daily_brief_enabled is True
+    assert s.irma_brief_timezone == "Asia/Jerusalem"
+    assert s.irma_brief_hour == 8
+    assert s.irma_brief_lookahead_days == 3
+
+
 def test_secret_value_or_none_returns_none_for_blank() -> None:
     from pydantic import SecretStr
 

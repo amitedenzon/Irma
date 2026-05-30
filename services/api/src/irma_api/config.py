@@ -69,6 +69,14 @@ class Settings(BaseSettings):
     irma_api_host: str = "127.0.0.1"
     irma_api_port: int = 8765
 
+    # --- Daily email brief ---------------------------------------------------
+    # The morning brief is emailed via the Resend tool. Disable to skip the
+    # 8am cron entirely (the on-demand Brief button still works).
+    irma_daily_brief_enabled: bool = True
+    irma_brief_timezone: str = "Asia/Jerusalem"
+    irma_brief_hour: int = 8
+    irma_brief_lookahead_days: int = 3
+
     @field_validator("irma_repos", mode="before")
     @classmethod
     def _split_repos(cls, raw: object) -> object:
