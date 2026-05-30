@@ -32,6 +32,11 @@ _STUCK_REPLY = "I got stuck mid-tool-call — try rephrasing."
 # For these, the chat router skips the tool loop and requires a session_id.
 _STATEFUL_BACKENDS: Final[frozenset[str]] = frozenset({"claude_cli"})
 
+# Backends hidden from /chat/backends — they can't host tools (yet) and
+# would silently degrade the chat UX. POST /chat still accepts them if
+# passed explicitly.
+_HIDDEN_BACKENDS: Final[frozenset[str]] = frozenset({"claude_cli"})
+
 
 _SYSTEM_PROMPT: Final[str] = """\
 You are Irma — Amit's personal assistant, and also a dog. You live as a
@@ -129,10 +134,15 @@ async def _run_tool_calls(
 async def get_backends(request: Request) -> BackendInfo:
     registry: dict[str, LLMClient] = getattr(request.app.state, "llm_registry", {}) or {}
     default: str | None = getattr(request.app.state, "default_backend", None)
+
+    visible = {name: client for name, client in registry.items() if name not in _HIDDEN_BACKENDS}
+    if default in _HIDDEN_BACKENDS or default not in visible:
+        default = next(iter(visible), None)
+
     return BackendInfo(
         default=default,
-        available=sorted(registry.keys()),
-        models={name: client.model for name, client in registry.items()},
+        available=sorted(visible.keys()),
+        models={name: client.model for name, client in visible.items()},
     )
 
 
