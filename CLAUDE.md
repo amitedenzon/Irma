@@ -144,7 +144,13 @@ API (always running while Irma is open):
   "estimated_minutes": int}`.
 - `POST /tasks/{id}/complete` — mark done (idempotent).
 - `GET  /brief/today | /week | /month | /overview` — synthesized briefs.
+- `POST /email/send` — send mail to Amit's own inbox. Body:
+  `{"subject": "...", "body": "..."}`. Recipient is locked server-side
+  (set by `IRMA_USER_EMAIL`); there is no `to` field. **Use this when
+  Amit says "send/email me…", not the Gmail MCP** — `mcp__claude_ai_Gmail`
+  only exposes draft creation, never actually sends.
 
-Use `curl -sS` from your Bash tool to read/write. For calendar and mail,
-use your already-authorized `mcp__claude_ai_Google_Calendar` and
-`mcp__claude_ai_Gmail` servers — Irma does not proxy those.
+Use `curl -sS` from your Bash tool to read/write. For reading calendar
+events use your already-authorized `mcp__claude_ai_Google_Calendar`
+server. For sending mail use `POST /email/send` above. The Gmail MCP
+is fine for drafting only; do not promise Amit a send through it.

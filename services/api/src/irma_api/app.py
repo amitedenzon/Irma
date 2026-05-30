@@ -21,6 +21,7 @@ from irma_api.agents.time_agent import TimeAgent
 from irma_api.config import get_settings, secret_value_or_none
 from irma_api.logging import configure_logging
 from irma_api.routers.brief import router as brief_router
+from irma_api.routers.email import router as email_router
 from irma_api.routers.chat import router as chat_router
 from irma_api.routers.integrations import router as integrations_router
 from irma_api.routers.projects import router as projects_router
@@ -116,6 +117,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.default_backend = default_backend
     app.state.tools = registry
     app.state.lead_agent = lead_agent
+    app.state.send_email_tool = send_email_tool
 
     daily_brief_job = None
     if llm is not None and send_email_tool is not None:
@@ -210,6 +212,7 @@ def create_app() -> FastAPI:
     app.include_router(projects_router, prefix="/api/v1")
     app.include_router(tasks_router, prefix="/api/v1")
     app.include_router(brief_router, prefix="/api/v1")
+    app.include_router(email_router, prefix="/api/v1")
     app.include_router(integrations_router, prefix="/api/v1")
 
     @app.get("/", include_in_schema=False)
