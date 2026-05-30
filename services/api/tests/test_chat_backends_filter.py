@@ -17,6 +17,10 @@ class _StubLLM:
     backend = "stub"
     model = "stub-1"
 
+
+class _VisibleStubLLM(_StubLLM):
+    backend = "ollama"
+
     async def complete(
         self,
         *,
@@ -97,7 +101,7 @@ def test_post_chat_with_no_backend_falls_back_when_default_is_hidden(
     in GET /chat/backends."""
     app = _build_app(monkeypatch, tmp_path)
     with TestClient(app) as client:
-        visible_stub = _StubLLM()
+        visible_stub = _VisibleStubLLM()
         hidden_stub = _StubLLM()
         app.state.llm_registry = {
             "ollama": visible_stub,
@@ -110,6 +114,7 @@ def test_post_chat_with_no_backend_falls_back_when_default_is_hidden(
             json={"messages": [{"role": "user", "content": "hi"}]},
         )
         assert resp.status_code == 200
+        assert resp.json()["backend"] == "ollama"
 
 
 def test_post_chat_with_explicit_claude_cli_still_400s_without_session(

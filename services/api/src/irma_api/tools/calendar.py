@@ -98,7 +98,10 @@ class ReadCalendarTool:
                     events = await self._fetch_events(client, user, time_min, time_max)
         except (AuthError, RetryError) as exc:
             logger.warning("read_calendar.auth_failed", error=str(exc))
-            raise ToolError("calendar_auth_failed", detail=str(exc)) from exc
+            raise ToolError(
+                "calendar_auth_failed",
+                detail=f"{exc}; if the token is stale or narrow-scoped, re-run `irma-api auth google`",
+            ) from exc
         except HTTPError as exc:
             status = getattr(getattr(exc, "res", None), "status_code", None)
             logger.warning("read_calendar.http_error", status=status, error=str(exc))
@@ -269,7 +272,10 @@ class CreateCalendarEventTool:
                     created = await self._insert_event(client, user, body)
         except (AuthError, RetryError) as exc:
             logger.warning("create_calendar_event.auth_failed", error=str(exc))
-            raise ToolError("calendar_auth_failed", detail=str(exc)) from exc
+            raise ToolError(
+                "calendar_auth_failed",
+                detail=f"{exc}; if the token is stale or narrow-scoped, re-run `irma-api auth google`",
+            ) from exc
         except HTTPError as exc:
             status = getattr(getattr(exc, "res", None), "status_code", None)
             logger.warning(

@@ -38,7 +38,7 @@ _STATEFUL_BACKENDS: Final[frozenset[str]] = frozenset({"claude_cli"})
 _HIDDEN_BACKENDS: Final[frozenset[str]] = frozenset({"claude_cli"})
 
 
-_SYSTEM_PROMPT: Final[str] = """\
+_SYSTEM_PROMPT_BASE: Final[str] = """\
 You are Irma — Amit's personal assistant, and also a dog. You live as a
 small dog character beside Amit's macOS Dock; that sprite is your body.
 You are aware of this and comfortable with it. Don't perform "dog" — no
@@ -58,12 +58,18 @@ question rather than guessing.
 You are a personal-assistant helper — calendars, todos, reminders, light
 planning, quick lookups. Defer hard reasoning, large code refactors, or
 deep technical work to Amit himself or to a stronger model.
-
-You have these tools available: read_calendar, create_calendar_event,
-list_projects, create_project, list_tasks, create_task, complete_task,
-send_email. Reach for them when a request needs them; do not narrate
-the call.
 """
+
+
+def _build_system_prompt(tool_names: list[str]) -> str:
+    if not tool_names:
+        return _SYSTEM_PROMPT_BASE
+    listed = ", ".join(sorted(tool_names))
+    suffix = (
+        f"\nYou have these tools available: {listed}. "
+        "Reach for them when a request needs them; do not narrate the call.\n"
+    )
+    return _SYSTEM_PROMPT_BASE + suffix
 
 
 class ChatMessage(BaseModel):
@@ -191,7 +197,7 @@ async def post_chat(request: Request, body: ChatRequest) -> ChatResponse:
     try:
         if skip_tools:
             outcome = await llm.complete(
-                system=_SYSTEM_PROMPT,
+                system=_build_system_prompt([]),
                 messages=turns,
                 max_tokens=800,
                 session_id=body.session_id,
@@ -204,7 +210,7 @@ async def post_chat(request: Request, body: ChatRequest) -> ChatResponse:
             for _iteration in range(MAX_TOOL_ITERATIONS):
                 tool_specs = tools.specs() if tools is not None else []
                 outcome = await llm.complete(
-                    system=_SYSTEM_PROMPT,
+                    system=_build_system_prompt(tools.names() if tools is not None else []),
                     messages=turns,
                     tools=tool_specs or None,
                     max_tokens=800,
