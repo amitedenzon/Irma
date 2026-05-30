@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { enable, disable, isEnabled } from "@tauri-apps/plugin-autostart";
 import {
   COMPANIONS,
   loadSettings,
@@ -220,6 +221,22 @@ function GeneralTab() {
   const [dockPosition, setDockPosition] = useState<DockPosition>(
     () => loadSettings().dockPosition,
   );
+  const [autostart, setAutostart] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    isEnabled()
+      .then((v) => setAutostart(v))
+      .catch(() => setAutostart(false));
+  }, []);
+
+  const onAutostartChange = async (checked: boolean) => {
+    try {
+      if (checked) await enable(); else await disable();
+      setAutostart(checked);
+    } catch (e) {
+      console.error("[settings] autostart toggle failed", e);
+    }
+  };
 
   const onCompanionChange = (id: string) => {
     setCompanionId(id);
@@ -296,6 +313,53 @@ function GeneralTab() {
               </button>
             );
           })}
+        </div>
+      </section>
+
+      {/* Launch at startup */}
+      <section className="card p-4">
+        <div className="flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-[13px] font-medium" style={{ color: "var(--color-ink)" }}>
+              Launch at startup
+            </p>
+            <p className="text-[12px] mt-0.5" style={{ color: "var(--color-ink-faint)" }}>
+              Start Irma automatically when you log in to macOS.
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={autostart ?? false}
+            disabled={autostart === null}
+            onClick={() => void onAutostartChange(!(autostart ?? false))}
+            className="shrink-0 disabled:opacity-40"
+            style={{
+              position: "relative",
+              width: 44,
+              height: 26,
+              borderRadius: 13,
+              background: autostart ? "var(--color-red)" : "var(--color-surface-2)",
+              border: `1.5px solid ${autostart ? "var(--color-red)" : "var(--color-border)"}`,
+              cursor: autostart === null ? "default" : "pointer",
+              transition: "background 0.15s ease, border-color 0.15s ease",
+              flexShrink: 0,
+            }}
+          >
+            <span
+              style={{
+                position: "absolute",
+                top: 2,
+                left: autostart ? 18 : 2,
+                width: 18,
+                height: 18,
+                borderRadius: "50%",
+                background: "white",
+                boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
+                transition: "left 0.15s ease",
+              }}
+            />
+          </button>
         </div>
       </section>
     </div>
