@@ -92,6 +92,11 @@ class CreateProjectTool:
             "properties": {
                 "name": {"type": "string", "description": "Project name (1-80 chars)."},
                 "description": {"type": "string"},
+                "status": {
+                    "type": "string",
+                    "enum": [s.value for s in ProjectStatus],
+                    "description": "Optional status. Defaults to 'active'.",
+                },
                 "priority": {
                     "type": "integer",
                     "minimum": 1,
@@ -124,7 +129,13 @@ class CreateProjectTool:
         try:
             payload = ProjectCreate.model_validate(args)
         except ValidationError as exc:
-            raise ToolError("invalid_args", detail=str(exc)) from exc
+            raise ToolError(
+                "invalid_args",
+                detail="; ".join(
+                    f"{'.'.join(str(p) for p in err['loc']) or '<root>'}: {err['msg']}"
+                    for err in exc.errors()
+                ),
+            ) from exc
 
         repo = ProjectRepo(self._store.connection)
         try:

@@ -65,3 +65,30 @@ async def test_create_project_with_keywords_and_target_date(store: SignalStore) 
         }
     )
     assert "MIT DL" in out
+
+
+@pytest.mark.asyncio
+async def test_create_project_invalid_args_detail_is_human_readable(
+    store: SignalStore,
+) -> None:
+    """Pydantic errors must be summarized, not dumped raw."""
+    creator = CreateProjectTool(store)
+    with pytest.raises(ToolError) as exc_info:
+        await creator.call({"name": ""})  # min_length=1 violation
+    assert exc_info.value.code == "invalid_args"
+    detail = exc_info.value.detail or ""
+    # Summarized form is a single line per error, "<field>: <msg>".
+    assert "name" in detail
+    # Raw pydantic output starts with a header like "1 validation error for..."
+    assert "validation error" not in detail.lower()
+
+
+@pytest.mark.asyncio
+async def test_create_project_accepts_paused_status(store: SignalStore) -> None:
+    """Schema advertises status; Pydantic accepts it; round-trip respects it."""
+    creator = CreateProjectTool(store)
+    await creator.call({"name": "Side Quest", "status": "paused"})
+
+    lister = ListProjectsTool(store)
+    out = await lister.call({"status": ["paused"]})
+    assert "Side Quest" in out
