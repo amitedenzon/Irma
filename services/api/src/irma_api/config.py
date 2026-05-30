@@ -9,7 +9,7 @@ from typing import Annotated, Literal
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-LLMBackend = Literal["anthropic", "ollama", "claude_cli"]
+LLMBackend = Literal["anthropic", "ollama"]
 
 
 class Settings(BaseSettings):
@@ -38,14 +38,6 @@ class Settings(BaseSettings):
     # --- Ollama --------------------------------------------------------------
     ollama_base_url: str = "http://127.0.0.1:11434"
     ollama_model: str = "qwen2.5:7b"
-
-    # --- Claude CLI (subscription-backed) ------------------------------------
-    # Shells out to the `claude` binary for chat replies so we ride the user's
-    # Claude Code subscription instead of billing API tokens. No API key needed
-    # — claude authenticates via its own keychain/OAuth.
-    claude_cli_binary: str = "claude"
-    claude_cli_model: str | None = None
-    claude_cli_timeout_seconds: float = 90.0
 
     # --- Google Calendar -----------------------------------------------------
     google_oauth_client_id: SecretStr | None = None
