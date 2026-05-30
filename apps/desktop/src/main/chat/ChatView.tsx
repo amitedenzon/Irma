@@ -6,7 +6,7 @@ const BACKEND_STORAGE_KEY = "irma.chat.backend";
 
 const BACKEND_LABEL: Record<string, string> = {
   ollama: "Local",
-  anthropic: "Claude",
+  claude_cli: "Claude",
 };
 
 function labelFor(backend: string): string {

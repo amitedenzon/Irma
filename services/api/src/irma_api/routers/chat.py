@@ -32,10 +32,11 @@ _STUCK_REPLY = "I got stuck mid-tool-call — try rephrasing."
 # For these, the chat router skips the tool loop and requires a session_id.
 _STATEFUL_BACKENDS: Final[frozenset[str]] = frozenset({"claude_cli"})
 
-# Backends hidden from /chat/backends — they can't host tools (yet) and
-# would silently degrade the chat UX. POST /chat still accepts them if
-# passed explicitly.
-_HIDDEN_BACKENDS: Final[frozenset[str]] = frozenset({"claude_cli"})
+# Backends hidden from /chat/backends. Empty for now — claude_cli drives
+# its own MCP tools (Gmail, Calendar) so it's fully chat-capable. Kept as
+# a knob in case a future backend ships without UI parity. POST /chat
+# still accepts any registered backend if passed explicitly.
+_HIDDEN_BACKENDS: Final[frozenset[str]] = frozenset()
 
 
 _SYSTEM_PROMPT_BASE: Final[str] = """\

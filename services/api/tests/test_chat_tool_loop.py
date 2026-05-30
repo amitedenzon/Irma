@@ -197,9 +197,8 @@ async def test_get_backends_lists_registry() -> None:
     assert resp.status_code == 200
     body = resp.json()
     assert body["default"] == "fake"
-    # claude_cli is hidden from the backends endpoint (no tool support).
-    assert sorted(body["available"]) == ["fake"]
-    assert "claude_cli" not in body["models"]
+    assert sorted(body["available"]) == ["claude_cli", "fake"]
+    assert set(body["models"]) == {"claude_cli", "fake"}
 
 
 @pytest.mark.asyncio

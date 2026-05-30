@@ -358,7 +358,11 @@ class ClaudeCliLLM:
                 argv.extend(["--model", self._configured_model])
         argv.extend(
             [
-                "--disallowedTools", "*",
+                # Only allow Amit's pre-authorized MCP tools; everything else
+                # (filesystem, bash, web fetch) stays blocked because anything
+                # not in this list requires permission, and -p mode has no UI
+                # to grant it.
+                "--allowedTools", "mcp__claude_ai_Gmail,mcp__claude_ai_Google_Calendar",
                 "--disable-slash-commands",
                 "--output-format", "json",
                 "--permission-mode", "default",

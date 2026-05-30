@@ -1,4 +1,13 @@
-"""GET /chat/backends must not expose claude_cli (no tool support)."""
+"""`/chat/backends` filter mechanism and `_resolve_llm` fallback.
+
+The hidden-backend set is empty by default — `claude_cli` ships its own MCP
+tools (Gmail, Calendar) so there's no reason to hide it. These tests:
+
+1. Confirm the empty default lets every registered backend through.
+2. Confirm the filter machinery still works when something IS hidden, via
+   `monkeypatch.setattr` — so the knob is exercised even though no name is
+   currently hidden in production.
+"""
 
 from __future__ import annotations
 
@@ -10,16 +19,13 @@ from fastapi.testclient import TestClient
 from irma_api.agents.llm import ChatTurn, TextResult
 from irma_api.app import create_app
 from irma_api.config import get_settings
+from irma_api.routers import chat as chat_router
 from irma_api.tools.base import ToolSpec
 
 
 class _StubLLM:
     backend = "stub"
     model = "stub-1"
-
-
-class _VisibleStubLLM(_StubLLM):
-    backend = "ollama"
 
     async def complete(
         self,
@@ -34,6 +40,10 @@ class _VisibleStubLLM(_StubLLM):
         return TextResult(text="ok")
 
 
+class _OllamaStubLLM(_StubLLM):
+    backend = "ollama"
+
+
 def _build_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Any):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("IRMA_DB_PATH", str(tmp_path / "filter.db"))
@@ -46,13 +56,17 @@ def _build_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Any):
     return create_app()
 
 
-def test_backends_endpoint_hides_claude_cli(
+def test_default_hidden_set_is_empty() -> None:
+    """claude_cli ships its own MCP tools, so nothing is hidden by default."""
+    assert not chat_router._HIDDEN_BACKENDS
+    assert isinstance(chat_router._HIDDEN_BACKENDS, frozenset)
+
+
+def test_backends_endpoint_lists_every_registered_backend_when_nothing_hidden(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
     app = _build_app(monkeypatch, tmp_path)
     with TestClient(app) as client:
-        # Inject a fake registry containing claude_cli to prove the filter works
-        # even when the CLI is installed on the host.
         app.state.llm_registry = {
             "ollama": _StubLLM(),
             "anthropic": _StubLLM(),
@@ -63,19 +77,39 @@ def test_backends_endpoint_hides_claude_cli(
         resp = client.get("/api/v1/chat/backends")
         assert resp.status_code == 200
         body = resp.json()
-        assert "claude_cli" not in body["available"]
-        assert "claude_cli" not in body["models"]
-        # Default falls back to a visible backend.
-        assert body["default"] in body["available"]
+        assert set(body["available"]) == {"ollama", "anthropic", "claude_cli"}
+        assert body["default"] == "claude_cli"
+
+
+def test_backends_endpoint_filters_when_a_backend_is_hidden(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """If a future config opts to hide a backend, the filter mechanism works."""
+    monkeypatch.setattr(chat_router, "_HIDDEN_BACKENDS", frozenset({"anthropic"}))
+    app = _build_app(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        app.state.llm_registry = {
+            "ollama": _StubLLM(),
+            "anthropic": _StubLLM(),
+        }
+        app.state.default_backend = "anthropic"
+
+        resp = client.get("/api/v1/chat/backends")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "anthropic" not in body["available"]
+        assert "anthropic" not in body["models"]
+        assert body["default"] == "ollama"
 
 
 def test_backends_endpoint_returns_null_default_when_only_hidden_backends_exist(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
+    monkeypatch.setattr(chat_router, "_HIDDEN_BACKENDS", frozenset({"anthropic"}))
     app = _build_app(monkeypatch, tmp_path)
     with TestClient(app) as client:
-        app.state.llm_registry = {"claude_cli": _StubLLM()}
-        app.state.default_backend = "claude_cli"
+        app.state.llm_registry = {"anthropic": _StubLLM()}
+        app.state.default_backend = "anthropic"
 
         resp = client.get("/api/v1/chat/backends")
         assert resp.status_code == 200
@@ -84,30 +118,19 @@ def test_backends_endpoint_returns_null_default_when_only_hidden_backends_exist(
         assert body["default"] is None
 
 
-def test_hidden_and_stateful_backend_sets_stay_aligned() -> None:
-    """Canary: every hidden backend is also stateful (can't host tools), and
-    every stateful backend is hidden from the UI. If you change one set you
-    must change the other — they encode the same constraint from two angles."""
-    from irma_api.routers.chat import _HIDDEN_BACKENDS, _STATEFUL_BACKENDS
-
-    assert _HIDDEN_BACKENDS == _STATEFUL_BACKENDS
-
-
 def test_post_chat_with_no_backend_falls_back_when_default_is_hidden(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
-    """POST /chat with no `backend` field must not silently use claude_cli
-    just because it's the configured default. The fallback mirrors the rule
-    in GET /chat/backends."""
+    """`_resolve_llm` mirrors `get_backends`: a hidden default is bypassed
+    when no explicit `backend` is provided."""
+    monkeypatch.setattr(chat_router, "_HIDDEN_BACKENDS", frozenset({"anthropic"}))
     app = _build_app(monkeypatch, tmp_path)
     with TestClient(app) as client:
-        visible_stub = _VisibleStubLLM()
-        hidden_stub = _StubLLM()
         app.state.llm_registry = {
-            "ollama": visible_stub,
-            "claude_cli": hidden_stub,
+            "ollama": _OllamaStubLLM(),
+            "anthropic": _StubLLM(),
         }
-        app.state.default_backend = "claude_cli"
+        app.state.default_backend = "anthropic"
 
         resp = client.post(
             "/api/v1/chat",
@@ -120,8 +143,8 @@ def test_post_chat_with_no_backend_falls_back_when_default_is_hidden(
 def test_post_chat_with_explicit_claude_cli_still_400s_without_session(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
-    """Explicit opt-in to a hidden backend is still honored (back-compat for
-    scripts/tests)."""
+    """`claude_cli` is stateful regardless of hidden status — `session_id` is
+    still required when it's the explicit target."""
 
     class _CliStubLLM(_StubLLM):
         backend = "claude_cli"
@@ -134,9 +157,6 @@ def test_post_chat_with_explicit_claude_cli_still_400s_without_session(
         }
         app.state.default_backend = "ollama"
 
-        # The claude_cli backend requires session_id — passing the backend
-        # explicitly but no session_id should produce a 400, confirming the
-        # request reached the claude_cli path (not the ollama fallback).
         resp = client.post(
             "/api/v1/chat",
             json={

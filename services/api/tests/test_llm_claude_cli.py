@@ -145,8 +145,14 @@ async def test_argv_contains_required_flags_and_omits_model_when_unset(
     assert argv[argv.index("--session-id") + 1] == _VALID_UUID
     assert "--system-prompt" in argv
     assert argv[argv.index("--system-prompt") + 1] == "PERSONA"
-    assert "--disallowedTools" in argv
-    assert argv[argv.index("--disallowedTools") + 1] == "*"
+    # Allow-list narrows tool surface to Amit's pre-authorized MCP servers —
+    # everything else (filesystem, bash, web fetch) is blocked because -p mode
+    # has no UI to grant permission for unlisted tools.
+    assert "--allowedTools" in argv
+    allowed = argv[argv.index("--allowedTools") + 1]
+    assert "mcp__claude_ai_Gmail" in allowed
+    assert "mcp__claude_ai_Google_Calendar" in allowed
+    assert "--disallowedTools" not in argv
     assert "--disable-slash-commands" in argv
     assert "--output-format" in argv
     assert argv[argv.index("--output-format") + 1] == "json"
