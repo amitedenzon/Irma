@@ -25,12 +25,8 @@ export function ClaudeTerminal({
 }) {
   return (
     <div
-      className="flex-1 min-h-0 overflow-hidden rounded-xl p-3"
-      style={{
-        background: "#0f1117",
-        border: "1px solid var(--color-border)",
-        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.04)",
-      }}
+      className="h-full w-full overflow-hidden px-3 py-2"
+      style={{ background: "#0f1117" }}
     >
       <TerminalSession key={epoch} visible={visible} />
     </div>

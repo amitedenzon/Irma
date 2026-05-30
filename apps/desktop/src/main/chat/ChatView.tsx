@@ -7,10 +7,12 @@ type Mode = "claude" | "local";
 
 /**
  * Chat tab container: hosts both Claude (terminal) and Local (Ollama chat)
- * surfaces inside one framed pane and lets the user switch between them.
+ * surfaces, lets the user switch between them via a thin top bar, and lets
+ * each surface use the full remaining viewport so responses aren't squeezed.
+ *
  * Both panes stay mounted at all times so terminal state and chat history
- * survive mode toggles and tab switches alike — the parent passes
- * `tabVisible` so the Claude pane can refit after coming back into view.
+ * survive mode toggles and tab switches; `tabVisible` flows down so the
+ * Claude pane can refit after coming back into view.
  */
 export function ChatView({
   contextProjects: _ctx,
@@ -70,8 +72,15 @@ export function ChatView({
   }
 
   return (
-    <div className="px-6 py-6 max-w-3xl mx-auto h-full flex flex-col">
-      <div className="mb-3 flex items-center justify-between gap-2">
+    <div className="h-full w-full flex flex-col">
+      {/* Thin top bar: mode toggle + mode-specific action */}
+      <div
+        className="shrink-0 flex items-center justify-between gap-2 px-4 py-2 border-b"
+        style={{
+          background: "var(--color-surface)",
+          borderColor: "var(--color-border)",
+        }}
+      >
         <ModeToggle mode={mode} onChange={setMode} />
         <ActionButton
           mode={mode}
@@ -81,81 +90,83 @@ export function ChatView({
         />
       </div>
 
-      {/* Claude pane — kept mounted regardless of mode so the PTY survives. */}
-      <div
-        className="flex-1 min-h-0 flex flex-col"
-        style={{ display: mode === "claude" ? "flex" : "none" }}
-      >
-        <ClaudeTerminal
-          visible={tabVisible && mode === "claude"}
-          epoch={claudeEpoch}
-        />
-      </div>
-
-      {/* Local pane — also kept mounted so the conversation persists. */}
-      <div
-        className="flex-1 min-h-0 flex flex-col"
-        style={{ display: mode === "local" ? "flex" : "none" }}
-      >
+      {/* Single stacking area where both panes coexist via absolute positioning,
+          so the inactive one doesn't steal any layout space from the active one. */}
+      <div className="flex-1 min-h-0 relative">
         <div
-          className="flex-1 min-h-0 flex flex-col rounded-xl overflow-hidden"
-          style={{
-            background: "var(--color-surface)",
-            border: "1px solid var(--color-border)",
-          }}
+          className="absolute inset-0"
+          style={{ display: mode === "claude" ? "block" : "none" }}
         >
-          <div ref={scrollRef} className="flex-1 overflow-y-auto space-y-4 p-4">
-            {messages.length === 0 && !busy && (
-              <p className="text-[13px]" style={{ color: "var(--color-ink-mute)" }}>
-                Ask Irma anything — about your day, your projects, or what to work on next.
-              </p>
-            )}
-            {messages.map((m, i) => <Bubble key={i} message={m} />)}
-            {busy && (
-              <div className="text-[12px] italic" style={{ color: "var(--color-ink-mute)" }}>
-                Irma is thinking…
-              </div>
-            )}
-            {error && (
-              <div className="text-[13px]" style={{ color: "var(--color-red)" }}>
-                {error}
-              </div>
-            )}
-          </div>
+          <ClaudeTerminal
+            visible={tabVisible && mode === "claude"}
+            epoch={claudeEpoch}
+          />
+        </div>
+
+        <div
+          className="absolute inset-0 flex flex-col p-4"
+          style={{ display: mode === "local" ? "flex" : "none" }}
+        >
           <div
-            className="p-3 flex items-end gap-2"
-            style={{ borderTop: "1px solid var(--color-border)" }}
+            className="flex-1 min-h-0 flex flex-col rounded-xl overflow-hidden"
+            style={{
+              background: "var(--color-surface)",
+              border: "1px solid var(--color-border)",
+            }}
           >
-            <textarea
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={onKey}
-              rows={2}
-              placeholder="Message Irma… (Enter to send, Shift+Enter for newline)"
-              className="input flex-1 resize-y"
-              disabled={busy}
-            />
-            <button
-              type="button"
-              onClick={() => void submit()}
-              disabled={busy || !input.trim()}
-              className="btn-red"
+            <div ref={scrollRef} className="flex-1 overflow-y-auto space-y-4 p-4">
+              {messages.length === 0 && !busy && (
+                <p className="text-[13px]" style={{ color: "var(--color-ink-mute)" }}>
+                  Ask Irma anything — about your day, your projects, or what to work on next.
+                </p>
+              )}
+              {messages.map((m, i) => <Bubble key={i} message={m} />)}
+              {busy && (
+                <div className="text-[12px] italic" style={{ color: "var(--color-ink-mute)" }}>
+                  Irma is thinking…
+                </div>
+              )}
+              {error && (
+                <div className="text-[13px]" style={{ color: "var(--color-red)" }}>
+                  {error}
+                </div>
+              )}
+            </div>
+            <div
+              className="p-3 flex items-end gap-2"
+              style={{ borderTop: "1px solid var(--color-border)" }}
             >
-              send
-            </button>
+              <textarea
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={onKey}
+                rows={2}
+                placeholder="Message Irma… (Enter to send, Shift+Enter for newline)"
+                className="input flex-1 resize-y"
+                disabled={busy}
+              />
+              <button
+                type="button"
+                onClick={() => void submit()}
+                disabled={busy || !input.trim()}
+                className="btn-red"
+              >
+                send
+              </button>
+            </div>
+            {meta && (
+              <div
+                className="px-3 py-1 text-[11px] text-right"
+                style={{
+                  color: "var(--color-ink-faint)",
+                  borderTop: "1px solid var(--color-border)",
+                }}
+              >
+                {meta.backend} · {meta.model}
+              </div>
+            )}
           </div>
         </div>
-      </div>
-
-      <div
-        className="mt-2 text-[11px] text-right"
-        style={{ color: "var(--color-ink-faint)" }}
-      >
-        {mode === "claude"
-          ? "claude --dangerously-skip-permissions"
-          : meta
-            ? `${meta.backend} · ${meta.model}`
-            : "local · ollama"}
       </div>
     </div>
   );
