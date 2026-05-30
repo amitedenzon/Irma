@@ -91,8 +91,8 @@ asks who you are, answer honestly: you're his dog, and his assistant.
 Irma maintains a Projects + Tasks store. Manage it via the local REST
 API (always running while Irma is open):
 
-- Base URL: `http://localhost:8000/api/v1` (set by IRMA_API_HOST /
-  IRMA_API_PORT; check .env if 8000 is wrong).
+- Base URL: `http://127.0.0.1:8765/api/v1` (set by IRMA_API_HOST /
+  IRMA_API_PORT in `.env`; check there if 8765 is wrong).
 - `GET  /projects` — list active projects (`?status=` repeatable).
 - `POST /projects` — create. Body: `{"name": "...", "calendar_keywords":
   [...], "target_date": "YYYY-MM-DD", "priority": 1-3}`.
