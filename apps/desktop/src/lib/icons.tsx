@@ -39,14 +39,15 @@ export function MailIcon(props: IconProps) {
 }
 
 export function BriefIcon(props: IconProps) {
-  // A document/report glyph — represents the daily brief.
+  // A document/report glyph — sized to fill the 24×24 box so it reads at the
+  // same visual weight as SettingsIcon next to it.
   return (
     <svg {...base(props)} aria-hidden="true">
-      <path d="M14 3v4a1 1 0 0 0 1 1h4" />
-      <path d="M5 3h9l5 5v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" />
+      <path d="M13.5 2H5a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8.5z" />
+      <path d="M13.5 2v4.5a2 2 0 0 0 2 2H21" />
       <path d="M8 13h8" />
       <path d="M8 17h8" />
-      <path d="M8 9h2" />
+      <path d="M8 9.5h3.5" />
     </svg>
   );
 }

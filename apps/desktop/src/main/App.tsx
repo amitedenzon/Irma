@@ -227,29 +227,31 @@ function Header({
       <nav className="flex items-center gap-1 -mb-px">
         <Tab id="projects" current={tab} onClick={onTabChange}>Projects</Tab>
         <Tab id="chat"     current={tab} onClick={onTabChange}>Chat</Tab>
-        <button
-          type="button"
-          onClick={() => onSendBrief()}
-          disabled={briefSendState === "sending"}
-          aria-label={briefSendState === "idle" ? "Email today's brief" : briefLabel}
-          title={briefSendState === "idle" ? "Email today's brief" : briefLabel}
-          className="ml-auto px-4 py-2 transition-colors flex items-center disabled:opacity-50"
-          style={{
-            color:
-              briefSendState === "sent"
-                ? "var(--color-moss)"
-                : briefSendState === "error"
-                  ? "var(--color-red)"
-                  : "var(--color-ink-mute)",
-            borderBottom: "2px solid transparent",
-          }}
-        >
-          <BriefIcon size={16} className={briefSendState === "sending" ? "animate-pulse" : undefined} />
-        </button>
-        <Tab id="settings" current={tab} onClick={onTabChange}
-             aria-label="Settings" title="Settings">
-          <SettingsIcon size={16} />
-        </Tab>
+        <div className="ml-auto flex items-center">
+          <button
+            type="button"
+            onClick={() => onSendBrief()}
+            disabled={briefSendState === "sending"}
+            aria-label={briefSendState === "idle" ? "Email today's brief" : briefLabel}
+            title={briefSendState === "idle" ? "Email today's brief" : briefLabel}
+            className="px-4 py-2 transition-colors flex items-center disabled:opacity-50"
+            style={{
+              color:
+                briefSendState === "sent"
+                  ? "var(--color-moss)"
+                  : briefSendState === "error"
+                    ? "var(--color-red)"
+                    : "var(--color-ink-mute)",
+              borderBottom: "2px solid transparent",
+            }}
+          >
+            <BriefIcon size={16} className={briefSendState === "sending" ? "animate-pulse" : undefined} />
+          </button>
+          <Tab id="settings" current={tab} onClick={onTabChange}
+               aria-label="Settings" title="Settings">
+            <SettingsIcon size={16} />
+          </Tab>
+        </div>
       </nav>
     </header>
   );
