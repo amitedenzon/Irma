@@ -5,11 +5,10 @@ import { subscribeAgentState } from "../lib/sse";
 import type { AgentState, Project } from "../lib/types";
 import { ProjectsView } from "./projects/ProjectsView";
 import { ChatView } from "./chat/ChatView";
-import { ClaudeTerminal } from "./claude/ClaudeTerminal";
 import { SettingsView } from "./settings/SettingsView";
 import { MailIcon, SettingsIcon } from "../lib/icons";
 
-type Tab = "projects" | "chat" | "claude" | "settings";
+type Tab = "projects" | "chat" | "settings";
 
 type BriefSendState = "idle" | "sending" | "sent" | "error";
 
@@ -78,8 +77,14 @@ export function App() {
             onReload={loadProjects}
           />
         )}
-        {tab === "chat" && <ChatView contextProjects={projects} onTaskMaybeCreated={loadProjects} />}
-        {tab === "claude" && <ClaudeTerminal />}
+        {/* Chat stays mounted so the Claude PTY (and Local history) survives tab switches. */}
+        <div style={{ display: tab === "chat" ? "block" : "none", height: "100%" }}>
+          <ChatView
+            contextProjects={projects}
+            onTaskMaybeCreated={loadProjects}
+            tabVisible={tab === "chat"}
+          />
+        </div>
         {tab === "settings" && <SettingsView />}
       </main>
     </div>
@@ -142,7 +147,6 @@ function Header({
       <nav className="flex items-center gap-1 -mb-px">
         <Tab id="projects" current={tab} onClick={onTabChange}>Projects</Tab>
         <Tab id="chat"     current={tab} onClick={onTabChange}>Chat</Tab>
-        <Tab id="claude"   current={tab} onClick={onTabChange}>Claude</Tab>
         <button
           type="button"
           onClick={() => onSendBrief()}
