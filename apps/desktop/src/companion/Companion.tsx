@@ -54,7 +54,7 @@ const WRAPPER_STYLE: CSSProperties = {
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
-  cursor: "pointer",
+  pointerEvents: "none",
 };
 
 const WALK_SPEED_PX_PER_SEC = 60;
@@ -377,7 +377,7 @@ export function Companion() {
 
   return (
     <div style={WRAPPER_STYLE}>
-      <div style={{ position: "relative" }}>
+      <div style={{ position: "relative", pointerEvents: "none" }}>
         <Sprite
           spec={spec}
           manifest={effectiveManifest}
@@ -393,6 +393,7 @@ export function Companion() {
             right: 0,
             height: "50%",
             cursor: "pointer",
+            pointerEvents: "auto",
           }}
           onClick={onClick}
           role="button"
