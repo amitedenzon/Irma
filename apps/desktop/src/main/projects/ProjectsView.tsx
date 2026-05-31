@@ -111,7 +111,7 @@ export function ProjectsView({
         {remindersLinked !== null && (
           <div className="flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full" style={{
-              background: remindersLinked ? "#22c55e" : "var(--color-red)",
+              background: remindersLinked ? "var(--color-moss)" : "var(--color-red)",
               opacity: remindersLinked ? 1 : 0.7,
             }} />
             <span className="text-[11px]" style={{ color: "var(--color-ink-faint)" }}>

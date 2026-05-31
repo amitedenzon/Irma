@@ -1104,7 +1104,7 @@ function RemindersCard() {
 			<div className="flex items-center justify-between">
 				<div className="flex items-center gap-2">
 					<span className="w-2 h-2 rounded-full" style={{
-						background: linked ? "#22c55e" : "var(--color-red)",
+						background: linked ? "var(--color-moss)" : "var(--color-red)",
 						opacity: linked ? 1 : 0.7,
 					}} />
 					<span className="text-[12px]" style={{ color: "var(--color-ink-mute)" }}>
