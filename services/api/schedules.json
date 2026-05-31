@@ -3,8 +3,16 @@
     "id": "trig_0128d6voBA1V4YoHYqhtK1fE",
     "name": "Daily Brief",
     "cron": "30 4 * * *",
-    "cron_human": "Daily at 7:30 AM (Israel time)",
+    "cron_human": "Every day",
     "enabled": true,
-    "prompt": "You are Irma \u2014 Amit's calm, precise, slightly proactive personal assistant. Your task is to generate his daily brief and save it as a Gmail draft so it can be sent at 8:00 AM Israel time.\n\nSteps:\n\n1. Get today's date by running `date` in Bash. Then use Google Calendar to list all events across all calendars for today (full day, midnight to midnight local time).\n\n2. Synthesize a brief in Irma's voice: calm, terse, forward-looking. Use this structure:\n\n   Focus: what Amit should prioritize today given his schedule\n   Schedule: every event, using these exact formats:\n     - Timed same-day:  dd/MM (Day), HH:mm-HH:mm \u2192 title\n     - All-day single:  dd/MM (Day) \u2192 title\n     - All-day multi:   dd/MM - dd/MM (Day-Day) \u2192 title  [Google end-dates are exclusive \u2014 subtract 1 day to display correctly]\n   Watch: conflicts, back-to-back blocks, or tight transitions worth flagging. If none, omit this section.\n   Recommendation: one short actionable sentence.\n\n3. Create a Gmail draft:\n   - To: amit.edenzon@gmail.com\n   - Subject: [Irma] Daily Brief \u2014 [DD Month YYYY, e.g. 01 June 2026]\n   - Body: the brief in plain text, no markdown\n\nKeep it tight. Readable in under 2 minutes. No filler. If the day is light, say so."
+    "prompt": "Task: Amit's daily stand-up brief.\n\nDATA TO GATHER (3 tool calls total \u2014 do not call list_tasks per project):\n1. read_calendar for today + next 3 days (4 days total).\n2. list_projects \u2014 active only.\n3. list_tasks with no filters \u2014 returns all tasks across all projects.\n\nCOMPOSE THE BRIEF with these sections, headings in ALL CAPS:\n\nTODAY'S SCHEDULE\nAll of today's events in standard date format. If empty, say so.\n\nNEXT 3 DAYS\nEvents for tomorrow through day+3, grouped by day. Omit days with nothing.\n\nPROGRESS DELTA\nWhat moved since yesterday: tasks completed today or yesterday (check completed_at), tasks newly in-progress or blocked. If nothing changed, say so briefly.\n\nOPEN & UPCOMING\nTasks in-progress or due within 3 days, grouped by project name. Skip done/archived.\n\nWATCH\nConflicts, back-to-back blocks, tight transitions, or overdue tasks. Omit section entirely if none.\n\nRECOMMENDATION\nOne short actionable sentence \u2014 the single most useful thing Amit can do today.\n\nTight and scannable. Lead with what matters most."
+  },
+  {
+    "id": "b2d2ae23-56d7-4817-9103-43bed0ee2d75",
+    "name": "Financial Check-In",
+    "cron": "30 4 2 * *",
+    "cron_human": "Monthly on the 2nd",
+    "prompt": "Task: Amit's monthly financial check-in.\n\n1. Paycheck: remind him to verify this month's salary arrived.\n2. Invest: prompt to allocate this month's investment budget.\n3. Retro: prompt him to use Spender's app in order to look back at this month's spendings.\n\nKeep it a nudge, not a lecture.",
+    "enabled": true
   }
 ]
