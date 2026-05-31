@@ -1,7 +1,7 @@
 //! Menu-bar tray icon — the only persistent app surface besides the sprite.
 //!
 //! Left-click on the icon toggles the main window; the menu provides
-//! Toggle Irma / Placement options / Settings / Quit.
+//! Toggle Irma / Reset Position / Settings / Quit.
 
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
