@@ -577,18 +577,24 @@ pub fn show_companion_context_menu(app: AppHandle) -> Result<(), String> {
 
 /// Wire window-event listeners on both windows. Called once during setup.
 ///
-/// IMPORTANT: we deliberately do NOT re-anchor the companion on
-/// `WindowEvent::Moved` — JS drives the dog's position via `set_companion_pos`
-/// and reanchoring on every move would fight the walk animation. We do
-/// reanchor on `ScaleFactorChanged` because a scale change can shift the
-/// effective dock clearance.
+/// IMPORTANT: we deliberately do NOT re-anchor the companion from Rust on
+/// `WindowEvent::Moved` or `ScaleFactorChanged` — JS owns placement via
+/// `set_companion_pos`/drag, and forcing a re-anchor here fought the drag
+/// (it snapped her back to the primary monitor when crossing a different-DPI
+/// screen). On a scale change we just notify the frontend (`companion:rescale`)
+/// so it can re-derive bounds for her *saved* monitor/zone when not dragging.
 pub fn wire_windows(app: &mut App) -> tauri::Result<()> {
     if let Some(companion) = app.get_webview_window("companion") {
         place_companion(&companion)?;
         let companion_clone = companion.clone();
         companion.on_window_event(move |event| {
             if matches!(event, WindowEvent::ScaleFactorChanged { .. }) {
-                let _ = place_companion(&companion_clone);
+                // Do NOT force her back to the primary monitor here — that fought
+                // drag-to-place and made her flicker when dragged across a
+                // different-DPI screen. Let the frontend re-anchor to her saved
+                // monitor/zone (and skip while a drag is in progress).
+                eprintln!("[irma] companion ScaleFactorChanged → emit companion:rescale");
+                let _ = companion_clone.emit("companion:rescale", ());
             }
         });
     }

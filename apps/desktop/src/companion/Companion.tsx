@@ -232,6 +232,28 @@ export function Companion() {
     };
   }, []);
 
+  // Re-anchor to her saved placement after a DPI/scale change — unless a drag is
+  // in progress (the drag owns her position while crossing monitors). Bumping
+  // placementVersion re-bootstraps the brain, which re-derives bounds for the
+  // saved monitor/zone via refreshBounds.
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: UnlistenFn | undefined;
+    listen<void>("companion:rescale", () => {
+      if (cancelled || draggingRef.current) return;
+      setPlacementVersion((v) => v + 1);
+    })
+      .then((u) => {
+        if (cancelled) u();
+        else unlisten = u;
+      })
+      .catch((e) => console.error("[companion] listen companion:rescale failed", e));
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+    };
+  }, []);
+
   // Dog brain.
   useEffect(() => {
     let cancelled = false;
