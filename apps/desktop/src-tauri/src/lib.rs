@@ -149,19 +149,10 @@ pub fn run() {
                 *slot = spawn_backend();
             }
 
-            // Handle companion context-menu placement selections.
+            // Handle companion context-menu actions.
             app.on_menu_event(|app, event| {
-                match event.id().as_ref() {
-                    "companion_left_of_dock" => {
-                        let _ = app.emit("companion:placement", "left-of-dock");
-                    }
-                    "companion_on_dock" => {
-                        let _ = app.emit("companion:placement", "on-dock");
-                    }
-                    "companion_right_of_dock" => {
-                        let _ = app.emit("companion:placement", "right-of-dock");
-                    }
-                    _ => {}
+                if event.id().as_ref() == "reset_position" {
+                    let _ = app.emit("companion:reset-position", ());
                 }
             });
 

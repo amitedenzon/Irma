@@ -569,11 +569,10 @@ pub fn set_companion_pos(window: WebviewWindow, x: f64, y: f64) -> Result<(), St
         .map_err(|e| e.to_string())
 }
 
-/// Show a native context menu on the companion window with placement options.
-/// `dock_position` reflects the current setting so the active item gets a checkmark.
+/// Show a native context menu on the companion window with a reset action.
 #[tauri::command]
-pub fn show_companion_context_menu(app: AppHandle, dock_position: String) -> Result<(), String> {
-    crate::tray::show_companion_menu(&app, &dock_position).map_err(|e| e.to_string())
+pub fn show_companion_context_menu(app: AppHandle) -> Result<(), String> {
+    crate::tray::show_companion_menu(&app).map_err(|e| e.to_string())
 }
 
 /// Wire window-event listeners on both windows. Called once during setup.
