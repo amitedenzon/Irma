@@ -32,6 +32,7 @@ const BESIDE_DOCK_LIFT: f64 = 28.0;
 /// Inputs for the pure drop→zone decision. All x values are logical px in the
 /// monitor's coordinate space. `dock_left`/`dock_right` are only meaningful when
 /// `is_primary` (a secondary monitor has no Dock).
+#[derive(Debug)]
 pub struct ZoneInput {
     pub monitor_left: f64,
     pub monitor_right: f64,
@@ -45,6 +46,9 @@ pub struct ZoneInput {
 /// on a secondary monitor.
 pub fn decide_drop_zone(center_x: f64, z: &ZoneInput, tie_left: bool) -> &'static str {
     if z.is_primary {
+        // `center_x == dock_left` or `== dock_right` intentionally falls through to "on-dock":
+        // the Dock edges already carry ±50 px padding, so an exact-boundary center is on-dock —
+        // a deliberate measure-zero choice.
         if center_x < z.dock_left {
             "left-of-dock"
         } else if center_x > z.dock_right {
@@ -489,8 +493,8 @@ mod zone_tests {
             monitor_left: 1440.0,
             monitor_right: 2960.0,
             is_primary: false,
-            dock_left: 0.0,
-            dock_right: 0.0,
+            dock_left: 0.0,  // unused on a secondary monitor (no Dock)
+            dock_right: 0.0, // unused on a secondary monitor (no Dock)
         }
     }
 
