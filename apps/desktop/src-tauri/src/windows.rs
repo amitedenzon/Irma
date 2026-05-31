@@ -269,6 +269,7 @@ fn resolve_monitor(
         if let Some(m) = monitor_by_name(window, name)? {
             return Ok(Some(m));
         }
+        eprintln!("[irma] resolve_monitor: saved monitor {name:?} not found; falling back to primary");
     }
     target_monitor(window)
 }
@@ -279,6 +280,10 @@ fn compute_bounds_for(
     dock_position: &str,
 ) -> tauri::Result<CompanionBounds> {
     let scale = monitor.scale_factor();
+    // NOTE: bounds are computed in the target monitor's logical px. `set_position`
+    // (via set_companion_pos) converts using the monitor the window currently sits
+    // on, so callers must move the window onto `monitor` before/around applying
+    // these bounds when monitors have different scale factors.
     let area = monitor.size().to_logical::<f64>(scale);
     let origin = monitor.position().to_logical::<f64>(scale);
     let win_size = window.outer_size()?.to_logical::<f64>(scale);
@@ -329,6 +334,7 @@ fn compute_bounds_for(
     };
     let strip_left = strip_left.max(monitor_left);
     let strip_right = strip_right.min(monitor_right);
+    let strip_right = strip_right.max(strip_left); // never invert the strip
     let min_x = strip_left;
     let max_x = (strip_right - win_size.width).max(strip_left);
 
