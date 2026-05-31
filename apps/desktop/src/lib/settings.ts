@@ -74,6 +74,8 @@ export function saveCompanionId(id: string): void {
   void emit(CHANGE_EVENT, loadSettings());
 }
 
+// Zone-only change (the Settings UI): monitorName is intentionally left
+// unchanged — the zone changes on whichever monitor she currently lives on.
 export function saveDockPosition(position: DockPosition): void {
   localStorage.setItem(DOCK_KEY, position);
   void emit(CHANGE_EVENT, loadSettings());
