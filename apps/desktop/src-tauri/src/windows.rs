@@ -331,13 +331,15 @@ fn compute_bounds_for(
             },
         }
     } else {
-        // Secondary monitor has no Dock: split at center into left/right halves.
-        // `on-dock` should never be selected here; treat it defensively as the
-        // left half.
-        let center = origin.x + area.width / 2.0;
+        // Secondary monitor has no real Dock, but we keep the SAME centred
+        // dock-width gap between the left/right regions as the primary screen,
+        // so she doesn't roam through the middle. `on-dock` is never selected
+        // on a secondary monitor; treat it defensively as the left region.
+        let (dock_left, dock_right) =
+            dock_zone_edges(origin.x, area.width, dock_width().unwrap_or(DEFAULT_DOCK_WIDTH));
         match dock_position {
-            "right-of-dock" => (center, monitor_right),
-            _ => (monitor_left, center),
+            "right-of-dock" => (dock_right, monitor_right),
+            _ => (monitor_left, dock_left),
         }
     };
     let strip_left = strip_left.max(monitor_left);
