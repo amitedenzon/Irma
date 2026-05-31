@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { enable, disable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { invoke } from "@tauri-apps/api/core";
+import { exit } from "@tauri-apps/plugin-process";
 import { fetchLocalModels } from "../../lib/api";
 import type { LocalModel } from "../../lib/api";
 import {
@@ -551,6 +552,35 @@ function GeneralTab() {
 						</p>
 					</div>
 					<RestartButton />
+				</div>
+			</section>
+
+			{/* Quit */}
+			<section className="card p-4">
+				<div className="flex items-center justify-between gap-4">
+					<div className="min-w-0">
+						<p
+							className="text-[13px] font-medium"
+							style={{ color: "var(--color-ink)" }}>
+							Quit Irma
+						</p>
+						<p
+							className="text-[12px] mt-0.5"
+							style={{ color: "var(--color-ink-faint)" }}>
+							Close the companion and exit the app.
+						</p>
+					</div>
+					<button
+						type="button"
+						onClick={() => void exit(0)}
+						className="shrink-0 text-[12px] font-medium px-3 py-1.5 rounded-lg transition-colors"
+						style={{
+							background: "color-mix(in srgb, var(--color-red) 12%, transparent)",
+							color: "var(--color-red)",
+							border: "1px solid color-mix(in srgb, var(--color-red) 30%, transparent)",
+						}}>
+						Quit
+					</button>
 				</div>
 			</section>
 		</div>

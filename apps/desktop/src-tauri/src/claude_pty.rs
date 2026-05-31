@@ -70,14 +70,19 @@ pub fn claude_pty_spawn(
         }
     }
 
-    // Resolve workdir: env override → repo root walking up from CWD → CWD.
+    // Resolve workdir: env override → repo root walking up from CWD →
+    // ~/Documents/Code/Irma (default when launched from a .app bundle where
+    // CWD is not inside the repo, so CLAUDE.md with the Irma persona loads).
+    let home = std::env::var("HOME").unwrap_or_default();
     let workdir = std::env::var("IRMA_CLAUDE_WORKDIR")
         .ok()
         .map(PathBuf::from)
         .unwrap_or_else(|| {
             std::env::current_dir()
+                .ok()
                 .map(find_repo_root)
-                .unwrap_or_else(|_| PathBuf::from("."))
+                .filter(|p| p.join(".git").exists())
+                .unwrap_or_else(|| PathBuf::from(format!("{home}/Documents/Code/Irma")))
         });
 
     let pty_system = native_pty_system();
@@ -85,8 +90,22 @@ pub fn claude_pty_spawn(
         .openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
         .map_err(|e| format!("openpty failed: {e}"))?;
 
-    let binary = std::env::var("IRMA_CLAUDE_BINARY").unwrap_or_else(|_| "claude".to_string());
-    let mut cmd = CommandBuilder::new(binary);
+    // Resolve the claude binary. GUI .app bundles have a stripped PATH so we
+    // must find it by absolute path rather than relying on PATH lookup.
+    let binary = std::env::var("IRMA_CLAUDE_BINARY").unwrap_or_else(|_| {
+        let candidates = [
+            format!("{home}/.local/bin/claude"),
+            "/opt/homebrew/bin/claude".to_string(),
+            "/usr/local/bin/claude".to_string(),
+        ];
+        candidates
+            .iter()
+            .find(|p| std::path::Path::new(p.as_str()).exists())
+            .cloned()
+            .unwrap_or_else(|| "claude".to_string())
+    });
+
+    let mut cmd = CommandBuilder::new(&binary);
     cmd.arg("--dangerously-skip-permissions");
     // Pin Sonnet (latest) at medium effort so the in-Irma session stays fast and
     // cheap. Heavy reasoning belongs in Amit's own Claude Code window.
@@ -95,10 +114,15 @@ pub fn claude_pty_spawn(
     cmd.arg("--effort");
     cmd.arg("medium");
     cmd.cwd(&workdir);
-    // Inherit the user's interactive shell environment as best we can.
+    // Inherit the parent environment, then patch PATH so tools like node, npm,
+    // git, uv, etc. resolve correctly inside the PTY session.
     for (k, v) in std::env::vars() {
         cmd.env(k, v);
     }
+    let rich_path = format!(
+        "{home}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+    );
+    cmd.env("PATH", rich_path);
 
     let mut child = pair
         .slave

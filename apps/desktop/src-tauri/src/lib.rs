@@ -3,20 +3,89 @@ mod tray;
 mod windows;
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconEvent},
     Emitter, Manager,
 };
 
 /// Shared flag — true while a native file/folder dialog is open.
-/// The main-window `Focused(false)` handler skips the auto-hide while this is set,
-/// preventing the window from collapsing the moment the picker steals focus.
 #[derive(Default)]
 pub struct DialogOpen(pub Arc<AtomicBool>);
 
+/// Handle to the spawned FastAPI backend process.
+#[derive(Default)]
+pub struct BackendProcess(pub Mutex<Option<std::process::Child>>);
+
+/// Spawn `uv run uvicorn irma_api.app:create_app --factory --port 8765` from
+/// the services/api directory. Stdout/stderr are appended to ~/Library/Logs/Irma/api.log.
+fn spawn_backend() -> Option<std::process::Child> {
+    let home = std::env::var("HOME").unwrap_or_default();
+
+    let api_dir = std::env::var("IRMA_API_DIR")
+        .unwrap_or_else(|_| format!("{home}/Documents/Code/Irma/services/api"));
+
+    // Prefer an explicit override, then known install locations.
+    // GUI .app bundles get a stripped PATH (/usr/bin:/bin only), so we must
+    // resolve uv by absolute path rather than relying on PATH lookup.
+    let uv_candidates = [
+        std::env::var("IRMA_UV_PATH").unwrap_or_default(),
+        format!("{home}/.local/bin/uv"),
+        "/opt/homebrew/bin/uv".to_string(),
+        "/usr/local/bin/uv".to_string(),
+    ];
+    let uv = uv_candidates
+        .iter()
+        .find(|p| !p.is_empty() && std::path::Path::new(p.as_str()).exists())
+        .cloned()?;
+
+    let log_dir = format!("{home}/Library/Logs/Irma");
+    let _ = std::fs::create_dir_all(&log_dir);
+
+    // Write a launch-attempt line so we can confirm spawn_backend was called.
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(format!("{log_dir}/api.log"))
+        .map(|mut f| {
+            use std::io::Write;
+            let _ = writeln!(f, "\n==== backend spawn attempt: uv={uv} dir={api_dir} ====");
+        });
+
+    let log_out = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(format!("{log_dir}/api.log"))
+        .ok()?;
+    let log_err = log_out.try_clone().ok()?;
+
+    // Pass a rich PATH so uv can find python and other tools it needs.
+    let path = format!(
+        "{home}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+    );
+
+    std::process::Command::new(&uv)
+        .args(["run", "uvicorn", "irma_api.app:create_app", "--factory", "--port", "8765"])
+        .current_dir(&api_dir)
+        .env("HOME", &home)
+        .env("PATH", &path)
+        .stdout(log_out)
+        .stderr(log_err)
+        .spawn()
+        .map_err(|e| {
+            let _ = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(format!("{home}/Library/Logs/Irma/api.log"))
+                .map(|mut f| {
+                    use std::io::Write;
+                    let _ = writeln!(f, "==== spawn FAILED: {e} ====");
+                });
+        })
+        .ok()
+}
+
 /// Open a folder picker dialog, briefly activating the app so macOS allows it.
-/// Uses a oneshot channel so the async command waits without blocking the runtime.
 #[tauri::command]
 async fn browse_folder(
     app: tauri::AppHandle,
@@ -45,7 +114,7 @@ async fn browse_folder(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -55,6 +124,7 @@ pub fn run() {
         ))
         .manage(claude_pty::ClaudePty::default())
         .manage(DialogOpen::default())
+        .manage(BackendProcess::default())
         .invoke_handler(tauri::generate_handler![
             windows::position_companion,
             windows::toggle_main,
@@ -72,6 +142,11 @@ pub fn run() {
         .setup(|app| {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
+            // Spawn the FastAPI backend.
+            if let Ok(mut slot) = app.state::<BackendProcess>().0.lock() {
+                *slot = spawn_backend();
+            }
 
             // Handle companion context-menu placement selections.
             app.on_menu_event(|app, event| {
@@ -126,6 +201,21 @@ pub fn run() {
                 }
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Irma");
+        .build(tauri::generate_context!())
+        .expect("error while building Irma");
+
+    app.run(|app_handle, event| {
+        if let tauri::RunEvent::Exit = event {
+            // Kill the backend process on exit.
+            if let Some(backend) = app_handle.try_state::<BackendProcess>() {
+                if let Ok(mut slot) = backend.0.lock() {
+                    if let Some(mut child) = slot.take() {
+                        eprintln!("[irma] killing backend (pid {})", child.id());
+                        let _ = child.kill();
+                        let _ = child.wait();
+                    }
+                }
+            }
+        }
+    });
 }
