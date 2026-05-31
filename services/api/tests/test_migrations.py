@@ -105,3 +105,38 @@ async def test_ensure_schema_adds_project_id_to_existing_signals_db(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='briefs'"
         )
         assert await cur.fetchone() is None
+
+
+@pytest.mark.asyncio
+async def test_task_has_reminder_uuid_column(tmp_path: Path) -> None:
+    db = tmp_path / "t.db"
+    async with aiosqlite.connect(db) as conn:
+        await ensure_schema(conn)
+        cur = await conn.execute("PRAGMA table_info(task)")
+        cols = {r[1] for r in await cur.fetchall()}
+    assert "reminder_uuid" in cols
+
+
+@pytest.mark.asyncio
+async def test_project_has_reminder_calendar_id_column(tmp_path: Path) -> None:
+    db = tmp_path / "t.db"
+    async with aiosqlite.connect(db) as conn:
+        await ensure_schema(conn)
+        cur = await conn.execute("PRAGMA table_info(project)")
+        cols = {r[1] for r in await cur.fetchall()}
+    assert "reminder_calendar_id" in cols
+
+
+@pytest.mark.asyncio
+async def test_reminder_columns_migration_is_idempotent(tmp_path: Path) -> None:
+    db = tmp_path / "t.db"
+    async with aiosqlite.connect(db) as conn:
+        await ensure_schema(conn)
+        await ensure_schema(conn)
+        await ensure_schema(conn)
+        cur = await conn.execute("PRAGMA table_info(task)")
+        task_cols = {r[1] for r in await cur.fetchall()}
+        cur = await conn.execute("PRAGMA table_info(project)")
+        proj_cols = {r[1] for r in await cur.fetchall()}
+    assert "reminder_uuid" in task_cols
+    assert "reminder_calendar_id" in proj_cols

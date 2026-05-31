@@ -17,6 +17,46 @@
 
 ---
 
+## Amendment 2026-05-30: Swift unit tests dropped
+
+**Reason:** macOS Xcode Command Line Tools (the dev environment in use) does not ship the `XCTest` or `swift-testing` modules — they are full-Xcode-only. Installing full Xcode (~12 GB) is not warranted for a ~250-line helper.
+
+**Effect on Tasks 1–5:** the SwiftPM `testTarget` is removed, no `*Tests.swift` files are written, and the verification gate switches from `swift test` to `swift build`. Tasks 6 and 7 are unaffected (they were already test-free). Tasks 8+ (Python side) are unaffected.
+
+**Regression coverage shifts entirely to the Python side:**
+- The Python `ReminderBridge` (Task 9) is tested against a Python fake helper that re-implements the JSON protocol — so any regression in the protocol contract surfaces in Python tests.
+- The opt-in end-to-end test (Task 21) exercises the real Swift binary against the real macOS Reminders DB.
+
+Task sections below have been edited inline to reflect this; original commit messages are preserved.
+
+---
+
+## Amendment 2026-05-30 (afternoon): one Reminders list per Project
+
+**Reason:** the original plan mapped Project → parent reminder, Task → subtask of project. Verification against public EventKit headers (macOS 15.x / 26.x SDKs) confirmed there is no public `parentReminder` / subtask API — Apple's Reminders.app uses a private framework extension. Spec was amended (commit `7ad1abd`); Swift helper was refit (commit `d9e74ad`).
+
+**New architecture:** each Project maps to its own `EKCalendar` named `Irma · <ProjectName>`. The Inbox is `Irma · Inbox`. Tasks are flat reminders within their project's calendar. Calendar discovery is a new helper command `list-calendars --prefix "Irma · "`; rename and delete are also calendar-level operations.
+
+**Per-task effects** (see inline amendment notes in each task section below):
+
+- **Task 6 (EventKitRemindersClient)** — already implemented under the new spec in commit `d9e74ad`, alongside `Models.swift` / `RemindersClient.swift` / `CommandHandler.swift` updates (drop `parent_uuid`, add `listCalendars` and `renameCalendar`). This task is **complete**; subagents should skip ahead to Task 7.
+- **Task 7** — unaffected; main.swift dispatches all commands generically.
+- **Task 8 (Python DTOs)** — drop `parent_uuid` from `HelperReminder` and `ReminderFields`. Add Pydantic `CalendarSummary` mirroring the Swift type.
+- **Task 9 (Bridge + fake helper)** — add `list_calendars(prefix)` and `rename_calendar(calendar_id, title)` to `ReminderBridge`. Fake helper supports the two new commands.
+- **Task 10 (Schema migration)** — Project column is **`reminder_calendar_id`** (an `EKCalendar.calendarIdentifier`), NOT `reminder_uuid`. Task still gets `reminder_uuid` (an `EKReminder.calendarItemIdentifier`).
+- **Task 11 (Models + repos)** — Project model gains `reminder_calendar_id: str | None`. `ProjectRepo.set_reminder_calendar_id(...)`. Task model gains `reminder_uuid: str | None` (unchanged).
+- **Task 12 (Planner)** — fundamentally rewritten. The pure function is now `plan(irma_snapshot, helper_state) -> SyncPlan` where `helper_state` is a dict keyed by calendar uuid → list of reminders, plus a separate map of calendar uuid → title. Output includes calendar-level operations (`create_calendar`, `rename_calendar`, `delete_calendar`) in addition to per-reminder ones. See the rewritten task body below.
+- **Task 13 (Inbox bootstrapper)** — unchanged (still ensures the Inbox `Project` row).
+- **Task 14 (SyncService)** — `_apply` rewritten as a four-pass algorithm (calendar reconcile → per-project snapshot → per-project reminder reconcile → apply). See the rewritten task body below.
+- **Task 15 (Settings)** — drop `reminders_calendar_id`. Add `reminders_linked: bool = False` and `reminders_calendar_prefix: str = "Irma · "`.
+- **Task 17 (Router)** — link flow no longer calls `ensure-list --name Irma`. Just `request-access`, set `reminders_linked=true`, trigger `sync_once()`. Unlink clears `reminder_calendar_id` (projects) and `reminder_uuid` (tasks).
+- **Task 21 (E2E test)** — creates per-project test calendars; tears down by deleting them.
+- **Task 22 (README)** — describes the `Irma · <Project>` naming convention.
+
+Tasks not listed (16, 18, 19, 20) are architecturally unaffected.
+
+---
+
 ## File Structure
 
 ### New files
@@ -79,7 +119,6 @@
 - Create: `tools/reminders-helper/Package.swift`
 - Create: `tools/reminders-helper/Sources/RemindersHelper/main.swift`
 - Create: `tools/reminders-helper/Sources/RemindersHelper/Info.plist`
-- Create: `tools/reminders-helper/Tests/RemindersHelperTests/SmokeTests.swift`
 - Create: `tools/reminders-helper/.gitignore`
 - Create: `tools/reminders-helper/README.md`
 
@@ -118,11 +157,6 @@ let package = Package(
                 ]),
             ]
         ),
-        .testTarget(
-            name: "RemindersHelperTests",
-            dependencies: ["RemindersHelper"],
-            path: "Tests/RemindersHelperTests"
-        ),
     ]
 )
 ```
@@ -146,7 +180,7 @@ let package = Package(
 </plist>
 ```
 
-- [ ] **Step 4: Write a placeholder `main.swift` and a smoke test that just builds**
+- [ ] **Step 4: Write a placeholder `main.swift`**
 
 `Sources/RemindersHelper/main.swift`:
 
@@ -162,25 +196,13 @@ FileHandle.standardError.write(Data("unknown command\n".utf8))
 exit(2)
 ```
 
-`Tests/RemindersHelperTests/SmokeTests.swift`:
-
-```swift
-import XCTest
-
-final class SmokeTests: XCTestCase {
-    func testPackageCompiles() {
-        XCTAssertTrue(true)
-    }
-}
-```
-
-- [ ] **Step 5: Run `swift test` to verify the package compiles**
+- [ ] **Step 5: Run `swift build` to verify the package compiles**
 
 ```bash
-cd tools/reminders-helper && swift test
+cd tools/reminders-helper && swift build
 ```
 
-Expected: all tests pass; package builds successfully.
+Expected: `Build complete!`.
 
 - [ ] **Step 6: Write `.gitignore` and minimal `README.md`**
 
@@ -229,64 +251,8 @@ git commit -m "feat(reminders): scaffold Swift helper package"
 
 **Files:**
 - Create: `tools/reminders-helper/Sources/RemindersHelper/Models.swift`
-- Create: `tools/reminders-helper/Tests/RemindersHelperTests/ModelsTests.swift`
 
-- [ ] **Step 1: Write the failing test**
-
-`Tests/RemindersHelperTests/ModelsTests.swift`:
-
-```swift
-import XCTest
-@testable import RemindersHelper
-
-final class ModelsTests: XCTestCase {
-    func testReminderRoundTripsThroughJSON() throws {
-        let rem = HelperReminder(
-            uuid: "ABC-123",
-            parentUuid: "PARENT-1",
-            title: "buy milk",
-            notes: "2%",
-            dueDate: "2026-06-01",
-            startDate: nil,
-            isCompleted: false,
-            completionDate: nil,
-            lastModified: "2026-05-30T12:00:00Z"
-        )
-        let data = try JSONEncoder().encode(rem)
-        let back = try JSONDecoder().decode(HelperReminder.self, from: data)
-        XCTAssertEqual(back, rem)
-    }
-
-    func testBatchOpDiscriminatedByOpField() throws {
-        let json = #"""
-        {"op":"create","fields":{"title":"x","parent_uuid":"P1"}}
-        """#.data(using: .utf8)!
-        let op = try JSONDecoder().decode(BatchOp.self, from: json)
-        guard case let .create(fields) = op else {
-            return XCTFail("expected .create")
-        }
-        XCTAssertEqual(fields.title, "x")
-        XCTAssertEqual(fields.parentUuid, "P1")
-    }
-
-    func testBatchResultOmitsLastModifiedForDelete() throws {
-        let res = BatchResult(index: 0, ok: true, uuid: "U", lastModified: nil, error: nil)
-        let json = try JSONEncoder().encode(res)
-        let dict = try JSONSerialization.jsonObject(with: json) as! [String: Any]
-        XCTAssertNil(dict["last_modified"])
-    }
-}
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-```bash
-cd tools/reminders-helper && swift test
-```
-
-Expected: compile failure — `HelperReminder`, `BatchOp`, `BatchResult` undefined.
-
-- [ ] **Step 3: Write `Models.swift`**
+- [ ] **Step 1: Write `Models.swift`**
 
 `Sources/RemindersHelper/Models.swift`:
 
@@ -418,78 +384,32 @@ struct ListOutput: Codable {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 2: Run `swift build` to verify it compiles**
 
 ```bash
-swift test
+cd tools/reminders-helper && swift build
 ```
 
-Expected: 3 tests pass.
+Expected: `Build complete!`.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
 cd ../..
-git add tools/reminders-helper/Sources/RemindersHelper/Models.swift \
-        tools/reminders-helper/Tests/RemindersHelperTests/ModelsTests.swift
+git add tools/reminders-helper/Sources/RemindersHelper/Models.swift
 git commit -m "feat(reminders): codable JSON DTOs for the helper"
 ```
 
 ---
 
-### Task 3: `RemindersClient` protocol + fake for tests
+### Task 3: `RemindersClient` protocol
 
 **Files:**
 - Create: `tools/reminders-helper/Sources/RemindersHelper/RemindersClient.swift`
-- Create: `tools/reminders-helper/Tests/RemindersHelperTests/FakeRemindersClient.swift`
-- Create: `tools/reminders-helper/Tests/RemindersHelperTests/FakeClientTests.swift`
 
-- [ ] **Step 1: Write the failing test**
+> Amendment 2026-05-30: per the testing-strategy note at the top of this plan, the `FakeRemindersClient` and its XCTest exerciser are dropped — the fake existed solely to back Swift unit tests. The protocol itself is still production code (it's the injection seam between `CommandHandler` and `EventKitRemindersClient`).
 
-`Tests/RemindersHelperTests/FakeClientTests.swift`:
-
-```swift
-import XCTest
-@testable import RemindersHelper
-
-final class FakeClientTests: XCTestCase {
-    func testEnsureListIsIdempotent() async throws {
-        let client = FakeRemindersClient()
-        let id1 = try await client.ensureList(name: "Irma")
-        let id2 = try await client.ensureList(name: "Irma")
-        XCTAssertEqual(id1, id2)
-    }
-
-    func testCreateThenListRoundTrip() async throws {
-        let client = FakeRemindersClient()
-        let calId = try await client.ensureList(name: "Irma")
-        let parent = ReminderFields(
-            title: "Project A", notes: nil, dueDate: nil, startDate: nil,
-            isCompleted: false, parentUuid: nil
-        )
-        let r1 = try await client.batch(
-            calendarId: calId,
-            ops: [.create(parent)],
-            continueOnError: false
-        )
-        XCTAssertEqual(r1.count, 1)
-        XCTAssertTrue(r1[0].ok)
-        let listed = try await client.list(calendarId: calId)
-        XCTAssertEqual(listed.count, 1)
-        XCTAssertEqual(listed[0].title, "Project A")
-    }
-}
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-```bash
-swift test
-```
-
-Expected: compile failure — `RemindersClient`, `FakeRemindersClient` undefined.
-
-- [ ] **Step 3: Write the protocol**
+- [ ] **Step 1: Write the protocol**
 
 `Sources/RemindersHelper/RemindersClient.swift`:
 
@@ -523,144 +443,20 @@ protocol RemindersClient {
 }
 ```
 
-- [ ] **Step 4: Write the fake**
-
-`Tests/RemindersHelperTests/FakeRemindersClient.swift`:
-
-```swift
-import Foundation
-@testable import RemindersHelper
-
-final class FakeRemindersClient: RemindersClient, @unchecked Sendable {
-    private var lists: [String: String] = [:]   // name → id
-    private var store: [String: [String: HelperReminder]] = [:]  // calId → uuid → reminder
-    private var counter = 0
-    var status: AccessStatus = .authorized
-    var grantOnRequest: Bool = true
-    private let clock: () -> String
-
-    init(clock: @escaping () -> String = { ISO8601DateFormatter().string(from: Date()) }) {
-        self.clock = clock
-    }
-
-    private func nextUuid(_ prefix: String = "R") -> String {
-        counter += 1
-        return "\(prefix)-\(counter)"
-    }
-
-    func requestAccess() async throws -> Bool {
-        status = grantOnRequest ? .authorized : .denied
-        return grantOnRequest
-    }
-
-    func accessStatus() -> AccessStatus { status }
-
-    func ensureList(name: String) async throws -> String {
-        if let existing = lists[name] { return existing }
-        let id = "cal-\(name)"
-        lists[name] = id
-        store[id] = [:]
-        return id
-    }
-
-    func list(calendarId: String) async throws -> [HelperReminder] {
-        guard let rems = store[calendarId] else {
-            throw RemindersClientError.calendarNotFound(calendarId)
-        }
-        return Array(rems.values).sorted { $0.uuid < $1.uuid }
-    }
-
-    func batch(
-        calendarId: String,
-        ops: [BatchOp],
-        continueOnError: Bool
-    ) async throws -> [BatchResult] {
-        guard var rems = store[calendarId] else {
-            throw RemindersClientError.calendarNotFound(calendarId)
-        }
-        var results: [BatchResult] = []
-        for (idx, op) in ops.enumerated() {
-            do {
-                let res = try applyOne(op, store: &rems, index: idx)
-                results.append(res)
-            } catch {
-                results.append(BatchResult(
-                    index: idx, ok: false, uuid: nil, lastModified: nil,
-                    error: "\(error)"
-                ))
-                if !continueOnError { break }
-            }
-        }
-        store[calendarId] = rems
-        return results
-    }
-
-    private func applyOne(
-        _ op: BatchOp, store: inout [String: HelperReminder], index: Int
-    ) throws -> BatchResult {
-        let now = clock()
-        switch op {
-        case .create(let f):
-            let uuid = nextUuid()
-            let r = HelperReminder(
-                uuid: uuid, parentUuid: f.parentUuid,
-                title: f.title ?? "", notes: f.notes ?? "",
-                dueDate: f.dueDate, startDate: f.startDate,
-                isCompleted: f.isCompleted ?? false,
-                completionDate: (f.isCompleted == true) ? now : nil,
-                lastModified: now
-            )
-            store[uuid] = r
-            return BatchResult(index: index, ok: true, uuid: uuid, lastModified: now, error: nil)
-        case .update(let uuid, let f):
-            guard let cur = store[uuid] else {
-                throw RemindersClientError.reminderNotFound(uuid)
-            }
-            let r = HelperReminder(
-                uuid: cur.uuid,
-                parentUuid: f.parentUuid ?? cur.parentUuid,
-                title: f.title ?? cur.title,
-                notes: f.notes ?? cur.notes,
-                dueDate: f.dueDate ?? cur.dueDate,
-                startDate: f.startDate ?? cur.startDate,
-                isCompleted: f.isCompleted ?? cur.isCompleted,
-                completionDate: (f.isCompleted == true) ? now : cur.completionDate,
-                lastModified: now
-            )
-            store[uuid] = r
-            return BatchResult(index: index, ok: true, uuid: uuid, lastModified: now, error: nil)
-        case .delete(let uuid):
-            guard store.removeValue(forKey: uuid) != nil else {
-                throw RemindersClientError.reminderNotFound(uuid)
-            }
-            return BatchResult(index: index, ok: true, uuid: uuid, lastModified: nil, error: nil)
-        }
-    }
-
-    func deleteCalendar(calendarId: String) async throws -> Bool {
-        guard store.removeValue(forKey: calendarId) != nil else { return false }
-        lists = lists.filter { $0.value != calendarId }
-        return true
-    }
-}
-```
-
-- [ ] **Step 5: Run test to verify it passes**
+- [ ] **Step 2: Run `swift build` to verify it compiles**
 
 ```bash
-swift test
+cd tools/reminders-helper && swift build
 ```
 
-Expected: 2 new tests pass plus existing 4.
+Expected: `Build complete!`.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
 cd ../..
-git add tools/reminders-helper/Sources/RemindersHelper/RemindersClient.swift \
-        tools/reminders-helper/Tests/RemindersHelperTests/FakeRemindersClient.swift \
-        tools/reminders-helper/Tests/RemindersHelperTests/FakeClientTests.swift
-git commit -m "feat(reminders): RemindersClient protocol + in-memory fake"
+git add tools/reminders-helper/Sources/RemindersHelper/RemindersClient.swift
+git commit -m "feat(reminders): RemindersClient protocol"
 ```
 
 ---
@@ -669,79 +465,8 @@ git commit -m "feat(reminders): RemindersClient protocol + in-memory fake"
 
 **Files:**
 - Create: `tools/reminders-helper/Sources/RemindersHelper/CommandHandler.swift`
-- Create: `tools/reminders-helper/Tests/RemindersHelperTests/CommandHandlerTests.swift`
 
-- [ ] **Step 1: Write the failing test**
-
-`Tests/RemindersHelperTests/CommandHandlerTests.swift`:
-
-```swift
-import XCTest
-@testable import RemindersHelper
-
-final class CommandHandlerTests: XCTestCase {
-    func testAccessStatusAuthorized() async throws {
-        let client = FakeRemindersClient()
-        client.status = .authorized
-        let handler = CommandHandler(client: client)
-        let out = try await handler.handle(args: ["access-status"], stdin: Data())
-        let json = try JSONSerialization.jsonObject(with: out) as! [String: Any]
-        XCTAssertEqual(json["status"] as? String, "authorized")
-    }
-
-    func testRequestAccessGranted() async throws {
-        let client = FakeRemindersClient()
-        client.grantOnRequest = true
-        let handler = CommandHandler(client: client)
-        let out = try await handler.handle(args: ["request-access"], stdin: Data())
-        let json = try JSONSerialization.jsonObject(with: out) as! [String: Any]
-        XCTAssertEqual(json["granted"] as? Bool, true)
-    }
-
-    func testRequestAccessDenied() async throws {
-        let client = FakeRemindersClient()
-        client.grantOnRequest = false
-        let handler = CommandHandler(client: client)
-        let out = try await handler.handle(args: ["request-access"], stdin: Data())
-        let json = try JSONSerialization.jsonObject(with: out) as! [String: Any]
-        XCTAssertEqual(json["granted"] as? Bool, false)
-        XCTAssertEqual(json["reason"] as? String, "denied")
-    }
-
-    func testEnsureListReturnsStableId() async throws {
-        let client = FakeRemindersClient()
-        let handler = CommandHandler(client: client)
-        let out1 = try await handler.handle(args: ["ensure-list", "--name", "Irma"], stdin: Data())
-        let out2 = try await handler.handle(args: ["ensure-list", "--name", "Irma"], stdin: Data())
-        let j1 = try JSONSerialization.jsonObject(with: out1) as! [String: Any]
-        let j2 = try JSONSerialization.jsonObject(with: out2) as! [String: Any]
-        XCTAssertEqual(j1["calendar_id"] as? String, j2["calendar_id"] as? String)
-    }
-
-    func testUnknownCommandThrows() async {
-        let client = FakeRemindersClient()
-        let handler = CommandHandler(client: client)
-        do {
-            _ = try await handler.handle(args: ["bogus"], stdin: Data())
-            XCTFail("expected throw")
-        } catch let e as CommandError {
-            XCTAssertEqual(e.code, "unknown_command")
-        } catch {
-            XCTFail("wrong error type")
-        }
-    }
-}
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-```bash
-swift test
-```
-
-Expected: compile failure — `CommandHandler`, `CommandError` undefined.
-
-- [ ] **Step 3: Write `CommandHandler.swift`**
+- [ ] **Step 1: Write `CommandHandler.swift`**
 
 `Sources/RemindersHelper/CommandHandler.swift`:
 
@@ -799,20 +524,19 @@ struct CommandHandler {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 2: Run `swift build` to verify it compiles**
 
 ```bash
-swift test
+cd tools/reminders-helper && swift build
 ```
 
-Expected: all CommandHandlerTests pass.
+Expected: `Build complete!`.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
 cd ../..
-git add tools/reminders-helper/Sources/RemindersHelper/CommandHandler.swift \
-        tools/reminders-helper/Tests/RemindersHelperTests/CommandHandlerTests.swift
+git add tools/reminders-helper/Sources/RemindersHelper/CommandHandler.swift
 git commit -m "feat(reminders): handler for access-status / request-access / ensure-list"
 ```
 
@@ -822,82 +546,8 @@ git commit -m "feat(reminders): handler for access-status / request-access / ens
 
 **Files:**
 - Modify: `tools/reminders-helper/Sources/RemindersHelper/CommandHandler.swift`
-- Modify: `tools/reminders-helper/Tests/RemindersHelperTests/CommandHandlerTests.swift`
 
-- [ ] **Step 1: Add failing tests**
-
-Append to `CommandHandlerTests.swift`:
-
-```swift
-    func testListEmpty() async throws {
-        let client = FakeRemindersClient()
-        let calId = try await client.ensureList(name: "Irma")
-        let handler = CommandHandler(client: client)
-        let out = try await handler.handle(
-            args: ["list", "--calendar-id", calId], stdin: Data()
-        )
-        let parsed = try JSONDecoder().decode(ListOutput.self, from: out)
-        XCTAssertEqual(parsed.reminders.count, 0)
-    }
-
-    func testBatchCreateThenList() async throws {
-        let client = FakeRemindersClient()
-        let calId = try await client.ensureList(name: "Irma")
-        let handler = CommandHandler(client: client)
-        let input = BatchInput(ops: [
-            .create(ReminderFields(
-                title: "Parent", notes: nil, dueDate: nil, startDate: nil,
-                isCompleted: false, parentUuid: nil
-            ))
-        ])
-        let stdin = try JSONEncoder().encode(input)
-        let out = try await handler.handle(
-            args: ["batch", "--calendar-id", calId], stdin: stdin
-        )
-        let parsed = try JSONDecoder().decode(BatchOutput.self, from: out)
-        XCTAssertEqual(parsed.results.count, 1)
-        XCTAssertTrue(parsed.results[0].ok)
-
-        let listOut = try await handler.handle(
-            args: ["list", "--calendar-id", calId], stdin: Data()
-        )
-        let listed = try JSONDecoder().decode(ListOutput.self, from: listOut)
-        XCTAssertEqual(listed.reminders.count, 1)
-        XCTAssertEqual(listed.reminders[0].title, "Parent")
-    }
-
-    func testBatchContinueOnErrorReportsBothResults() async throws {
-        let client = FakeRemindersClient()
-        let calId = try await client.ensureList(name: "Irma")
-        let handler = CommandHandler(client: client)
-        let input = BatchInput(ops: [
-            .delete(uuid: "nonexistent"),
-            .create(ReminderFields(
-                title: "OK", notes: nil, dueDate: nil, startDate: nil,
-                isCompleted: false, parentUuid: nil
-            )),
-        ])
-        let stdin = try JSONEncoder().encode(input)
-        let out = try await handler.handle(
-            args: ["batch", "--calendar-id", calId, "--continue-on-error"],
-            stdin: stdin
-        )
-        let parsed = try JSONDecoder().decode(BatchOutput.self, from: out)
-        XCTAssertEqual(parsed.results.count, 2)
-        XCTAssertFalse(parsed.results[0].ok)
-        XCTAssertTrue(parsed.results[1].ok)
-    }
-```
-
-- [ ] **Step 2: Run tests to verify they fail**
-
-```bash
-cd tools/reminders-helper && swift test
-```
-
-Expected: list/batch tests fail with `unknown command`.
-
-- [ ] **Step 3: Extend `CommandHandler.swift`**
+- [ ] **Step 1: Extend `CommandHandler.swift`**
 
 Replace the `switch cmd` block in `handle(args:stdin:)` with:
 
@@ -939,20 +589,19 @@ Replace the `switch cmd` block in `handle(args:stdin:)` with:
         }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [ ] **Step 2: Run `swift build` to verify it compiles**
 
 ```bash
-swift test
+cd tools/reminders-helper && swift build
 ```
 
-Expected: all CommandHandlerTests pass.
+Expected: `Build complete!`.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
 cd ../..
-git add tools/reminders-helper/Sources/RemindersHelper/CommandHandler.swift \
-        tools/reminders-helper/Tests/RemindersHelperTests/CommandHandlerTests.swift
+git add tools/reminders-helper/Sources/RemindersHelper/CommandHandler.swift
 git commit -m "feat(reminders): list / batch / delete-calendar handlers"
 ```
 
@@ -1147,10 +796,10 @@ final class EventKitRemindersClient: RemindersClient {
 - [ ] **Step 2: Verify it compiles**
 
 ```bash
-cd tools/reminders-helper && swift test
+cd tools/reminders-helper && swift build
 ```
 
-Expected: all existing tests still pass; no new tests, but compilation must succeed.
+Expected: `Build complete!`. Compilation must succeed.
 
 - [ ] **Step 3: Commit**
 
@@ -1276,6 +925,8 @@ git commit -m "feat(reminders): wire CLI and ship universal-binary artifact"
 
 ### Task 8: Python integrations package + Pydantic DTOs
 
+> **Amendment 2026-05-30 (afternoon):** drop `parent_uuid` from both `HelperReminder` and `ReminderFields` (Swift side no longer carries it after the architectural pivot). Add a `CalendarSummary` Pydantic class mirroring the Swift type — `ReminderBridge.list_calendars` (Task 9) returns a list of these.
+
 **Files:**
 - Create: `services/api/src/irma_api/integrations/__init__.py`
 - Create: `services/api/src/irma_api/integrations/reminders/__init__.py`
@@ -1297,6 +948,7 @@ import pytest
 from irma_api.integrations.reminders.models import (
     BatchOp,
     BatchResult,
+    CalendarSummary,
     HelperReminder,
     ReminderFields,
 )
@@ -1305,7 +957,6 @@ from irma_api.integrations.reminders.models import (
 def test_helper_reminder_parses_helper_json() -> None:
     raw = {
         "uuid": "U-1",
-        "parent_uuid": "P-1",
         "title": "buy milk",
         "notes": "",
         "due_date": "2026-06-01",
@@ -1322,9 +973,7 @@ def test_helper_reminder_parses_helper_json() -> None:
 
 
 def test_batch_op_create_serialises_with_op_discriminator() -> None:
-    op = BatchOp.create_op(
-        ReminderFields(title="hello", parent_uuid=None)
-    )
+    op = BatchOp.create_op(ReminderFields(title="hello"))
     dumped = op.model_dump(by_alias=True, exclude_none=True)
     assert dumped == {"op": "create", "fields": {"title": "hello"}}
 
@@ -1345,7 +994,6 @@ def test_helper_reminder_rejects_bad_date() -> None:
     with pytest.raises(ValueError):
         HelperReminder.model_validate({
             "uuid": "U-1",
-            "parent_uuid": None,
             "title": "x",
             "notes": "",
             "due_date": "not-a-date",
@@ -1354,6 +1002,13 @@ def test_helper_reminder_rejects_bad_date() -> None:
             "completion_date": None,
             "last_modified": "2026-05-30T10:00:00Z",
         })
+
+
+def test_calendar_summary_parses() -> None:
+    raw = {"calendar_id": "CAL-1", "title": "Irma · Inbox"}
+    cs = CalendarSummary.model_validate(raw)
+    assert cs.calendar_id == "CAL-1"
+    assert cs.title == "Irma · Inbox"
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -1393,7 +1048,6 @@ class HelperReminder(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     uuid: str
-    parent_uuid: str | None = None
     title: str
     notes: str = ""
     due_date: date | None = None
@@ -1413,7 +1067,15 @@ class ReminderFields(BaseModel):
     due_date: date | None = None
     start_date: date | None = None
     is_completed: bool | None = None
-    parent_uuid: str | None = None
+
+
+class CalendarSummary(BaseModel):
+    """One calendar entry from `helper list-calendars`."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    calendar_id: str
+    title: str
 
 
 class _Create(BaseModel):
@@ -1493,6 +1155,15 @@ git commit -m "feat(reminders): pydantic DTOs for helper JSON surface"
 ---
 
 ### Task 9: `ReminderBridge` (async subprocess wrapper) + fake helper
+
+> **Amendment 2026-05-30 (afternoon):** add two new bridge methods and matching fake-helper commands:
+>
+> - `ReminderBridge.list_calendars(prefix: str) -> list[CalendarSummary]` → calls `helper list-calendars --prefix <s>`.
+> - `ReminderBridge.rename_calendar(calendar_id: str, title: str) -> bool` → calls `helper rename-calendar --calendar-id <s> --title <s>`.
+>
+> Pattern follows existing methods: use `_invoke_json`, parse the result. The fake helper script gains two corresponding handlers (`cmd_list_calendars`, `cmd_rename_calendar`) and an in-memory `lists` dict that supports prefix filtering and rename. Add two new bridge tests: `test_list_calendars_filters_by_prefix` and `test_rename_calendar_updates_title`.
+>
+> Drop `parent_uuid` from every reference in this task (test inputs, fake helper, bridge code) — per Task 8 amendment the field no longer exists.
 
 **Files:**
 - Create: `services/api/src/irma_api/integrations/reminders/bridge.py`
@@ -1992,7 +1663,9 @@ git commit -m "feat(reminders): async bridge to helper binary"
 
 ---
 
-### Task 10: Schema migration for `reminder_uuid` columns
+### Task 10: Schema migration for reminder linkage columns
+
+> **Amendment 2026-05-30 (afternoon):** Task gets `reminder_uuid TEXT` (an `EKReminder.calendarItemIdentifier`). Project gets `reminder_calendar_id TEXT` (an `EKCalendar.calendarIdentifier`), NOT `reminder_uuid` — because Projects map to whole calendars under the new architecture, not to single reminders. Tests and migration logic below already reflect this.
 
 **Files:**
 - Modify: `services/api/src/irma_api/store/migrations.py`
@@ -2021,18 +1694,18 @@ async def test_task_has_reminder_uuid_column(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_project_has_reminder_uuid_column(tmp_path: Path) -> None:
+async def test_project_has_reminder_calendar_id_column(tmp_path: Path) -> None:
     db_path = tmp_path / "test.db"
     async with aiosqlite.connect(db_path) as conn:
         conn.row_factory = aiosqlite.Row
         await ensure_schema(conn)
         cur = await conn.execute("PRAGMA table_info(project)")
         cols = {row[1] for row in await cur.fetchall()}
-    assert "reminder_uuid" in cols
+    assert "reminder_calendar_id" in cols
 
 
 @pytest.mark.asyncio
-async def test_reminder_uuid_migration_is_idempotent(tmp_path: Path) -> None:
+async def test_reminder_columns_migration_is_idempotent(tmp_path: Path) -> None:
     db_path = tmp_path / "test.db"
     async with aiosqlite.connect(db_path) as conn:
         conn.row_factory = aiosqlite.Row
@@ -2040,8 +1713,11 @@ async def test_reminder_uuid_migration_is_idempotent(tmp_path: Path) -> None:
         await ensure_schema(conn)
         await ensure_schema(conn)
         cur = await conn.execute("PRAGMA table_info(task)")
-        cols = {row[1] for row in await cur.fetchall()}
-    assert "reminder_uuid" in cols
+        task_cols = {row[1] for row in await cur.fetchall()}
+        cur = await conn.execute("PRAGMA table_info(project)")
+        proj_cols = {row[1] for row in await cur.fetchall()}
+    assert "reminder_uuid" in task_cols
+    assert "reminder_calendar_id" in proj_cols
 ```
 
 (If `pytest`, `aiosqlite`, `Path`, or `ensure_schema` are not yet imported in the file, add the imports at the top.)
@@ -2049,10 +1725,10 @@ async def test_reminder_uuid_migration_is_idempotent(tmp_path: Path) -> None:
 - [ ] **Step 3: Run to verify it fails**
 
 ```bash
-cd services/api && uv run pytest tests/test_migrations.py -v -k reminder_uuid
+cd services/api && uv run pytest tests/test_migrations.py -v -k reminder
 ```
 
-Expected: AssertionError — column missing.
+Expected: AssertionError — columns missing.
 
 - [ ] **Step 4: Extend `migrations.py`**
 
@@ -2065,11 +1741,11 @@ Add inside `ensure_schema`, immediately before `await conn.commit()` at the end:
             "CREATE UNIQUE INDEX idx_task_reminder_uuid "
             "ON task(reminder_uuid) WHERE reminder_uuid IS NOT NULL"
         )
-    if not await _table_has_column(conn, "project", "reminder_uuid"):
-        await conn.execute("ALTER TABLE project ADD COLUMN reminder_uuid TEXT")
+    if not await _table_has_column(conn, "project", "reminder_calendar_id"):
+        await conn.execute("ALTER TABLE project ADD COLUMN reminder_calendar_id TEXT")
         await conn.execute(
-            "CREATE UNIQUE INDEX idx_project_reminder_uuid "
-            "ON project(reminder_uuid) WHERE reminder_uuid IS NOT NULL"
+            "CREATE UNIQUE INDEX idx_project_reminder_calendar_id "
+            "ON project(reminder_calendar_id) WHERE reminder_calendar_id IS NOT NULL"
         )
 ```
 
@@ -2099,12 +1775,14 @@ Expected: all migration tests pass, including the three new ones.
 cd ../..
 git add services/api/src/irma_api/store/migrations.py \
         services/api/tests/test_migrations.py
-git commit -m "feat(reminders): schema migration for reminder_uuid columns"
+git commit -m "feat(reminders): schema migration for reminder linkage columns"
 ```
 
 ---
 
 ### Task 11: Extend `Task` and `Project` Pydantic models + repos
+
+> **Amendment 2026-05-30 (afternoon):** Task gets `reminder_uuid: str | None` (an `EKReminder.calendarItemIdentifier`). Project gets `reminder_calendar_id: str | None` (an `EKCalendar.calendarIdentifier`) — different column, different repo method (`set_reminder_calendar_id`), different semantics. Task half of this task is unchanged; Project half differs from the original plan.
 
 **Files:**
 - Modify: `services/api/src/irma_api/models/task.py`
@@ -2142,20 +1820,29 @@ async def test_set_reminder_uuid_to_none_clears(task_repo: TaskRepo, project: Pr
 
 ```python
 @pytest.mark.asyncio
-async def test_project_set_reminder_uuid(project_repo: ProjectRepo) -> None:
+async def test_project_set_reminder_calendar_id(project_repo: ProjectRepo) -> None:
     p = await project_repo.create(ProjectCreate(name="P1"))
-    await project_repo.set_reminder_uuid(p.id, "REM-P1")
+    await project_repo.set_reminder_calendar_id(p.id, "CAL-P1")
     refreshed = await project_repo.get(p.id)
-    assert refreshed.reminder_uuid == "REM-P1"
+    assert refreshed.reminder_calendar_id == "CAL-P1"
+
+
+@pytest.mark.asyncio
+async def test_project_set_reminder_calendar_id_to_none_clears(project_repo: ProjectRepo) -> None:
+    p = await project_repo.create(ProjectCreate(name="P1"))
+    await project_repo.set_reminder_calendar_id(p.id, "CAL-X")
+    await project_repo.set_reminder_calendar_id(p.id, None)
+    refreshed = await project_repo.get(p.id)
+    assert refreshed.reminder_calendar_id is None
 ```
 
 - [ ] **Step 3: Run to verify failures**
 
 ```bash
-cd services/api && uv run pytest tests/test_task_repo.py tests/test_project_repo.py -v -k reminder_uuid
+cd services/api && uv run pytest tests/test_task_repo.py tests/test_project_repo.py -v -k "reminder_uuid or reminder_calendar_id"
 ```
 
-Expected: errors — `Task` has no `reminder_uuid` attribute; `set_reminder_uuid` not defined.
+Expected: errors — fields and methods undefined.
 
 - [ ] **Step 4: Extend `models/task.py`**
 
@@ -2181,7 +1868,7 @@ class Project(_ProjectFields):
     id: str
     created_at: datetime
     updated_at: datetime
-    reminder_uuid: str | None = None
+    reminder_calendar_id: str | None = None
 ```
 
 - [ ] **Step 6: Extend `store/repos/task_repo.py`**
@@ -2224,7 +1911,18 @@ Append a new method to `TaskRepo`:
 
 - [ ] **Step 7: Extend `store/repos/project_repo.py`**
 
-Mirror the same pattern: update `_COLUMNS`, `_row_to_project`, the INSERT, and add `set_reminder_uuid`. Project's INSERT becomes:
+Update `_COLUMNS`:
+
+```python
+_COLUMNS = (
+    "id, name, description, status, priority, "
+    "calendar_keywords, goals, target_date, created_at, updated_at, reminder_calendar_id"
+)
+```
+
+Update `_row_to_project` to set `reminder_calendar_id=row["reminder_calendar_id"]`.
+
+Update the INSERT in `create()`:
 
 ```python
             await self._conn.execute(
@@ -2236,13 +1934,17 @@ Mirror the same pattern: update `_COLUMNS`, `_row_to_project`, the INSERT, and a
             )
 ```
 
-And `_COLUMNS`:
+Append a new method to `ProjectRepo`:
 
 ```python
-_COLUMNS = (
-    "id, name, description, status, priority, "
-    "calendar_keywords, goals, target_date, created_at, updated_at, reminder_uuid"
-)
+    async def set_reminder_calendar_id(self, project_id: str, calendar_id: str | None) -> None:
+        cur = await self._conn.execute(
+            "UPDATE project SET reminder_calendar_id = ?, updated_at = ? WHERE id = ?",
+            (calendar_id, _now().isoformat(), project_id),
+        )
+        await self._conn.commit()
+        if cur.rowcount == 0:
+            raise NotFoundError("project", project_id)
 ```
 
 - [ ] **Step 8: Run tests to verify they pass**
@@ -2251,7 +1953,7 @@ _COLUMNS = (
 uv run pytest tests/test_task_repo.py tests/test_project_repo.py tests/test_routers_projects.py tests/test_routers_tasks.py -v
 ```
 
-Expected: all pass — including new reminder_uuid tests and unchanged existing ones.
+Expected: all pass.
 
 - [ ] **Step 9: Commit**
 
@@ -2261,213 +1963,66 @@ git add services/api/src/irma_api/models \
         services/api/src/irma_api/store/repos \
         services/api/tests/test_task_repo.py \
         services/api/tests/test_project_repo.py
-git commit -m "feat(reminders): persist reminder_uuid on Task and Project rows"
+git commit -m "feat(reminders): persist linkage columns on Task and Project rows"
 ```
 
 ---
 
-### Task 12: Pure sync planner — `plan(irma_state, helper_state) -> SyncPlan`
+### Task 12: Pure sync planner — `plan(irma, helper_calendars) -> SyncPlan`
+
+> **Amendment 2026-05-30 (afternoon):** wholesale rewrite. Under the new architecture, projects map to whole `EKCalendar`s, not to parent reminders. The planner now emits *both* calendar-level operations (create/rename/delete) and per-reminder ones, plus structural operations on Irma's side (unlink a project, rename a project, move a task between projects). The helper-side input is no longer a flat reminder list — it's a list of `HelperCalendarSnap`, one per `Irma · *` calendar discovered on the phone.
 
 **Files:**
 - Create: `services/api/src/irma_api/integrations/reminders/planner.py`
 - Create: `services/api/tests/integrations/test_reminders_planner.py`
 
-- [ ] **Step 1: Write the failing test (covers each branch)**
+### Algorithm overview (read this before writing code)
 
-`services/api/tests/integrations/test_reminders_planner.py`:
+The planner is a pure function:
 
 ```python
-from __future__ import annotations
-
-from datetime import UTC, date, datetime, timedelta
-
-from irma_api.integrations.reminders.models import HelperReminder
-from irma_api.integrations.reminders.planner import (
-    IrmaProjectSnap,
-    IrmaSnapshot,
-    IrmaTaskSnap,
-    plan,
-)
-from irma_api.models.project import ProjectStatus
-from irma_api.models.task import TaskStatus
-
-T0 = datetime(2026, 5, 30, 12, 0, 0, tzinfo=UTC)
-T1 = T0 + timedelta(minutes=1)
-T2 = T0 + timedelta(minutes=2)
-
-
-def _proj(
-    *, pid: str, name: str = "P", uuid: str | None = None,
-    status: ProjectStatus = ProjectStatus.ACTIVE, updated: datetime = T0,
-) -> IrmaProjectSnap:
-    return IrmaProjectSnap(
-        id=pid, name=name, status=status, reminder_uuid=uuid, updated_at=updated
-    )
-
-
-def _task(
-    *, tid: str, pid: str, title: str = "t",
-    status: TaskStatus = TaskStatus.TODO, uuid: str | None = None,
-    updated: datetime = T0, due: date | None = None,
-    sched: date | None = None, notes: str = "",
-) -> IrmaTaskSnap:
-    return IrmaTaskSnap(
-        id=tid, project_id=pid, title=title, status=status,
-        reminder_uuid=uuid, updated_at=updated,
-        due_date=due, scheduled_for=sched, notes=notes,
-    )
-
-
-def _rem(
-    *, uuid: str, parent: str | None = None, title: str = "r",
-    completed: bool = False, modified: datetime = T0,
-    due: date | None = None, start: date | None = None, notes: str = "",
-) -> HelperReminder:
-    return HelperReminder(
-        uuid=uuid, parent_uuid=parent, title=title, notes=notes,
-        due_date=due, start_date=start, is_completed=completed,
-        completion_date=None, last_modified=modified,
-    )
-
-
-def test_irma_only_project_yields_create_remote() -> None:
-    snap = IrmaSnapshot(projects=[_proj(pid="P1", name="Alpha")], tasks=[])
-    p = plan(snap, helper_reminders=[], inbox_project_id=None)
-    assert len(p.creates_on_reminders) == 1
-    op = p.creates_on_reminders[0]
-    assert op.irma_id == "P1"
-    assert op.fields.title == "Alpha"
-    assert op.fields.parent_uuid is None
-    assert p.creates_on_irma == []
-
-
-def test_irma_only_task_with_synced_parent_creates_subtask() -> None:
-    snap = IrmaSnapshot(
-        projects=[_proj(pid="P1", uuid="REM-P1")],
-        tasks=[_task(tid="T1", pid="P1", title="hello")],
-    )
-    p = plan(snap, helper_reminders=[
-        _rem(uuid="REM-P1", title="P", parent=None)
-    ], inbox_project_id=None)
-    assert len(p.creates_on_reminders) == 1
-    op = p.creates_on_reminders[0]
-    assert op.fields.parent_uuid == "REM-P1"
-
-
-def test_remote_orphan_creates_task_in_inbox() -> None:
-    snap = IrmaSnapshot(
-        projects=[_proj(pid="INBOX", uuid="REM-INBOX")],
-        tasks=[],
-    )
-    rem = _rem(uuid="REM-X", parent=None, title="capture")
-    p = plan(snap, helper_reminders=[
-        _rem(uuid="REM-INBOX", title="Inbox"), rem
-    ], inbox_project_id="INBOX")
-    assert len(p.creates_on_irma) == 1
-    create = p.creates_on_irma[0]
-    assert create.project_id == "INBOX"
-    assert create.reminder_uuid == "REM-X"
-    assert create.title == "capture"
-
-
-def test_remote_orphan_skipped_when_no_inbox() -> None:
-    snap = IrmaSnapshot(projects=[], tasks=[])
-    rem = _rem(uuid="REM-X", parent=None)
-    p = plan(snap, helper_reminders=[rem], inbox_project_id=None)
-    assert p.creates_on_irma == []
-
-
-def test_remote_newer_patches_irma() -> None:
-    snap = IrmaSnapshot(
-        projects=[_proj(pid="P1", uuid="REM-P1")],
-        tasks=[_task(tid="T1", pid="P1", uuid="REM-T1", updated=T0, title="old")],
-    )
-    rems = [
-        _rem(uuid="REM-P1"),
-        _rem(uuid="REM-T1", parent="REM-P1", title="new", modified=T1),
-    ]
-    p = plan(snap, helper_reminders=rems, inbox_project_id=None)
-    assert len(p.patches_on_irma) == 1
-    patch = p.patches_on_irma[0]
-    assert patch.irma_id == "T1"
-    assert patch.title == "new"
-
-
-def test_irma_newer_patches_reminders() -> None:
-    snap = IrmaSnapshot(
-        projects=[_proj(pid="P1", uuid="REM-P1")],
-        tasks=[_task(tid="T1", pid="P1", uuid="REM-T1", updated=T2, title="new")],
-    )
-    rems = [
-        _rem(uuid="REM-P1"),
-        _rem(uuid="REM-T1", parent="REM-P1", title="old", modified=T1),
-    ]
-    p = plan(snap, helper_reminders=rems, inbox_project_id=None)
-    assert len(p.patches_on_reminders) == 1
-    patch = p.patches_on_reminders[0]
-    assert patch.uuid == "REM-T1"
-    assert patch.fields.title == "new"
-
-
-def test_archived_project_cascade_deletes_reminders() -> None:
-    snap = IrmaSnapshot(
-        projects=[_proj(pid="P1", uuid="REM-P1", status=ProjectStatus.ARCHIVED)],
-        tasks=[_task(tid="T1", pid="P1", uuid="REM-T1")],
-    )
-    rems = [
-        _rem(uuid="REM-P1"),
-        _rem(uuid="REM-T1", parent="REM-P1"),
-    ]
-    p = plan(snap, helper_reminders=rems, inbox_project_id=None)
-    deleted = {d.uuid for d in p.deletes_on_reminders}
-    assert deleted == {"REM-P1", "REM-T1"}
-
-
-def test_paused_project_title_prefixed() -> None:
-    snap = IrmaSnapshot(
-        projects=[_proj(pid="P1", name="Alpha", status=ProjectStatus.PAUSED)],
-        tasks=[],
-    )
-    p = plan(snap, helper_reminders=[], inbox_project_id=None)
-    assert p.creates_on_reminders[0].fields.title == "⏸ Alpha"
-
-
-def test_remote_only_task_with_known_parent_creates_in_project() -> None:
-    snap = IrmaSnapshot(
-        projects=[_proj(pid="P1", uuid="REM-P1")],
-        tasks=[],
-    )
-    rems = [
-        _rem(uuid="REM-P1"),
-        _rem(uuid="REM-X", parent="REM-P1", title="phone-task"),
-    ]
-    p = plan(snap, helper_reminders=rems, inbox_project_id=None)
-    assert len(p.creates_on_irma) == 1
-    assert p.creates_on_irma[0].project_id == "P1"
-    assert p.creates_on_irma[0].title == "phone-task"
-
-
-def test_irma_only_deletion_signal_when_uuid_present_but_reminder_gone() -> None:
-    snap = IrmaSnapshot(
-        projects=[_proj(pid="P1", uuid="REM-P1")],
-        tasks=[_task(tid="T1", pid="P1", uuid="REM-DELETED")],
-    )
-    rems = [_rem(uuid="REM-P1")]
-    p = plan(snap, helper_reminders=rems, inbox_project_id=None)
-    assert p.deletes_on_irma == ["T1"]
+def plan(
+    irma: IrmaSnapshot,
+    helper_calendars: list[HelperCalendarSnap],
+    *,
+    calendar_prefix: str = "Irma · ",
+    paused_prefix: str = "⏸ ",
+) -> SyncPlan:
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+Two passes:
 
-```bash
-cd services/api && uv run pytest tests/integrations/test_reminders_planner.py -v
-```
+**Pass 1 — calendar reconcile.** For each `Project` in Irma:
+1. **Archived project + linked calendar exists on phone** → emit `DeleteCalendar(calendar_id)`. Skip its reminders.
+2. **Active/paused project, no `reminder_calendar_id` set** → emit `CreateCalendar(project.id, expected_title)`. Defer this project's reminder sync to the next cycle (the calendar id will be set after the apply).
+3. **Active/paused project, `reminder_calendar_id` set but calendar not on phone** → user deleted the list; emit `CreateCalendar(project.id, expected_title)` to recreate. Defer reminder sync.
+4. **Active/paused project, calendar exists on phone**:
+   - If `phone_title` does **not** start with `calendar_prefix` → user dropped the prefix to detach. Emit `UnlinkProject(project.id)`. Skip the calendar's reminders this cycle.
+   - Else strip `calendar_prefix` and any leading `paused_prefix` → `phone_inner_name`.
+     - If `phone_inner_name != project.name` → emit `RenameProject(project.id, phone_inner_name)` (phone wins on the project's user-visible name).
+     - Compute `expected_title = calendar_prefix + (paused_prefix if paused else "") + new_or_existing_name`.
+     - If `phone_title != expected_title` → emit `RenameCalendar(calendar_id, expected_title)` (Irma authoritative for pause prefix and for normalization).
+     - Then sync this calendar's reminders (pass 2).
 
-Expected: import error — `planner` module does not exist.
+Calendars on the phone that don't match any Project's `reminder_calendar_id` are **ignored entirely** — including their reminders. (Per spec: "to adopt, create the matching Project in Irma; next sync links it.")
 
-- [ ] **Step 3: Write `planner.py`**
+**Pass 2 — reminder reconcile.** For each linked `(Project, calendar)` pair from pass 1 (those not archived/unlinked/awaiting-create):
 
-`services/api/src/irma_api/integrations/reminders/planner.py`:
+Iterate through tasks where `task.project_id == project.id`:
+- `task.reminder_uuid is None` → emit `CreateRemoteReminder(task.id, calendar.id, fields_from_task)`.
+- `task.reminder_uuid` present and **found in this calendar** → compare timestamps:
+  - `helper_rem.last_modified > task.updated_at` → emit `PatchLocalTask(task.id, fields where helper differs)`.
+  - Else → if any field actually differs, emit `PatchRemoteReminder(task.id, calendar.id, reminder_uuid, fields where Irma differs)`.
+- `task.reminder_uuid` present and **NOT in this calendar but found in another linked calendar** (where that other calendar maps to a different Project) → emit `MoveTask(task.id, dest_project.id)`. Reminder-content patches deferred to the next sync.
+- `task.reminder_uuid` present and **not in any helper calendar** → phone deleted it. Emit `DeleteLocalTask(task.id)`.
+
+Iterate through this calendar's reminders:
+- If `reminder.uuid` is already linked to some Irma task: handled above (skip).
+- Else: phone-created reminder in this calendar. Emit `CreateLocalTask(project.id, reminder.uuid, fields)`.
+
+### Dataclasses (the interface)
+
+`services/api/src/irma_api/integrations/reminders/planner.py` starts with these definitions — the implementer doesn't need to redesign them:
 
 ```python
 """Pure-function reconciliation planner. No I/O, no async, no clock.
@@ -2475,6 +2030,9 @@ Expected: import error — `planner` module does not exist.
 The sync engine calls `plan(...)` between the snapshot and apply passes.
 Output is a SyncPlan — a description of mutations on both sides — that
 the engine then executes idempotently.
+
+Architecture: Projects map 1:1 to EKCalendars named "Irma · <name>";
+Tasks are flat reminders within their project's calendar.
 """
 
 from __future__ import annotations
@@ -2483,14 +2041,19 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 
 from irma_api.integrations.reminders.models import (
-    BatchOp,
     HelperReminder,
     ReminderFields,
 )
 from irma_api.models.project import ProjectStatus
 from irma_api.models.task import TaskStatus
 
-_PAUSED_PREFIX = "⏸ "
+_DEFAULT_CALENDAR_PREFIX = "Irma · "
+_DEFAULT_PAUSED_PREFIX = "⏸ "
+
+
+# ---------------------------------------------------------------------------
+# Inputs
+# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -2498,7 +2061,7 @@ class IrmaProjectSnap:
     id: str
     name: str
     status: ProjectStatus
-    reminder_uuid: str | None
+    reminder_calendar_id: str | None
     updated_at: datetime
 
 
@@ -2522,31 +2085,79 @@ class IrmaSnapshot:
 
 
 @dataclass(frozen=True)
-class RemoteCreate:
-    """A reminder we want to create on the Reminders side."""
+class HelperCalendarSnap:
+    """One Irma-prefixed calendar on the phone + its reminders."""
 
-    irma_id: str
-    kind: str           # "project" | "task"
+    calendar_id: str
+    title: str
+    reminders: list[HelperReminder]
+
+
+# ---------------------------------------------------------------------------
+# Calendar-level operations
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class CreateCalendar:
+    irma_project_id: str
+    title: str
+
+
+@dataclass(frozen=True)
+class RenameCalendar:
+    calendar_id: str
+    new_title: str
+
+
+@dataclass(frozen=True)
+class DeleteCalendar:
+    calendar_id: str
+
+
+@dataclass(frozen=True)
+class UnlinkProject:
+    """Clear `Project.reminder_calendar_id` without touching the phone calendar."""
+
+    irma_project_id: str
+
+
+@dataclass(frozen=True)
+class RenameProject:
+    """Phone-side calendar rename propagated back to `Project.name`."""
+
+    irma_project_id: str
+    new_name: str
+
+
+# ---------------------------------------------------------------------------
+# Reminder-level operations (remote = Reminders side, local = Irma DB)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class CreateRemoteReminder:
+    irma_task_id: str
+    calendar_id: str
     fields: ReminderFields
 
 
 @dataclass(frozen=True)
-class RemotePatch:
-    uuid: str
+class PatchRemoteReminder:
+    irma_task_id: str
+    calendar_id: str
+    reminder_uuid: str
     fields: ReminderFields
-    irma_id: str
-    kind: str
 
 
 @dataclass(frozen=True)
-class RemoteDelete:
-    uuid: str
+class DeleteRemoteReminder:
+    calendar_id: str
+    reminder_uuid: str
 
 
 @dataclass(frozen=True)
-class IrmaCreate:
-    """A task we want to create on the Irma side from a phone reminder."""
-
+class CreateLocalTask:
     project_id: str
     reminder_uuid: str
     title: str
@@ -2557,249 +2168,367 @@ class IrmaCreate:
 
 
 @dataclass(frozen=True)
-class IrmaPatch:
-    irma_id: str          # Task or Project id in Irma
-    kind: str             # "task" | "project"
-    title: str | None
-    notes: str | None
-    due_date: date | None
-    scheduled_for: date | None
-    is_completed: bool | None
+class PatchLocalTask:
+    task_id: str
+    title: str | None = None
+    notes: str | None = None
+    due_date: date | None = None
+    scheduled_for: date | None = None
+    is_completed: bool | None = None
+
+
+@dataclass(frozen=True)
+class DeleteLocalTask:
+    task_id: str
+
+
+@dataclass(frozen=True)
+class MoveTask:
+    """Task moved between Irma projects because its reminder lives in a different calendar now."""
+
+    task_id: str
+    new_project_id: str
+
+
+# ---------------------------------------------------------------------------
+# Output
+# ---------------------------------------------------------------------------
 
 
 @dataclass
 class SyncPlan:
-    creates_on_reminders: list[RemoteCreate] = field(default_factory=list)
-    patches_on_reminders: list[RemotePatch] = field(default_factory=list)
-    deletes_on_reminders: list[RemoteDelete] = field(default_factory=list)
-    creates_on_irma: list[IrmaCreate] = field(default_factory=list)
-    patches_on_irma: list[IrmaPatch] = field(default_factory=list)
-    deletes_on_irma: list[str] = field(default_factory=list)
+    create_calendars: list[CreateCalendar] = field(default_factory=list)
+    rename_calendars: list[RenameCalendar] = field(default_factory=list)
+    delete_calendars: list[DeleteCalendar] = field(default_factory=list)
+    unlink_projects: list[UnlinkProject] = field(default_factory=list)
+    rename_projects: list[RenameProject] = field(default_factory=list)
+
+    create_remote_reminders: list[CreateRemoteReminder] = field(default_factory=list)
+    patch_remote_reminders: list[PatchRemoteReminder] = field(default_factory=list)
+    delete_remote_reminders: list[DeleteRemoteReminder] = field(default_factory=list)
+
+    create_local_tasks: list[CreateLocalTask] = field(default_factory=list)
+    patch_local_tasks: list[PatchLocalTask] = field(default_factory=list)
+    delete_local_tasks: list[DeleteLocalTask] = field(default_factory=list)
+
+    move_tasks: list[MoveTask] = field(default_factory=list)
 
 
-def _project_remote_title(p: IrmaProjectSnap) -> str:
-    if p.status is ProjectStatus.PAUSED:
-        return f"{_PAUSED_PREFIX}{p.name}"
-    return p.name
+# ---------------------------------------------------------------------------
+# Public entrypoint (implement this)
+# ---------------------------------------------------------------------------
 
 
 def plan(
     irma: IrmaSnapshot,
-    helper_reminders: list[HelperReminder],
+    helper_calendars: list[HelperCalendarSnap],
     *,
-    inbox_project_id: str | None,
+    calendar_prefix: str = _DEFAULT_CALENDAR_PREFIX,
+    paused_prefix: str = _DEFAULT_PAUSED_PREFIX,
 ) -> SyncPlan:
-    """Compute the reconciliation plan."""
-
-    sp = SyncPlan()
-    rem_by_uuid: dict[str, HelperReminder] = {r.uuid: r for r in helper_reminders}
-    irma_proj_by_uuid: dict[str, IrmaProjectSnap] = {
-        p.reminder_uuid: p for p in irma.projects if p.reminder_uuid is not None
-    }
-    irma_task_by_uuid: dict[str, IrmaTaskSnap] = {
-        t.reminder_uuid: t for t in irma.tasks if t.reminder_uuid is not None
-    }
-
-    # --- Projects --------------------------------------------------------
-    for proj in irma.projects:
-        if proj.status is ProjectStatus.ARCHIVED:
-            if proj.reminder_uuid and proj.reminder_uuid in rem_by_uuid:
-                # delete parent + child reminders that hang off it
-                sp.deletes_on_reminders.append(RemoteDelete(uuid=proj.reminder_uuid))
-                for r in helper_reminders:
-                    if r.parent_uuid == proj.reminder_uuid:
-                        sp.deletes_on_reminders.append(RemoteDelete(uuid=r.uuid))
-            continue
-
-        if proj.reminder_uuid is None:
-            sp.creates_on_reminders.append(
-                RemoteCreate(
-                    irma_id=proj.id,
-                    kind="project",
-                    fields=ReminderFields(
-                        title=_project_remote_title(proj), parent_uuid=None
-                    ),
-                )
-            )
-            continue
-
-        rem = rem_by_uuid.get(proj.reminder_uuid)
-        if rem is None:
-            # uuid set but reminder is gone → forget the linkage; next loop will
-            # create a fresh one. Modeled as an Irma patch clearing the uuid
-            # via a planner-side delete signal would be cleaner; for now the
-            # service handles this by passing `reminder_uuid=None` snapshots
-            # when the uuid is missing on the remote side.
-            sp.creates_on_reminders.append(
-                RemoteCreate(
-                    irma_id=proj.id,
-                    kind="project",
-                    fields=ReminderFields(
-                        title=_project_remote_title(proj), parent_uuid=None
-                    ),
-                )
-            )
-            continue
-
-        target_title = _project_remote_title(proj)
-        remote_newer = rem.last_modified > proj.updated_at
-        if remote_newer and rem.title != target_title and rem.title.removeprefix(_PAUSED_PREFIX) != proj.name:
-            sp.patches_on_irma.append(
-                IrmaPatch(
-                    irma_id=proj.id, kind="project",
-                    title=rem.title.removeprefix(_PAUSED_PREFIX),
-                    notes=None, due_date=None, scheduled_for=None,
-                    is_completed=None,
-                )
-            )
-        elif not remote_newer and rem.title != target_title:
-            sp.patches_on_reminders.append(
-                RemotePatch(
-                    uuid=rem.uuid, irma_id=proj.id, kind="project",
-                    fields=ReminderFields(title=target_title),
-                )
-            )
-
-    # --- Tasks (Irma side) ----------------------------------------------
-    for task in irma.tasks:
-        parent = next(
-            (p for p in irma.projects if p.id == task.project_id), None
-        )
-        if parent is None or parent.status is ProjectStatus.ARCHIVED:
-            continue
-        parent_uuid = parent.reminder_uuid
-
-        if task.reminder_uuid is None:
-            if parent_uuid is None:
-                # parent not yet synced; skip for now — the project create
-                # this same cycle gives the next cycle a parent uuid
-                continue
-            sp.creates_on_reminders.append(
-                RemoteCreate(
-                    irma_id=task.id,
-                    kind="task",
-                    fields=ReminderFields(
-                        title=task.title,
-                        notes=task.notes,
-                        due_date=task.due_date,
-                        start_date=task.scheduled_for,
-                        is_completed=(task.status is TaskStatus.DONE),
-                        parent_uuid=parent_uuid,
-                    ),
-                )
-            )
-            continue
-
-        rem = rem_by_uuid.get(task.reminder_uuid)
-        if rem is None:
-            sp.deletes_on_irma.append(task.id)
-            continue
-
-        remote_newer = rem.last_modified > task.updated_at
-        if remote_newer:
-            sp.patches_on_irma.append(
-                IrmaPatch(
-                    irma_id=task.id, kind="task",
-                    title=rem.title if rem.title != task.title else None,
-                    notes=rem.notes if rem.notes != task.notes else None,
-                    due_date=rem.due_date if rem.due_date != task.due_date else None,
-                    scheduled_for=(
-                        rem.start_date if rem.start_date != task.scheduled_for else None
-                    ),
-                    is_completed=(
-                        rem.is_completed
-                        if rem.is_completed != (task.status is TaskStatus.DONE)
-                        else None
-                    ),
-                )
-            )
-        else:
-            patch_fields = ReminderFields(
-                title=task.title if rem.title != task.title else None,
-                notes=task.notes if rem.notes != task.notes else None,
-                due_date=task.due_date if rem.due_date != task.due_date else None,
-                start_date=(
-                    task.scheduled_for if rem.start_date != task.scheduled_for else None
-                ),
-                is_completed=(
-                    (task.status is TaskStatus.DONE)
-                    if rem.is_completed != (task.status is TaskStatus.DONE)
-                    else None
-                ),
-                parent_uuid=(
-                    parent_uuid if parent_uuid and rem.parent_uuid != parent_uuid else None
-                ),
-            )
-            if any(
-                v is not None
-                for v in patch_fields.model_dump(exclude_none=True).values()
-            ):
-                sp.patches_on_reminders.append(
-                    RemotePatch(
-                        uuid=rem.uuid, irma_id=task.id, kind="task",
-                        fields=patch_fields,
-                    )
-                )
-
-    # --- Reminders that have no Irma counterpart ------------------------
-    for rem in helper_reminders:
-        if rem.uuid in irma_proj_by_uuid or rem.uuid in irma_task_by_uuid:
-            continue
-        # Subtask of a known project → create as Task in that project
-        if rem.parent_uuid and rem.parent_uuid in irma_proj_by_uuid:
-            proj = irma_proj_by_uuid[rem.parent_uuid]
-            sp.creates_on_irma.append(
-                IrmaCreate(
-                    project_id=proj.id,
-                    reminder_uuid=rem.uuid,
-                    title=rem.title,
-                    notes=rem.notes,
-                    due_date=rem.due_date,
-                    scheduled_for=rem.start_date,
-                    is_completed=rem.is_completed,
-                )
-            )
-            continue
-        # Orphan at top level → Inbox project, if configured
-        if rem.parent_uuid is None and inbox_project_id is not None:
-            sp.creates_on_irma.append(
-                IrmaCreate(
-                    project_id=inbox_project_id,
-                    reminder_uuid=rem.uuid,
-                    title=rem.title,
-                    notes=rem.notes,
-                    due_date=rem.due_date,
-                    scheduled_for=rem.start_date,
-                    is_completed=rem.is_completed,
-                )
-            )
-
-    return sp
-
-
-def plan_to_batch_ops(plan: SyncPlan, *, project_uuid_by_id: dict[str, str]) -> list[BatchOp]:
-    """Flatten a SyncPlan into ordered batch ops for `bridge.batch()`.
-
-    Order: project creates → task creates → all patches → deletes.
-    Task creates may reference a newly-minted project uuid; the caller
-    populates `project_uuid_by_id` with uuids from the prior create
-    results before flattening the task half of the plan. The planner
-    itself doesn't see those uuids, so we re-target here.
-    """
-
-    ops: list[BatchOp] = []
-    for c in plan.creates_on_reminders:
-        if c.kind == "task" and c.fields.parent_uuid is None:
-            # Should not happen — fields.parent_uuid is set at plan time —
-            # but guard anyway.
-            continue
-        ops.append(BatchOp.create_op(c.fields))
-    for p in plan.patches_on_reminders:
-        ops.append(BatchOp.update_op(p.uuid, p.fields))
-    for d in plan.deletes_on_reminders:
-        ops.append(BatchOp.delete_op(d.uuid))
-    return ops
+    """See docstring at top of module + the algorithm overview in the plan."""
+    raise NotImplementedError  # remove once implemented
 ```
+
+- [ ] **Step 1: Write the failing tests (cover each algorithm branch)**
+
+`services/api/tests/integrations/test_reminders_planner.py`:
+
+```python
+from __future__ import annotations
+
+from datetime import UTC, date, datetime, timedelta
+
+from irma_api.integrations.reminders.models import HelperReminder
+from irma_api.integrations.reminders.planner import (
+    HelperCalendarSnap,
+    IrmaProjectSnap,
+    IrmaSnapshot,
+    IrmaTaskSnap,
+    plan,
+)
+from irma_api.models.project import ProjectStatus
+from irma_api.models.task import TaskStatus
+
+T0 = datetime(2026, 5, 30, 12, 0, 0, tzinfo=UTC)
+T1 = T0 + timedelta(minutes=1)
+T2 = T0 + timedelta(minutes=2)
+
+
+def _proj(
+    *, pid: str, name: str = "Alpha",
+    cal_id: str | None = None,
+    status: ProjectStatus = ProjectStatus.ACTIVE,
+    updated: datetime = T0,
+) -> IrmaProjectSnap:
+    return IrmaProjectSnap(
+        id=pid, name=name, status=status,
+        reminder_calendar_id=cal_id, updated_at=updated,
+    )
+
+
+def _task(
+    *, tid: str, pid: str, title: str = "t",
+    status: TaskStatus = TaskStatus.TODO,
+    uuid: str | None = None, updated: datetime = T0,
+    due: date | None = None, sched: date | None = None,
+    notes: str = "",
+) -> IrmaTaskSnap:
+    return IrmaTaskSnap(
+        id=tid, project_id=pid, title=title, status=status,
+        reminder_uuid=uuid, updated_at=updated,
+        due_date=due, scheduled_for=sched, notes=notes,
+    )
+
+
+def _rem(
+    *, uuid: str, title: str = "r",
+    completed: bool = False, modified: datetime = T0,
+    due: date | None = None, start: date | None = None,
+    notes: str = "",
+) -> HelperReminder:
+    return HelperReminder(
+        uuid=uuid, title=title, notes=notes,
+        due_date=due, start_date=start,
+        is_completed=completed, completion_date=None,
+        last_modified=modified,
+    )
+
+
+def _cal(
+    *, cid: str, title: str, reminders: list[HelperReminder] | None = None,
+) -> HelperCalendarSnap:
+    return HelperCalendarSnap(
+        calendar_id=cid, title=title, reminders=reminders or [],
+    )
+
+
+# --- Calendar-level reconcile -------------------------------------------
+
+
+def test_active_project_with_no_calendar_creates_one() -> None:
+    snap = IrmaSnapshot(projects=[_proj(pid="P1", name="Alpha")], tasks=[])
+    p = plan(snap, helper_calendars=[])
+    assert len(p.create_calendars) == 1
+    op = p.create_calendars[0]
+    assert op.irma_project_id == "P1"
+    assert op.title == "Irma · Alpha"
+    # No reminder ops while calendar doesn't yet exist
+    assert p.create_remote_reminders == []
+
+
+def test_archived_project_with_linked_calendar_deletes_it() -> None:
+    snap = IrmaSnapshot(
+        projects=[_proj(pid="P1", cal_id="CAL-A", status=ProjectStatus.ARCHIVED)],
+        tasks=[],
+    )
+    cals = [_cal(cid="CAL-A", title="Irma · Alpha")]
+    p = plan(snap, helper_calendars=cals)
+    assert len(p.delete_calendars) == 1
+    assert p.delete_calendars[0].calendar_id == "CAL-A"
+
+
+def test_paused_project_renames_calendar_to_add_prefix() -> None:
+    snap = IrmaSnapshot(
+        projects=[_proj(pid="P1", name="Alpha", cal_id="CAL-A",
+                        status=ProjectStatus.PAUSED)],
+        tasks=[],
+    )
+    cals = [_cal(cid="CAL-A", title="Irma · Alpha")]
+    p = plan(snap, helper_calendars=cals)
+    assert len(p.rename_calendars) == 1
+    assert p.rename_calendars[0].new_title == "Irma · ⏸ Alpha"
+    assert p.rename_projects == []
+
+
+def test_phone_renamed_calendar_renames_project() -> None:
+    snap = IrmaSnapshot(
+        projects=[_proj(pid="P1", name="Alpha", cal_id="CAL-A")],
+        tasks=[],
+    )
+    cals = [_cal(cid="CAL-A", title="Irma · Beta")]
+    p = plan(snap, helper_calendars=cals)
+    assert len(p.rename_projects) == 1
+    assert p.rename_projects[0].irma_project_id == "P1"
+    assert p.rename_projects[0].new_name == "Beta"
+    # After the project rename, expected_title = "Irma · Beta" already matches phone
+    assert p.rename_calendars == []
+
+
+def test_phone_dropped_prefix_unlinks_project() -> None:
+    snap = IrmaSnapshot(
+        projects=[_proj(pid="P1", name="Alpha", cal_id="CAL-A")],
+        tasks=[_task(tid="T1", pid="P1", uuid="REM-T1")],
+    )
+    # Phone title lost the prefix → unlinked. Reminders in it must NOT be synced.
+    cals = [
+        _cal(cid="CAL-A", title="Custom Name",
+             reminders=[_rem(uuid="REM-T1", title="x")]),
+    ]
+    p = plan(snap, helper_calendars=cals)
+    assert len(p.unlink_projects) == 1
+    assert p.unlink_projects[0].irma_project_id == "P1"
+    assert p.patch_remote_reminders == []
+    assert p.patch_local_tasks == []
+
+
+def test_phone_deleted_calendar_recreates_it_for_active_project() -> None:
+    snap = IrmaSnapshot(
+        projects=[_proj(pid="P1", name="Alpha", cal_id="CAL-A")],
+        tasks=[],
+    )
+    p = plan(snap, helper_calendars=[])  # phone has none
+    assert len(p.create_calendars) == 1
+    assert p.create_calendars[0].title == "Irma · Alpha"
+
+
+def test_phone_calendar_without_matching_project_is_ignored() -> None:
+    snap = IrmaSnapshot(projects=[], tasks=[])
+    cals = [
+        _cal(cid="CAL-X", title="Irma · Stranger",
+             reminders=[_rem(uuid="REM-1", title="ignored")]),
+    ]
+    p = plan(snap, helper_calendars=cals)
+    assert p.create_calendars == []
+    assert p.create_local_tasks == []
+    assert p.delete_calendars == []
+
+
+# --- Reminder-level reconcile -------------------------------------------
+
+
+def test_irma_only_task_with_linked_calendar_creates_remote_reminder() -> None:
+    snap = IrmaSnapshot(
+        projects=[_proj(pid="P1", name="Alpha", cal_id="CAL-A")],
+        tasks=[_task(tid="T1", pid="P1", title="hello")],
+    )
+    cals = [_cal(cid="CAL-A", title="Irma · Alpha")]
+    p = plan(snap, helper_calendars=cals)
+    assert len(p.create_remote_reminders) == 1
+    op = p.create_remote_reminders[0]
+    assert op.irma_task_id == "T1"
+    assert op.calendar_id == "CAL-A"
+    assert op.fields.title == "hello"
+
+
+def test_both_sides_match_no_ops() -> None:
+    snap = IrmaSnapshot(
+        projects=[_proj(pid="P1", name="Alpha", cal_id="CAL-A")],
+        tasks=[_task(tid="T1", pid="P1", uuid="REM-T1", title="match", updated=T0)],
+    )
+    cals = [
+        _cal(cid="CAL-A", title="Irma · Alpha", reminders=[
+            _rem(uuid="REM-T1", title="match", modified=T0),
+        ]),
+    ]
+    p = plan(snap, helper_calendars=cals)
+    assert p.patch_remote_reminders == []
+    assert p.patch_local_tasks == []
+    assert p.create_remote_reminders == []
+    assert p.create_local_tasks == []
+
+
+def test_phone_newer_patches_local() -> None:
+    snap = IrmaSnapshot(
+        projects=[_proj(pid="P1", name="Alpha", cal_id="CAL-A")],
+        tasks=[_task(tid="T1", pid="P1", uuid="REM-T1", title="old", updated=T0)],
+    )
+    cals = [
+        _cal(cid="CAL-A", title="Irma · Alpha", reminders=[
+            _rem(uuid="REM-T1", title="new", modified=T1),
+        ]),
+    ]
+    p = plan(snap, helper_calendars=cals)
+    assert len(p.patch_local_tasks) == 1
+    op = p.patch_local_tasks[0]
+    assert op.task_id == "T1"
+    assert op.title == "new"
+
+
+def test_irma_newer_patches_remote() -> None:
+    snap = IrmaSnapshot(
+        projects=[_proj(pid="P1", name="Alpha", cal_id="CAL-A")],
+        tasks=[_task(tid="T1", pid="P1", uuid="REM-T1", title="new", updated=T2)],
+    )
+    cals = [
+        _cal(cid="CAL-A", title="Irma · Alpha", reminders=[
+            _rem(uuid="REM-T1", title="old", modified=T1),
+        ]),
+    ]
+    p = plan(snap, helper_calendars=cals)
+    assert len(p.patch_remote_reminders) == 1
+    op = p.patch_remote_reminders[0]
+    assert op.reminder_uuid == "REM-T1"
+    assert op.fields.title == "new"
+
+
+def test_phone_deleted_reminder_deletes_local() -> None:
+    snap = IrmaSnapshot(
+        projects=[_proj(pid="P1", name="Alpha", cal_id="CAL-A")],
+        tasks=[_task(tid="T1", pid="P1", uuid="REM-DELETED")],
+    )
+    cals = [_cal(cid="CAL-A", title="Irma · Alpha", reminders=[])]
+    p = plan(snap, helper_calendars=cals)
+    assert len(p.delete_local_tasks) == 1
+    assert p.delete_local_tasks[0].task_id == "T1"
+
+
+def test_phone_moved_reminder_to_other_calendar_moves_local() -> None:
+    snap = IrmaSnapshot(
+        projects=[
+            _proj(pid="P1", name="Alpha", cal_id="CAL-A"),
+            _proj(pid="P2", name="Beta",  cal_id="CAL-B"),
+        ],
+        tasks=[_task(tid="T1", pid="P1", uuid="REM-T1")],
+    )
+    cals = [
+        _cal(cid="CAL-A", title="Irma · Alpha", reminders=[]),  # T1 gone from here
+        _cal(cid="CAL-B", title="Irma · Beta", reminders=[
+            _rem(uuid="REM-T1"),
+        ]),
+    ]
+    p = plan(snap, helper_calendars=cals)
+    assert len(p.move_tasks) == 1
+    assert p.move_tasks[0].task_id == "T1"
+    assert p.move_tasks[0].new_project_id == "P2"
+    # No DELETE — task survived the move
+    assert p.delete_local_tasks == []
+
+
+def test_phone_created_reminder_in_known_calendar_creates_local_task() -> None:
+    snap = IrmaSnapshot(
+        projects=[_proj(pid="P1", name="Alpha", cal_id="CAL-A")],
+        tasks=[],
+    )
+    cals = [
+        _cal(cid="CAL-A", title="Irma · Alpha", reminders=[
+            _rem(uuid="REM-X", title="from-phone"),
+        ]),
+    ]
+    p = plan(snap, helper_calendars=cals)
+    assert len(p.create_local_tasks) == 1
+    op = p.create_local_tasks[0]
+    assert op.project_id == "P1"
+    assert op.reminder_uuid == "REM-X"
+    assert op.title == "from-phone"
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+```bash
+cd services/api && uv run pytest tests/integrations/test_reminders_planner.py -v
+```
+
+Expected: every test fails — `plan()` raises `NotImplementedError`.
+
+- [ ] **Step 3: Implement `plan()`**
+
+Replace the `raise NotImplementedError` in `planner.py` with an implementation that satisfies every test above, following the algorithm overview at the top of this task. Two passes (calendar reconcile, then reminder reconcile), with the per-test branches handled explicitly. Keep the function pure — no I/O, no clock — so it stays unit-testable.
+
+A few implementation hints:
+- Build these indexes up front: `proj_by_id`, `proj_by_calendar_id`, `cal_by_id` (skipping ignored unmatched calendars), `tasks_by_project_id`, and a global `rem_to_calendar` map so the "moved between calendars" branch can find a reminder's new home in O(1).
+- Compute `expected_title(project)` as a small helper: `f"{prefix}{paused_prefix if paused else ''}{name}"`.
+- For the per-reminder-content diff in patch ops, only set fields where the two sides actually differ — emit `ReminderFields()` with `None`s elsewhere; if every field would be `None`, skip the patch entirely.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -2807,7 +2536,7 @@ def plan_to_batch_ops(plan: SyncPlan, *, project_uuid_by_id: dict[str, str]) -> 
 uv run pytest tests/integrations/test_reminders_planner.py -v
 ```
 
-Expected: all 10 tests pass.
+Expected: all 14 tests pass.
 
 - [ ] **Step 5: Commit**
 
@@ -2815,7 +2544,7 @@ Expected: all 10 tests pass.
 cd ../..
 git add services/api/src/irma_api/integrations/reminders/planner.py \
         services/api/tests/integrations/test_reminders_planner.py
-git commit -m "feat(reminders): pure-function reconciliation planner"
+git commit -m "feat(reminders): per-calendar reconciliation planner"
 ```
 
 ---
@@ -2946,11 +2675,117 @@ git commit -m "feat(reminders): inbox-project bootstrapper"
 
 ### Task 14: `ReminderSyncService` — sync_once + apply with rerun coalescing
 
+> **Amendment 2026-05-30 (afternoon):** wholesale rewrite. The service no longer holds a single `calendar_id`; it discovers Irma's calendars on each tick via `bridge.list_calendars(prefix)` and operates per-project-per-calendar. The `_apply` method is rewritten as a four-phase pipeline (calendar reconcile → per-project snapshot → per-project mutate → write-back). `SyncStats` gains calendar-level counters.
+
 **Files:**
 - Create: `services/api/src/irma_api/integrations/reminders/sync.py`
 - Create: `services/api/tests/integrations/test_reminders_sync.py`
 
-- [ ] **Step 1: Write the failing test**
+### Service shape
+
+The constructor no longer takes a `calendar_id`:
+
+```python
+class ReminderSyncService:
+    def __init__(
+        self,
+        *,
+        project_repo: ProjectRepo,
+        task_repo: TaskRepo,
+        bridge: ReminderBridge,
+        calendar_prefix: str = "Irma · ",
+    ) -> None: ...
+```
+
+`SyncStats` (extended):
+
+```python
+@dataclass
+class SyncStats:
+    # calendar-level
+    created_calendars: int = 0
+    renamed_calendars: int = 0
+    deleted_calendars: int = 0
+    unlinked_projects: int = 0
+    renamed_projects: int = 0
+    # reminder-level
+    created_remote: int = 0
+    patched_remote: int = 0
+    deleted_remote: int = 0
+    created_local: int = 0
+    patched_local: int = 0
+    deleted_local: int = 0
+    moved_local: int = 0
+```
+
+### `_run_once_locked()` outline
+
+```python
+async def _run_once_locked(self) -> SyncStats:
+    try:
+        await ensure_inbox_project(self._projects)
+        irma_snap = await self._snapshot_irma()
+        helper_calendars = await self._snapshot_helper()
+        sync_plan = plan(irma_snap, helper_calendars)
+        stats = await self._apply(sync_plan)
+        self.last_sync_at = datetime.now(UTC)
+        self.last_error = None
+        logger.info("reminders.sync.completed", **asdict(stats))
+        return stats
+    except BridgeError as exc:
+        self.last_error = f"{exc.code}: {exc.message}"
+        logger.warning("reminders.sync.failed", code=exc.code, message=exc.message)
+        return SyncStats()
+    except Exception:
+        self.last_error = "internal error"
+        logger.exception("reminders.sync.crashed")
+        return SyncStats()
+```
+
+### `_snapshot_helper()` outline
+
+```python
+async def _snapshot_helper(self) -> list[HelperCalendarSnap]:
+    cals = await self._bridge.list_calendars(prefix=self._calendar_prefix)
+    snaps: list[HelperCalendarSnap] = []
+    for c in cals:
+        reminders = await self._bridge.list(c.calendar_id)
+        snaps.append(HelperCalendarSnap(
+            calendar_id=c.calendar_id, title=c.title, reminders=reminders,
+        ))
+    return snaps
+```
+
+### `_apply()` algorithm — four phases
+
+**Phase 1 — Structural Irma-side updates** (cheap, no remote I/O):
+- For each `UnlinkProject` op: `project_repo.set_reminder_calendar_id(op.irma_project_id, None)`; `stats.unlinked_projects += 1`.
+- For each `RenameProject` op: `project_repo.update(op.irma_project_id, ProjectUpdate(name=op.new_name))`; `stats.renamed_projects += 1`.
+
+**Phase 2 — Calendar mutations**:
+- For each `CreateCalendar` op: `new_id = bridge.ensure_list(op.title)` → `project_repo.set_reminder_calendar_id(op.irma_project_id, new_id)`. Buffer the newly-created calendar id → project id mapping for phase 3. `stats.created_calendars += 1`.
+- For each `RenameCalendar` op: `bridge.rename_calendar(op.calendar_id, op.new_title)`. `stats.renamed_calendars += 1`.
+- For each `DeleteCalendar` op: `bridge.delete_calendar(op.calendar_id)`. Also clear the matching project's `reminder_calendar_id` if it still points at this id (project was archived). `stats.deleted_calendars += 1`.
+
+**Phase 3 — Per-calendar reminder batches**: group all reminder ops by `calendar_id`. For each calendar, build one batch of `BatchOp` (creates first, then patches, then deletes), call `bridge.batch(calendar_id, ops)`, and process the results:
+- For each `CreateRemoteReminder` op + corresponding result: if `r.ok` and `r.uuid`, `task_repo.set_reminder_uuid(op.irma_task_id, r.uuid)`. `stats.created_remote += 1`.
+- For each `PatchRemoteReminder` op + result: `stats.patched_remote += 1` on success. (No write-back needed: the planner already filtered to "Irma authoritative" diffs, so `Task.updated_at` will be re-stamped naturally by the next planner pass when the timestamps match.)
+- For each `DeleteRemoteReminder` op + result: `stats.deleted_remote += 1`.
+
+**Phase 4 — Irma-side reminder mutations** (no remote I/O):
+- For each `CreateLocalTask` op: `task = task_repo.create(TaskCreate(project_id=op.project_id, title=op.title, notes=op.notes, due_date=op.due_date, scheduled_for=op.scheduled_for, status=DONE if op.is_completed else TODO))`; `task_repo.set_reminder_uuid(task.id, op.reminder_uuid)`; `stats.created_local += 1`.
+- For each `PatchLocalTask` op: build a `TaskUpdate` from the non-None fields, plus `status` derived from `is_completed`; `task_repo.update(op.task_id, update)`; `stats.patched_local += 1`.
+- For each `MoveTask` op: `task_repo.update(op.task_id, TaskUpdate(project_id=op.new_project_id))` (extend `TaskUpdate` to accept `project_id` if it doesn't already; see implementation note). `stats.moved_local += 1`.
+- For each `DeleteLocalTask` op: `task_repo.delete(op.task_id)`; `stats.deleted_local += 1`.
+
+### Implementation notes
+
+1. `TaskUpdate` (defined in `models/task.py`) does NOT currently accept `project_id`. Either (a) extend it to allow reattribution (add `project_id: str | None = None`) and update `TaskRepo.update` to handle it, or (b) add a new repo method `task_repo.set_project(task_id, new_project_id)`. Pick (b) — keeps `TaskUpdate` semantics focused on user-visible task fields.
+2. The Phase-2 calendar creates use `bridge.ensure_list(title)` — the title already includes the `Irma · ` prefix (planner emits the full title). `ensure_list` is idempotent so even if a calendar with that exact title already exists on phone (which the planner shouldn't have asked us to create), we just get back its id.
+3. There's a deliberate asymmetry: in Phase 2 we `set_reminder_calendar_id` immediately after creating the calendar so the next tick sees the link. In Phase 3 the per-calendar batch operates on the *current* `calendar_id` from the plan (which has the new id when emitted by Phase 2). The simplest implementation: do Phase 2 first, then re-derive Phase 3 batch grouping. Alternatively, after Phase 2, look up each `CreateRemoteReminder.calendar_id` against the newly-stored values and substitute. Either works; pick the one that reads more clearly.
+4. The planner emits zero ops for calendars whose `reminder_calendar_id` was just unlinked in Phase 1 (because the snapshot was taken before Phase 1 ran). That's a small inconsistency — but the next sync tick will see the unlinked state and skip those reminders. So one extra cycle for an unlinked project's reminders to stop syncing. Acceptable.
+
+- [ ] **Step 1: Write the failing test (integration via fake helper)**
 
 `services/api/tests/integrations/test_reminders_sync.py`:
 
@@ -2965,6 +2800,8 @@ import aiosqlite
 import pytest
 
 from irma_api.integrations.reminders.bridge import ReminderBridge
+from irma_api.integrations.reminders.inbox import INBOX_NAME
+from irma_api.integrations.reminders.models import BatchOp, ReminderFields
 from irma_api.integrations.reminders.sync import ReminderSyncService, SyncStats
 from irma_api.models.project import ProjectCreate
 from irma_api.models.task import TaskCreate
@@ -2991,112 +2828,128 @@ def _bridge(tmp_path: Path) -> ReminderBridge:
     )
 
 
-@pytest.mark.asyncio
-async def test_first_sync_pushes_existing_irma_state_to_reminders(
-    conn: aiosqlite.Connection, tmp_path
-) -> None:
-    proj_repo = ProjectRepo(conn)
-    task_repo = TaskRepo(conn)
-    p = await proj_repo.create(ProjectCreate(name="Alpha"))
-    t = await task_repo.create(TaskCreate(project_id=p.id, title="hello"))
-
-    bridge = _bridge(tmp_path)
-    cal_id = await bridge.ensure_list("Irma")
-
-    svc = ReminderSyncService(
-        project_repo=proj_repo, task_repo=task_repo,
-        bridge=bridge, calendar_id=cal_id,
+def _svc(conn, bridge) -> ReminderSyncService:
+    return ReminderSyncService(
+        project_repo=ProjectRepo(conn),
+        task_repo=TaskRepo(conn),
+        bridge=bridge,
     )
-    stats = await svc.sync_once()
-    assert isinstance(stats, SyncStats)
-    assert stats.created_remote == 2   # Alpha parent + hello subtask
-
-    # After sync, Irma rows have reminder_uuid set
-    refreshed_p = await proj_repo.get(p.id)
-    refreshed_t = await task_repo.get(t.id)
-    assert refreshed_p.reminder_uuid is not None
-    assert refreshed_t.reminder_uuid is not None
-
-    rems = await bridge.list(cal_id)
-    titles = sorted(r.title for r in rems)
-    assert titles == ["Alpha", "hello"]
 
 
 @pytest.mark.asyncio
-async def test_phone_create_under_known_parent_lands_as_irma_task(
-    conn: aiosqlite.Connection, tmp_path
+async def test_first_sync_creates_one_calendar_per_project_and_pushes_tasks(
+    conn, tmp_path,
 ) -> None:
-    proj_repo = ProjectRepo(conn)
-    task_repo = TaskRepo(conn)
-    p = await proj_repo.create(ProjectCreate(name="Alpha"))
+    repo = ProjectRepo(conn)
+    tasks = TaskRepo(conn)
+    p = await repo.create(ProjectCreate(name="Alpha"))
+    await tasks.create(TaskCreate(project_id=p.id, title="hello"))
 
     bridge = _bridge(tmp_path)
-    cal_id = await bridge.ensure_list("Irma")
-    svc = ReminderSyncService(
-        project_repo=proj_repo, task_repo=task_repo,
-        bridge=bridge, calendar_id=cal_id,
-    )
-    await svc.sync_once()  # Push Alpha
-    rems = await bridge.list(cal_id)
-    parent_uuid = next(r.uuid for r in rems if r.title == "Alpha")
+    svc = _svc(conn, bridge)
 
-    # Simulate phone-side create: a subtask of Alpha.
-    from irma_api.integrations.reminders.models import BatchOp, ReminderFields
-    await bridge.batch(
-        cal_id,
-        [BatchOp.create_op(ReminderFields(title="from-phone", parent_uuid=parent_uuid))],
-    )
+    # First sync: creates Inbox project row + "Irma · Inbox" calendar +
+    # "Irma · Alpha" calendar. Tasks created in the calendar after that.
+    stats_1 = await svc.sync_once()
+    assert stats_1.created_calendars == 2  # Alpha + Inbox
+    # Reminder creation may be deferred to a second pass because Phase 2
+    # only just discovered the calendar ids. Acceptable per the algorithm.
 
-    stats = await svc.sync_once()
-    assert stats.created_local == 1
+    stats_2 = await svc.sync_once()
+    assert stats_2.created_remote >= 1   # the "hello" task is now in CAL-Alpha
 
-    tasks = await task_repo.list(project_id=p.id)
-    assert any(t.title == "from-phone" for t in tasks)
+    refreshed_proj = await repo.get(p.id)
+    assert refreshed_proj.reminder_calendar_id is not None
+
+    # Tasks have reminder_uuid
+    [refreshed_task] = await tasks.list(project_id=p.id)
+    assert refreshed_task.reminder_uuid is not None
+
+    # Helper-side: "Irma · Alpha" calendar contains a "hello" reminder
+    cals = await bridge.list_calendars("Irma · ")
+    alpha = next(c for c in cals if c.title == "Irma · Alpha")
+    rems = await bridge.list(alpha.calendar_id)
+    assert any(r.title == "hello" for r in rems)
 
 
 @pytest.mark.asyncio
-async def test_phone_orphan_lands_in_inbox(
-    conn: aiosqlite.Connection, tmp_path
+async def test_phone_created_reminder_in_alpha_creates_task(
+    conn, tmp_path,
 ) -> None:
-    proj_repo = ProjectRepo(conn)
-    task_repo = TaskRepo(conn)
+    repo = ProjectRepo(conn)
+    tasks = TaskRepo(conn)
+    p = await repo.create(ProjectCreate(name="Alpha"))
+
     bridge = _bridge(tmp_path)
-    cal_id = await bridge.ensure_list("Irma")
-    svc = ReminderSyncService(
-        project_repo=proj_repo, task_repo=task_repo,
-        bridge=bridge, calendar_id=cal_id,
-    )
-    await svc.sync_once()  # Creates Inbox project on Irma side, pushes parent.
+    svc = _svc(conn, bridge)
 
-    from irma_api.integrations.reminders.models import BatchOp, ReminderFields
-    await bridge.batch(
-        cal_id,
-        [BatchOp.create_op(ReminderFields(title="quick-capture", parent_uuid=None))],
-    )
+    # Push project → creates calendar, sets reminder_calendar_id.
+    await svc.sync_once()
+    refreshed_proj = await repo.get(p.id)
+    cal_id = refreshed_proj.reminder_calendar_id
+    assert cal_id is not None
 
+    # Phone-side adds a reminder directly to that calendar.
+    await bridge.batch(cal_id, [BatchOp.create_op(ReminderFields(title="from-phone"))])
+
+    # Next sync pulls it as a Task in Alpha.
     stats = await svc.sync_once()
     assert stats.created_local == 1
-    from irma_api.integrations.reminders.inbox import INBOX_NAME
-    inbox = next(
-        p for p in await proj_repo.list() if p.name == INBOX_NAME
-    )
-    tasks = await task_repo.list(project_id=inbox.id)
-    assert any(t.title == "quick-capture" for t in tasks)
+    assert any(t.title == "from-phone" for t in await tasks.list(project_id=p.id))
 
 
 @pytest.mark.asyncio
-async def test_coalescing_rerun_flag(
-    conn: aiosqlite.Connection, tmp_path, monkeypatch
+async def test_phone_dropped_prefix_unlinks_project_without_deleting(
+    conn, tmp_path,
 ) -> None:
-    """A concurrent sync_once call while another is in flight schedules one rerun."""
-    proj_repo = ProjectRepo(conn)
-    task_repo = TaskRepo(conn)
+    repo = ProjectRepo(conn)
     bridge = _bridge(tmp_path)
-    cal_id = await bridge.ensure_list("Irma")
-    svc = ReminderSyncService(
-        project_repo=proj_repo, task_repo=task_repo,
-        bridge=bridge, calendar_id=cal_id,
-    )
+    svc = _svc(conn, bridge)
+
+    p = await repo.create(ProjectCreate(name="Alpha"))
+    await svc.sync_once()
+    cal_id = (await repo.get(p.id)).reminder_calendar_id
+    assert cal_id is not None
+
+    # User renames the calendar on the phone to drop the prefix.
+    await bridge.rename_calendar(cal_id, "Just Alpha")
+
+    stats = await svc.sync_once()
+    assert stats.unlinked_projects == 1
+    assert (await repo.get(p.id)).reminder_calendar_id is None
+
+    # The phone-side calendar still exists (we didn't delete it).
+    titles = [c.title for c in await bridge.list_calendars("")]
+    assert "Just Alpha" in titles
+
+
+@pytest.mark.asyncio
+async def test_archived_project_deletes_its_calendar(conn, tmp_path) -> None:
+    from irma_api.models.project import ProjectStatus, ProjectUpdate
+
+    repo = ProjectRepo(conn)
+    bridge = _bridge(tmp_path)
+    svc = _svc(conn, bridge)
+
+    p = await repo.create(ProjectCreate(name="Alpha"))
+    await svc.sync_once()
+    cal_id = (await repo.get(p.id)).reminder_calendar_id
+    assert cal_id is not None
+
+    # Archive in Irma → next sync deletes the calendar on phone.
+    await repo.update(p.id, ProjectUpdate(status=ProjectStatus.ARCHIVED))
+
+    stats = await svc.sync_once()
+    assert stats.deleted_calendars == 1
+    # Verify calendar gone
+    cals = await bridge.list_calendars("Irma · ")
+    assert all(c.calendar_id != cal_id for c in cals)
+
+
+@pytest.mark.asyncio
+async def test_coalescing_rerun_flag(conn, tmp_path, monkeypatch) -> None:
+    bridge = _bridge(tmp_path)
+    svc = _svc(conn, bridge)
     calls = 0
     original = svc._run_once_locked
 
@@ -3107,11 +2960,9 @@ async def test_coalescing_rerun_flag(
 
     monkeypatch.setattr(svc, "_run_once_locked", counting)
 
-    a, b, c = await asyncio.gather(
-        svc.sync_once(), svc.sync_once(), svc.sync_once()
-    )
-    # First call runs; concurrent calls bounce off the lock, but at least one
-    # follow-up runs because the rerun flag was set.
+    await asyncio.gather(svc.sync_once(), svc.sync_once(), svc.sync_once())
+    # First call runs; concurrent calls bounce off the lock, but the rerun
+    # flag triggers exactly one follow-up.
     assert calls == 2
 ```
 
@@ -3121,280 +2972,27 @@ async def test_coalescing_rerun_flag(
 cd services/api && uv run pytest tests/integrations/test_reminders_sync.py -v
 ```
 
-Expected: module not found.
+Expected: `ModuleNotFoundError: irma_api.integrations.reminders.sync` (the file doesn't exist yet).
 
-- [ ] **Step 3: Write `sync.py`**
+- [ ] **Step 3: Implement `sync.py`**
+
+Write `services/api/src/irma_api/integrations/reminders/sync.py` according to the "Service shape", "_run_once_locked outline", "_snapshot_helper outline", and "Four-phase algorithm" sections above. Hand-roll the apply phases — keep them flat, well-commented, and easy to read. The lock + `pending_rerun` flag implementation can be lifted nearly verbatim from the original Task 14 spec (it didn't change with the architecture pivot):
 
 ```python
-"""ReminderSyncService — the single coroutine that touches both sides.
-
-All triggers funnel into `sync_once()`. The service guarantees:
-
-* at most one sync runs at a time (asyncio.Lock);
-* a trigger fired while a sync is in flight schedules exactly one
-  follow-up run (pending_rerun flag);
-* every Irma row touched by a sync has its `updated_at` set to the
-  helper-reported `last_modified` so the next tick doesn't bounce
-  the same row.
-"""
-
-from __future__ import annotations
-
-import asyncio
-from dataclasses import dataclass
-from datetime import UTC, datetime
-
-import structlog
-
-from irma_api.integrations.reminders.bridge import BridgeError, ReminderBridge
-from irma_api.integrations.reminders.inbox import INBOX_NAME, ensure_inbox_project
-from irma_api.integrations.reminders.models import (
-    BatchOp,
-    BatchResult,
-    ReminderFields,
-)
-from irma_api.integrations.reminders.planner import (
-    IrmaProjectSnap,
-    IrmaSnapshot,
-    IrmaTaskSnap,
-    RemoteCreate,
-    SyncPlan,
-    plan,
-)
-from irma_api.models.project import ProjectStatus
-from irma_api.models.task import TaskCreate, TaskStatus, TaskUpdate
-from irma_api.store.repos.project_repo import ProjectRepo
-from irma_api.store.repos.task_repo import TaskRepo
-
-logger = structlog.get_logger(__name__)
-
-
-@dataclass
-class SyncStats:
-    created_remote: int = 0
-    patched_remote: int = 0
-    deleted_remote: int = 0
-    created_local: int = 0
-    patched_local: int = 0
-    deleted_local: int = 0
-
-
-class ReminderSyncService:
-    def __init__(
-        self,
-        *,
-        project_repo: ProjectRepo,
-        task_repo: TaskRepo,
-        bridge: ReminderBridge,
-        calendar_id: str,
-    ) -> None:
-        self._projects = project_repo
-        self._tasks = task_repo
-        self._bridge = bridge
-        self._calendar_id = calendar_id
-        self._lock = asyncio.Lock()
-        self._pending_rerun = False
-        self.last_sync_at: datetime | None = None
-        self.last_error: str | None = None
-
-    async def sync_once(self) -> SyncStats:
-        """Coalescing entrypoint.
-
-        If a sync is in flight, set the rerun flag and return zero-stats
-        immediately. The in-flight sync, upon finishing, will pick up the
-        flag and kick exactly one more run.
-        """
-        if self._lock.locked():
-            self._pending_rerun = True
-            return SyncStats()
-
-        async with self._lock:
-            stats = await self._run_once_locked()
-            while self._pending_rerun:
-                self._pending_rerun = False
-                follow_up = await self._run_once_locked()
-                stats.created_remote += follow_up.created_remote
-                stats.patched_remote += follow_up.patched_remote
-                stats.deleted_remote += follow_up.deleted_remote
-                stats.created_local += follow_up.created_local
-                stats.patched_local += follow_up.patched_local
-                stats.deleted_local += follow_up.deleted_local
-            return stats
-
-    async def _run_once_locked(self) -> SyncStats:
-        try:
-            inbox = await ensure_inbox_project(self._projects)
-            irma_snap, helper_state = await self._snapshot()
-            sync_plan = plan(
-                irma_snap, helper_state, inbox_project_id=inbox.id
-            )
-            stats = await self._apply(sync_plan)
-            self.last_sync_at = datetime.now(UTC)
-            self.last_error = None
-            logger.info(
-                "reminders.sync.completed",
-                created_remote=stats.created_remote,
-                patched_remote=stats.patched_remote,
-                deleted_remote=stats.deleted_remote,
-                created_local=stats.created_local,
-                patched_local=stats.patched_local,
-                deleted_local=stats.deleted_local,
-            )
-            return stats
-        except BridgeError as exc:
-            self.last_error = f"{exc.code}: {exc.message}"
-            logger.warning("reminders.sync.failed", code=exc.code, message=exc.message)
-            return SyncStats()
-        except Exception as exc:
-            self.last_error = repr(exc)
-            logger.exception("reminders.sync.crashed")
-            return SyncStats()
-
-    async def _snapshot(self) -> tuple[IrmaSnapshot, list]:
-        projects = await self._projects.list(
-            statuses=[ProjectStatus.ACTIVE, ProjectStatus.PAUSED, ProjectStatus.ARCHIVED]
-        )
-        tasks = await self._tasks.list()
-        snap = IrmaSnapshot(
-            projects=[
-                IrmaProjectSnap(
-                    id=p.id, name=p.name, status=p.status,
-                    reminder_uuid=p.reminder_uuid, updated_at=p.updated_at,
-                )
-                for p in projects
-            ],
-            tasks=[
-                IrmaTaskSnap(
-                    id=t.id, project_id=t.project_id, title=t.title,
-                    status=t.status, reminder_uuid=t.reminder_uuid,
-                    updated_at=t.updated_at, due_date=t.due_date,
-                    scheduled_for=t.scheduled_for, notes=t.notes,
-                )
-                for t in tasks
-            ],
-        )
-        rems = await self._bridge.list(self._calendar_id)
-        return snap, rems
-
-    async def _apply(self, sync_plan: SyncPlan) -> SyncStats:
-        stats = SyncStats()
-
-        # --- Phase A: create projects on Reminders, capture uuids ---
-        project_creates = [c for c in sync_plan.creates_on_reminders if c.kind == "project"]
-        if project_creates:
-            ops = [BatchOp.create_op(c.fields) for c in project_creates]
-            results = await self._bridge.batch(self._calendar_id, ops)
-            for c, r in zip(project_creates, results, strict=True):
-                if r.ok and r.uuid:
-                    await self._projects.set_reminder_uuid(c.irma_id, r.uuid)
-                    stats.created_remote += 1
-
-        # --- Phase B: create tasks on Reminders, retargeting parent_uuid ---
-        # After Phase A, some project rows may have a fresh reminder_uuid that
-        # the planner didn't see. Re-pull project uuids from the DB.
-        proj_uuid_by_id = {
-            p.id: p.reminder_uuid for p in await self._projects.list(
-                statuses=[ProjectStatus.ACTIVE, ProjectStatus.PAUSED]
-            )
-        }
-        task_creates: list[RemoteCreate] = [
-            c for c in sync_plan.creates_on_reminders if c.kind == "task"
-        ]
-        # Filter out task creates whose parent has no uuid yet — they'll be
-        # picked up on the next sync.
-        task_creates_ready = []
-        task_creates_args: list[tuple[RemoteCreate, str]] = []
-        for c in task_creates:
-            # Find the task's project_id via the irma_id (which is task.id)
-            task = await self._tasks.get(c.irma_id)
-            parent_uuid = proj_uuid_by_id.get(task.project_id) or c.fields.parent_uuid
-            if not parent_uuid:
-                continue
-            new_fields = c.fields.model_copy(update={"parent_uuid": parent_uuid})
-            task_creates_ready.append(c)
-            task_creates_args.append((c, parent_uuid))
-        if task_creates_ready:
-            ops = []
-            for c, parent_uuid in task_creates_args:
-                ops.append(BatchOp.create_op(
-                    c.fields.model_copy(update={"parent_uuid": parent_uuid})
-                ))
-            results = await self._bridge.batch(self._calendar_id, ops)
-            for c, r in zip(task_creates_ready, results, strict=True):
-                if r.ok and r.uuid:
-                    await self._tasks.set_reminder_uuid(c.irma_id, r.uuid)
-                    stats.created_remote += 1
-
-        # --- Phase C: remote patches ---
-        if sync_plan.patches_on_reminders:
-            ops = [
-                BatchOp.update_op(p.uuid, p.fields)
-                for p in sync_plan.patches_on_reminders
-            ]
-            results = await self._bridge.batch(self._calendar_id, ops)
-            for r in results:
-                if r.ok:
-                    stats.patched_remote += 1
-
-        # --- Phase D: remote deletes ---
-        if sync_plan.deletes_on_reminders:
-            ops = [BatchOp.delete_op(d.uuid) for d in sync_plan.deletes_on_reminders]
-            results = await self._bridge.batch(self._calendar_id, ops)
-            for r in results:
-                if r.ok:
-                    stats.deleted_remote += 1
-
-        # --- Phase E: Irma-side creates from phone ---
-        for create in sync_plan.creates_on_irma:
-            new_task = await self._tasks.create(
-                TaskCreate(
-                    project_id=create.project_id,
-                    title=create.title,
-                    notes=create.notes,
-                    due_date=create.due_date,
-                    scheduled_for=create.scheduled_for,
-                    status=(
-                        TaskStatus.DONE if create.is_completed else TaskStatus.TODO
-                    ),
-                )
-            )
-            await self._tasks.set_reminder_uuid(new_task.id, create.reminder_uuid)
-            stats.created_local += 1
-
-        # --- Phase F: Irma-side patches from phone ---
-        for patch in sync_plan.patches_on_irma:
-            if patch.kind == "task":
-                update_kwargs: dict[str, object] = {}
-                if patch.title is not None:
-                    update_kwargs["title"] = patch.title
-                if patch.notes is not None:
-                    update_kwargs["notes"] = patch.notes
-                if patch.due_date is not None:
-                    update_kwargs["due_date"] = patch.due_date
-                if patch.scheduled_for is not None:
-                    update_kwargs["scheduled_for"] = patch.scheduled_for
-                if patch.is_completed is not None:
-                    update_kwargs["status"] = (
-                        TaskStatus.DONE if patch.is_completed else TaskStatus.TODO
-                    )
-                if update_kwargs:
-                    await self._tasks.update(patch.irma_id, TaskUpdate(**update_kwargs))
-                    stats.patched_local += 1
-            elif patch.kind == "project":
-                if patch.title is not None:
-                    from irma_api.models.project import ProjectUpdate
-                    await self._projects.update(
-                        patch.irma_id, ProjectUpdate(name=patch.title)
-                    )
-                    stats.patched_local += 1
-
-        # --- Phase G: Irma-side deletes ---
-        for tid in sync_plan.deletes_on_irma:
-            await self._tasks.delete(tid)
-            stats.deleted_local += 1
-
+async def sync_once(self) -> SyncStats:
+    if self._lock.locked():
+        self._pending_rerun = True
+        return SyncStats()
+    async with self._lock:
+        stats = await self._run_once_locked()
+        while self._pending_rerun:
+            self._pending_rerun = False
+            follow = await self._run_once_locked()
+            # accumulate every counter from `follow` into `stats`
         return stats
 ```
+
+Use `dataclasses.asdict(stats)` to pass to the `logger.info` event so all counters are logged structurally.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -3402,7 +3000,7 @@ class ReminderSyncService:
 uv run pytest tests/integrations/test_reminders_sync.py -v
 ```
 
-Expected: all 4 tests pass.
+Expected: all 5 tests pass.
 
 - [ ] **Step 5: Commit**
 
@@ -3410,12 +3008,14 @@ Expected: all 4 tests pass.
 cd ../..
 git add services/api/src/irma_api/integrations/reminders/sync.py \
         services/api/tests/integrations/test_reminders_sync.py
-git commit -m "feat(reminders): ReminderSyncService — snapshot, plan, apply, coalesce"
+git commit -m "feat(reminders): ReminderSyncService — calendar reconcile + per-cal batch"
 ```
 
 ---
 
 ### Task 15: Settings additions
+
+> **Amendment 2026-05-30 (afternoon):** drop `reminders_calendar_id` — there is no single calendar under the new architecture. Replace with `reminders_linked: bool = False` (flips to true after a successful link) and `reminders_calendar_prefix: str = "Irma · "` (used by the sync service when calling `bridge.list_calendars(prefix=...)`). Keep `reminders_sync_interval_seconds` and `reminders_helper_path` unchanged.
 
 **Files:**
 - Modify: `services/api/src/irma_api/config.py`
@@ -3434,16 +3034,17 @@ from irma_api.config import Settings
 
 def test_reminders_defaults() -> None:
     s = Settings(_env_file=None)  # type: ignore[call-arg]
-    assert s.reminders_calendar_id is None
+    assert s.reminders_linked is False
+    assert s.reminders_calendar_prefix == "Irma · "
     assert s.reminders_sync_interval_seconds == 60
     assert isinstance(s.reminders_helper_path, Path)
     assert s.reminders_helper_path.name == "irma-reminders-helper"
 
 
-def test_reminders_calendar_id_from_env(monkeypatch) -> None:
-    monkeypatch.setenv("REMINDERS_CALENDAR_ID", "cal-Irma")
+def test_reminders_linked_from_env(monkeypatch) -> None:
+    monkeypatch.setenv("REMINDERS_LINKED", "true")
     s = Settings(_env_file=None)  # type: ignore[call-arg]
-    assert s.reminders_calendar_id == "cal-Irma"
+    assert s.reminders_linked is True
 ```
 
 - [ ] **Step 2: Run to verify failure**
@@ -3460,8 +3061,10 @@ Add to the `Settings` class:
 
 ```python
     # --- Apple Reminders -----------------------------------------------------
-    # Set by the link flow; absence means the integration is unlinked.
-    reminders_calendar_id: str | None = None
+    # Flipped to True after a successful link; in-memory only by default.
+    reminders_linked: bool = False
+    # All Irma-managed reminders lists start with this prefix.
+    reminders_calendar_prefix: str = "Irma · "
     reminders_sync_interval_seconds: int = 60
     reminders_helper_path: Path = Path(
         "tools/reminders-helper/bin/irma-reminders-helper"
@@ -3482,7 +3085,7 @@ Expected: pass.
 cd ../..
 git add services/api/src/irma_api/config.py \
         services/api/tests/test_settings_reminders.py
-git commit -m "feat(reminders): settings for calendar id, sync interval, helper path"
+git commit -m "feat(reminders): settings for link state, calendar prefix, helper path"
 ```
 
 ---
@@ -3595,6 +3198,8 @@ git commit -m "feat(reminders): surface reminders link state on status endpoint"
 
 ### Task 17: New router `/integrations/reminders/{link,sync}`
 
+> **Amendment 2026-05-30 (afternoon):** under the new architecture there is no single `Irma` calendar to ensure on link; the sync service handles per-project ensure-list. The link flow now: `request-access` → flip `settings.reminders_linked = True` → construct the sync service via the factory (no `calendar_id` arg) → `sync_once()`. The link response body changes from `{calendar_id}` to `{linked: true}`. The unlink endpoint clears `Task.reminder_uuid` and `Project.reminder_calendar_id` (not `Project.reminder_uuid`).
+
 **Files:**
 - Create: `services/api/src/irma_api/routers/reminders.py`
 - Create: `services/api/tests/integrations/test_reminders_router.py`
@@ -3618,7 +3223,6 @@ from irma_api.app import create_app
 @pytest.fixture
 async def client(monkeypatch, tmp_path):
     app = create_app()
-    # We need access to the lifespan-initialised state for these tests.
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         async with app.router.lifespan_context(app):
             yield c, app
@@ -3629,16 +3233,15 @@ async def test_link_succeeds_when_helper_grants(client) -> None:
     c, app = client
     fake_bridge = MagicMock()
     fake_bridge.request_access = AsyncMock(return_value=True)
-    fake_bridge.ensure_list = AsyncMock(return_value="cal-Irma")
     fake_sync = MagicMock()
     fake_sync.sync_once = AsyncMock()
     app.state.reminder_bridge = fake_bridge
-    app.state.reminder_sync_factory = lambda calendar_id: fake_sync
+    app.state.reminder_sync_factory = lambda: fake_sync
 
     resp = await c.post("/api/v1/integrations/reminders/link")
     assert resp.status_code == 200
-    data = resp.json()
-    assert data["calendar_id"] == "cal-Irma"
+    assert resp.json()["linked"] is True
+    assert app.state.settings.reminders_linked is True
     fake_sync.sync_once.assert_awaited_once()
 
 
@@ -3648,10 +3251,11 @@ async def test_link_returns_403_when_denied(client) -> None:
     fake_bridge = MagicMock()
     fake_bridge.request_access = AsyncMock(return_value=False)
     app.state.reminder_bridge = fake_bridge
-    app.state.reminder_sync_factory = lambda calendar_id: MagicMock()
+    app.state.reminder_sync_factory = lambda: MagicMock()
 
     resp = await c.post("/api/v1/integrations/reminders/link")
     assert resp.status_code == 403
+    assert app.state.settings.reminders_linked is False
 
 
 @pytest.mark.asyncio
@@ -3660,15 +3264,20 @@ async def test_sync_now_returns_stats(client) -> None:
     fake_sync = MagicMock()
     fake_sync.sync_once = AsyncMock(
         return_value=type("S", (), {
-            "created_remote": 1, "patched_remote": 0, "deleted_remote": 0,
+            "created_calendars": 1, "renamed_calendars": 0, "deleted_calendars": 0,
+            "unlinked_projects": 0, "renamed_projects": 0,
+            "created_remote": 2, "patched_remote": 0, "deleted_remote": 0,
             "created_local": 0, "patched_local": 0, "deleted_local": 0,
+            "moved_local": 0,
         })()
     )
     app.state.reminder_sync = fake_sync
 
     resp = await c.post("/api/v1/integrations/reminders/sync")
     assert resp.status_code == 200
-    assert resp.json()["created_remote"] == 1
+    body = resp.json()
+    assert body["created_calendars"] == 1
+    assert body["created_remote"] == 2
 
 
 @pytest.mark.asyncio
@@ -3677,6 +3286,43 @@ async def test_sync_when_unlinked_returns_409(client) -> None:
     app.state.reminder_sync = None
     resp = await c.post("/api/v1/integrations/reminders/sync")
     assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_unlink_clears_linkage(client) -> None:
+    c, app = client
+    # Seed: link state on, plus a project + task with linkage set.
+    app.state.settings.reminders_linked = True
+    conn = app.state.store.connection
+    await conn.execute(
+        "INSERT INTO project (id, name, name_lower, status, priority, "
+        "calendar_keywords, goals, created_at, updated_at, reminder_calendar_id) "
+        "VALUES ('P1', 'Alpha', 'alpha', 'active', 2, '[]', '[]', "
+        "'2026-05-30T12:00:00', '2026-05-30T12:00:00', 'CAL-A')"
+    )
+    await conn.execute(
+        "INSERT INTO task (id, project_id, title, notes, status, "
+        "created_at, updated_at, reminder_uuid) "
+        "VALUES ('T1', 'P1', 'hello', '', 'todo', "
+        "'2026-05-30T12:00:00', '2026-05-30T12:00:00', 'REM-T1')"
+    )
+    await conn.commit()
+
+    resp = await c.delete("/api/v1/integrations/reminders/link")
+    assert resp.status_code == 204
+    assert app.state.settings.reminders_linked is False
+
+    cur = await conn.execute(
+        "SELECT reminder_calendar_id FROM project WHERE id = 'P1'"
+    )
+    row = await cur.fetchone()
+    assert row[0] is None
+
+    cur = await conn.execute(
+        "SELECT reminder_uuid FROM task WHERE id = 'T1'"
+    )
+    row = await cur.fetchone()
+    assert row[0] is None
 ```
 
 - [ ] **Step 2: Run to verify failure**
@@ -3696,6 +3342,7 @@ Expected: 404 or import error — router not registered.
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, HTTPException, Request, Response, status
@@ -3709,16 +3356,24 @@ router = APIRouter(prefix="/integrations/reminders", tags=["integrations"])
 
 
 class LinkResponse(BaseModel):
-    calendar_id: str
+    linked: bool
 
 
 class SyncResponse(BaseModel):
+    # Calendar-level counters
+    created_calendars: int
+    renamed_calendars: int
+    deleted_calendars: int
+    unlinked_projects: int
+    renamed_projects: int
+    # Reminder-level counters
     created_remote: int
     patched_remote: int
     deleted_remote: int
     created_local: int
     patched_local: int
     deleted_local: int
+    moved_local: int
 
 
 @router.post("/link", response_model=LinkResponse)
@@ -3735,23 +3390,22 @@ async def link(request: Request) -> LinkResponse:
     if not granted:
         raise HTTPException(status_code=403, detail="reminders access denied")
 
-    calendar_id = await bridge.ensure_list("Irma")
-    request.app.state.settings.reminders_calendar_id = calendar_id
-    svc = factory(calendar_id)
+    request.app.state.settings.reminders_linked = True
+    svc = factory()
     request.app.state.reminder_sync = svc
     await svc.sync_once()
-    return LinkResponse(calendar_id=calendar_id)
+    return LinkResponse(linked=True)
 
 
 @router.delete("/link", status_code=status.HTTP_204_NO_CONTENT)
 async def unlink(request: Request) -> Response:
-    """Clear linkage. Does not delete the macOS Reminders list itself."""
+    """Clear linkage. Does not delete the macOS Reminders lists themselves."""
     store = request.app.state.store
     conn = store.connection
     await conn.execute("UPDATE task SET reminder_uuid = NULL")
-    await conn.execute("UPDATE project SET reminder_uuid = NULL")
+    await conn.execute("UPDATE project SET reminder_calendar_id = NULL")
     await conn.commit()
-    request.app.state.settings.reminders_calendar_id = None
+    request.app.state.settings.reminders_linked = False
     request.app.state.reminder_sync = None
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -3762,14 +3416,7 @@ async def sync_now(request: Request) -> SyncResponse:
     if svc is None:
         raise HTTPException(status_code=409, detail="reminders integration not linked")
     stats = await svc.sync_once()
-    return SyncResponse(
-        created_remote=stats.created_remote,
-        patched_remote=stats.patched_remote,
-        deleted_remote=stats.deleted_remote,
-        created_local=stats.created_local,
-        patched_local=stats.patched_local,
-        deleted_local=stats.deleted_local,
-    )
+    return SyncResponse(**asdict(stats))
 ```
 
 - [ ] **Step 4: Register the router in `app.py`**
@@ -4291,6 +3938,8 @@ git commit -m "feat(reminders): fire-and-forget sync after Irma-side writes"
 
 ### Task 21: Opt-in end-to-end smoke test against real Reminders
 
+> **Amendment 2026-05-30 (afternoon):** under the new architecture the test creates one calendar per project (e.g. `Irma-Test-Alpha-<uuid>`, `Irma-Test-Inbox-<uuid>`) and uses a custom `reminders_calendar_prefix` so it doesn't collide with the user's real `Irma · *` lists. Tears down per-project calendars individually.
+
 **Files:**
 - Create: `services/api/tests/integrations/test_reminders_e2e.py`
 
@@ -4305,10 +3954,9 @@ Run with:
     cd services/api
     IRMA_REMINDERS_E2E=1 uv run pytest tests/integrations/test_reminders_e2e.py -v
 
-The test creates a temp calendar (`Irma-Test-<uuid>`), syncs to it,
-asserts contents, then tears it down. Requires the helper binary at
-`tools/reminders-helper/bin/irma-reminders-helper` and Reminders access
-granted to it.
+Uses a unique calendar prefix per run (e.g. `IrmaTest-abc12345 · `) so it
+won't touch the user's real `Irma · *` lists. Tears down all calendars
+matching the prefix on exit.
 """
 
 from __future__ import annotations
@@ -4338,9 +3986,9 @@ HELPER = REPO_ROOT / "tools" / "reminders-helper" / "bin" / "irma-reminders-help
 
 
 @pytest.mark.asyncio
-async def test_full_push_to_real_reminders(tmp_path) -> None:
+async def test_full_push_creates_per_project_calendars(tmp_path) -> None:
     assert HELPER.exists(), f"build the helper first: {HELPER}"
-    test_list = f"Irma-Test-{uuid.uuid4().hex[:8]}"
+    test_prefix = f"IrmaTest-{uuid.uuid4().hex[:8]} · "
 
     bridge = ReminderBridge(binary_path=HELPER)
     status = await bridge.access_status()
@@ -4349,28 +3997,37 @@ async def test_full_push_to_real_reminders(tmp_path) -> None:
         if not granted:
             pytest.skip(f"reminders access status={status}; user must grant access")
 
-    cal_id = await bridge.ensure_list(test_list)
+    created_ids: list[str] = []
     try:
         async with aiosqlite.connect(tmp_path / "e2e.db") as conn:
             conn.row_factory = aiosqlite.Row
             await ensure_schema(conn)
             projects = ProjectRepo(conn)
             tasks = TaskRepo(conn)
-            p = await projects.create(ProjectCreate(name="E2E Project"))
+            p = await projects.create(ProjectCreate(name="Alpha"))
             await tasks.create(TaskCreate(project_id=p.id, title="e2e task"))
 
             svc = ReminderSyncService(
                 project_repo=projects, task_repo=tasks,
-                bridge=bridge, calendar_id=cal_id,
+                bridge=bridge, calendar_prefix=test_prefix,
             )
-            stats = await svc.sync_once()
-            assert stats.created_remote == 2
+            await svc.sync_once()  # Phase 1: ensures calendars
+            await svc.sync_once()  # Phase 2: pushes the task
 
-            rems = await bridge.list(cal_id)
-            titles = sorted(r.title for r in rems)
-            assert titles == ["E2E Project", "e2e task"]
+            cals = await bridge.list_calendars(test_prefix)
+            created_ids = [c.calendar_id for c in cals]
+            titles = sorted(c.title for c in cals)
+            assert titles == [test_prefix + "Alpha", test_prefix + "Inbox"]
+
+            alpha = next(c for c in cals if c.title == test_prefix + "Alpha")
+            rems = await bridge.list(alpha.calendar_id)
+            assert any(r.title == "e2e task" for r in rems)
     finally:
-        await bridge.delete_calendar(cal_id)
+        for cid in created_ids:
+            try:
+                await bridge.delete_calendar(cid)
+            except Exception:
+                pass
 ```
 
 - [ ] **Step 2: Verify the test is skipped by default**
@@ -4401,6 +4058,8 @@ git commit -m "test(reminders): opt-in end-to-end smoke test"
 
 ### Task 22: README and linking-flow documentation
 
+> **Amendment 2026-05-30 (afternoon):** README explains the `Irma · <ProjectName>` naming convention — the user will see one list per project + an Inbox list in their Reminders sidebar, not a single "Irma" list. The link response body is now `{"linked": true}`, not `{"calendar_id": "..."}`.
+
 **Files:**
 - Modify: `services/api/README.md` (or create if missing)
 - Modify: `tools/reminders-helper/README.md`
@@ -4412,9 +4071,23 @@ If the file doesn't exist, create it; otherwise append a new section:
 ```markdown
 ## Apple Reminders sync
 
-Mirrors `Project` + `Task` rows into a macOS Reminders list named **Irma**
-via a Swift helper binary. Phone changes in iCloud Reminders flow back on
-the next sync (≤60 s, or instantly via `POST /integrations/reminders/sync`).
+Mirrors each `Project` in Irma into its own macOS Reminders list named
+**`Irma · <ProjectName>`**, with Tasks as flat reminders inside. The Inbox
+project lives in **`Irma · Inbox`**, which is also where phone-captured
+quick-adds land. Changes in either place flow back on the next sync
+(≤60 s, or instantly via `POST /integrations/reminders/sync`).
+
+In your Reminders sidebar you'll see something like:
+
+    Irma · Inbox
+    Irma · Video Model
+    Irma · MIT Deep Learning
+    ...one entry per active Irma project
+
+Renaming `Irma · X` on the phone to `Irma · Y` renames Project X to Y in
+Irma. Renaming it to drop the `Irma · ` prefix unlinks the project (Irma
+forgets the calendar; it stays on your phone untouched). Archiving a
+project in Irma deletes its phone list.
 
 ### One-time setup
 
@@ -4433,15 +4106,15 @@ the next sync (≤60 s, or instantly via `POST /integrations/reminders/sync`).
 
        curl -X POST http://127.0.0.1:8765/api/v1/integrations/reminders/link
 
-   On success, returns `{"calendar_id": "..."}`. From here, edits in either
-   place flow both ways.
+   On success, returns `{"linked": true}` and the Inbox list + lists for
+   every active project appear in Reminders.
 
 ### Useful commands
 
 | Action | Command |
 | --- | --- |
 | Force a sync now | `curl -X POST http://127.0.0.1:8765/api/v1/integrations/reminders/sync` |
-| Unlink (preserve list) | `curl -X DELETE http://127.0.0.1:8765/api/v1/integrations/reminders/link` |
+| Unlink (preserve lists on phone) | `curl -X DELETE http://127.0.0.1:8765/api/v1/integrations/reminders/link` |
 | Reset macOS TCC grant | `tccutil reset Reminders com.irma.reminders-helper` |
 | Opt-in end-to-end test | `IRMA_REMINDERS_E2E=1 uv run pytest tests/integrations/test_reminders_e2e.py` |
 ```
@@ -4457,32 +4130,34 @@ git commit -m "docs(reminders): build + link + e2e quickstart"
 
 ## Self-Review Notes
 
-A scan of the plan against the spec's section headings, with concrete task references:
+A scan of the (amended) plan against the (amended) spec's section headings:
 
 | Spec section | Covered by |
 | --- | --- |
-| Architecture diagram + components | Task 1 (Swift scaffold), Task 8 (Python package), Task 17 (router) |
+| Architecture diagram + components | Tasks 1–7 (Swift helper), Task 8 (Python package), Task 17 (router) |
 | Sync triggers | Task 19 (periodic), Task 20 (post-write), Task 17 (manual + initial link) |
 | Coalescing rule | Task 14 (`asyncio.Lock` + `pending_rerun` test) |
-| Identity tree + Inbox project | Task 13 (`ensure_inbox_project`) |
-| Task field mapping | Task 12 (planner per-field translation) |
-| Project field mapping (paused-prefix, archived-cascade) | Task 12 (`test_paused_project_title_prefixed`, `test_archived_project_cascade_deletes_reminders`) |
-| Phone-initiated semantics | Task 12 (`test_remote_orphan_*`, `test_remote_only_task_with_known_parent_creates_in_project`, `test_irma_only_deletion_signal_when_uuid_present_but_reminder_gone`) |
-| Conflict resolution | Task 12 (`test_remote_newer_patches_irma`, `test_irma_newer_patches_reminders`) |
-| Three-pass algorithm | Task 14 (`_apply` phases A–G) |
+| Calendar-naming convention `Irma · <name>` | Tasks 12 (planner), 14 (service), 15 (settings), 22 (README) |
+| Inbox project | Task 13 (`ensure_inbox_project`) — its calendar follows the same `Irma · Inbox` convention via the planner |
+| Task field mapping (title/notes/due/scheduled/done) | Task 12 (per-field patch logic), Task 14 (apply phases) |
+| Project ↔ calendar mapping (rename, pause, archive) | Task 12 (`test_paused_project_renames_calendar_to_add_prefix`, `test_archived_project_with_linked_calendar_deletes_it`, `test_phone_renamed_calendar_renames_project`, `test_phone_dropped_prefix_unlinks_project`) |
+| Phone-initiated semantics (new reminder in `Irma · X` → Task in Project X; orphan list ignored) | Task 12 (`test_phone_created_reminder_in_known_calendar_creates_local_task`, `test_phone_calendar_without_matching_project_is_ignored`) |
+| Cross-calendar reminder move | Task 12 (`test_phone_moved_reminder_to_other_calendar_moves_local`) |
+| Conflict resolution (last-write-wins) | Task 12 (`test_phone_newer_patches_local`, `test_irma_newer_patches_remote`) |
+| Four-pass algorithm | Task 14 (calendar reconcile → snapshot → reminder reconcile → apply) |
 | Error handling | Task 9 (`BridgeError` codes), Task 14 (`_run_once_locked` catches BridgeError + generic) |
-| TCC + linking flow | Task 6 (`requestFullAccessToReminders`), Task 17 (link endpoint) |
-| Settings additions | Task 15 |
+| TCC + linking flow | Task 6 (`requestFullAccessToReminders` — already committed in `d9e74ad`), Task 17 (link endpoint flips `reminders_linked`) |
+| Settings additions | Task 15 (`reminders_linked`, `reminders_calendar_prefix`) |
 | API surface | Task 17 (router) + Task 16 (status extension) |
-| Helper command surface | Tasks 4–7 |
-| Schema migration | Task 10 |
-| `reminder_uuid` linkage + persistence | Task 11 |
-| Observability (structlog events) | Task 14 (`reminders.sync.*`) |
-| Testing strategy | Tasks 8–14 unit; Task 9 bridge with fake helper; Task 21 opt-in e2e; Tasks 2–5 Swift XCTest |
-| Risks: list deleted on phone | The planner's "uuid set, reminder gone" branch (Task 12, `test_irma_only_deletion_signal...`) and the helper's `ensure-list` (re-creates) cover this in combination. Surfaced via `last_error` (Task 14). |
+| Helper command surface | Tasks 4–7 (covered by commits `1102b5d`/`f5cf301`/`d9e74ad`); `list-calendars` + `rename-calendar` added in `d9e74ad` |
+| Schema migration | Task 10 (`reminder_uuid` on task, `reminder_calendar_id` on project) |
+| Linkage persistence | Task 11 |
+| Observability (structlog events) | Task 14 (`reminders.sync.completed` with all `SyncStats` counters via `asdict`) |
+| Testing strategy | Tasks 8/9/12 (Python unit tests with fake helper), Task 14 (service integration tests), Task 21 (opt-in e2e); Swift side is build-only per the XCTest amendment |
+| Risks: phone-deleted calendar | Task 12 (`test_phone_deleted_calendar_recreates_it_for_active_project`); Task 14 Phase 2 recreates |
 | Risks: TCC denied | Task 17 (403 response), Task 14 (`BridgeError` short-circuits sync), Task 22 (`tccutil reset` doc) |
-| Out-of-scope items (live notifications, sub-subtasks, trash) | Not covered — by design |
+| Out-of-scope items (sub-subtasks, trash, live notifications) | Not covered — by design |
 
-**Placeholder scan:** all code blocks are complete; no "TODO/TBD/similar to" references; every command has expected output described. The `plan_to_batch_ops` helper in Task 12's planner.py is left as a forward-declared utility used by future fan-out — not strictly required by the current `_apply` (which builds ops inline), but provides a clean seam if we later move to a single-batch flatten. It compiles and is tested by extension of the planner.
+**Placeholder scan:** all code blocks are complete. Task 12 deliberately leaves the planner implementation to TDD (raise `NotImplementedError` initially), with the 14 test cases as the executable spec. Task 14 likewise spells out the four phases prose-style and asks the implementer to flatten them into Python; this is intentional — the original full-code-spec approach would have been brittle with the per-calendar batching loop.
 
-**Type consistency:** `SyncStats` fields match between the dataclass declaration (Task 14) and the router response model (Task 17). `IrmaProjectSnap` / `IrmaTaskSnap` fields match between the planner (Task 12) and the service's `_snapshot` (Task 14). `reminder_uuid` is consistently `str | None` across models, repos, planner snapshots, and migrations.
+**Type consistency:** `SyncStats` fields match between the dataclass declaration (Task 14), the router response model (Task 17), and the post-write helper accounting (Task 20). `IrmaProjectSnap` carries `reminder_calendar_id` (not `reminder_uuid`); `IrmaTaskSnap` carries `reminder_uuid`. `HelperCalendarSnap` is the new top-level input for the planner.

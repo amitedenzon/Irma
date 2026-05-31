@@ -153,3 +153,48 @@ async def test_project_delete_with_attached_tasks_raises_conflict(
     prepo = ProjectRepo(db_conn)
     with pytest.raises(ConflictError):
         await prepo.delete(pid)
+
+
+# ---------------------------------------------------------------------------
+# Reminder linkage (added 2026-05-30)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_set_reminder_uuid_persists(db_conn: aiosqlite.Connection) -> None:
+    pid = await _make_project(db_conn)
+    repo = TaskRepo(db_conn)
+    t = await repo.create(TaskCreate(project_id=pid, title="t1"))
+    assert t.reminder_uuid is None
+    await repo.set_reminder_uuid(t.id, "REM-123")
+    refreshed = await repo.get(t.id)
+    assert refreshed.reminder_uuid == "REM-123"
+
+
+@pytest.mark.asyncio
+async def test_set_reminder_uuid_to_none_clears(db_conn: aiosqlite.Connection) -> None:
+    pid = await _make_project(db_conn)
+    repo = TaskRepo(db_conn)
+    t = await repo.create(TaskCreate(project_id=pid, title="t1"))
+    await repo.set_reminder_uuid(t.id, "REM-X")
+    await repo.set_reminder_uuid(t.id, None)
+    refreshed = await repo.get(t.id)
+    assert refreshed.reminder_uuid is None
+
+
+@pytest.mark.asyncio
+async def test_set_reminder_uuid_missing_task_raises(db_conn: aiosqlite.Connection) -> None:
+    repo = TaskRepo(db_conn)
+    with pytest.raises(NotFoundError):
+        await repo.set_reminder_uuid("missing", "REM-X")
+
+
+@pytest.mark.asyncio
+async def test_set_project_reattributes_task(db_conn: aiosqlite.Connection) -> None:
+    p1 = await _make_project(db_conn, name="P1")
+    p2 = await _make_project(db_conn, name="P2")
+    repo = TaskRepo(db_conn)
+    t = await repo.create(TaskCreate(project_id=p1, title="t1"))
+    await repo.set_project(t.id, p2)
+    refreshed = await repo.get(t.id)
+    assert refreshed.project_id == p2

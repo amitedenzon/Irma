@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   DndContext,
   closestCenter,
@@ -74,6 +74,14 @@ export function ProjectsView({
 }) {
   const [creating, setCreating] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
+  const [remindersLinked, setRemindersLinked] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    fetch("http://127.0.0.1:8765/api/v1/integrations/google/status")
+      .then((r) => r.json())
+      .then((d: { reminders_linked: boolean }) => setRemindersLinked(d.reminders_linked))
+      .catch(() => {});
+  }, []);
   const [orderedIds, setOrderedIds] = useState<string[]>(() => {
     try { return JSON.parse(localStorage.getItem(ORDER_KEY) ?? "[]"); } catch { return []; }
   });
@@ -99,7 +107,19 @@ export function ProjectsView({
 
   return (
     <div className="px-5 py-4 max-w-5xl mx-auto">
-      <div className="flex items-center justify-end gap-3 mb-3">
+      <div className="flex items-center justify-between gap-3 mb-3">
+        {remindersLinked !== null && (
+          <div className="flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full" style={{
+              background: remindersLinked ? "var(--color-moss)" : "var(--color-red)",
+              opacity: remindersLinked ? 1 : 0.7,
+            }} />
+            <span className="text-[11px]" style={{ color: "var(--color-ink-faint)" }}>
+              {remindersLinked ? "Reminders synced" : "Reminders unlinked"}
+            </span>
+          </div>
+        )}
+        <div className="flex items-center gap-3 ml-auto">
         {archivedCount > 0 && (
           <button onClick={() => setShowArchived((v) => !v)} className="btn-link text-[11px]"
                   style={{ color: "var(--color-ink-faint)" }}>
@@ -107,6 +127,7 @@ export function ProjectsView({
           </button>
         )}
         <button onClick={() => setCreating(true)} className="btn-red">+ new project</button>
+        </div>
       </div>
 
       {error && (

@@ -24,8 +24,9 @@ from irma_api.routers.brief import router as brief_router
 from irma_api.routers.email import router as email_router
 from irma_api.routers.chat import router as chat_router
 from irma_api.routers.integrations import router as integrations_router
-from irma_api.routers.settings import router as settings_router
 from irma_api.routers.local_models import router as local_models_router
+from irma_api.routers.reminders import router as reminders_router
+from irma_api.routers.settings import router as settings_router
 from irma_api.routers.projects import router as projects_router
 from irma_api.routers.signals import router as signals_router
 from irma_api.routers.signals import run_refresh
@@ -145,12 +146,57 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
     app.state.daily_brief_job = daily_brief_job
 
+    # --- Apple Reminders bridge + sync factory ---
+    reminder_bridge = None
+    reminder_sync_factory = None
+    if settings.reminders_helper_path.exists():
+        from irma_api.integrations.reminders.bridge import ReminderBridge
+        from irma_api.integrations.reminders.sync import ReminderSyncService
+        from irma_api.store.repos.project_repo import ProjectRepo
+        from irma_api.store.repos.task_repo import TaskRepo
+
+        reminder_bridge = ReminderBridge(binary_path=settings.reminders_helper_path)
+
+        def make_sync() -> ReminderSyncService:
+            return ReminderSyncService(
+                project_repo=ProjectRepo(store.connection),
+                task_repo=TaskRepo(store.connection),
+                bridge=reminder_bridge,
+                calendar_prefix=settings.reminders_calendar_prefix,
+            )
+
+        reminder_sync_factory = make_sync
+        logger.info(
+            "reminders.bridge.ready",
+            linked=settings.reminders_linked,
+            helper_path=str(settings.reminders_helper_path),
+        )
+    else:
+        logger.info(
+            "reminders.bridge.disabled",
+            reason="helper binary not found",
+            expected_path=str(settings.reminders_helper_path),
+        )
+
+    app.state.reminder_bridge = reminder_bridge
+    app.state.reminder_sync_factory = reminder_sync_factory
+    app.state.reminder_sync = make_sync() if (reminder_sync_factory and settings.reminders_linked) else None
+
     async def tick() -> None:
         await run_refresh(store=store, observers=observers, bus=bus)
+
+    async def reminders_tick() -> None:
+        svc = app.state.reminder_sync
+        if svc is not None:
+            await svc.sync_once()
 
     scheduler = Scheduler(
         refresh_minutes=settings.irma_refresh_minutes,
         on_tick=tick,
+        reminders_interval_seconds=(
+            settings.reminders_sync_interval_seconds if reminder_bridge is not None else None
+        ),
+        on_reminders_tick=(reminders_tick if reminder_bridge is not None else None),
     )
     scheduler.start()
     app.state.scheduler = scheduler
@@ -216,6 +262,7 @@ def create_app() -> FastAPI:
     app.include_router(brief_router, prefix="/api/v1")
     app.include_router(email_router, prefix="/api/v1")
     app.include_router(integrations_router, prefix="/api/v1")
+    app.include_router(reminders_router, prefix="/api/v1")
     app.include_router(settings_router, prefix="/api/v1")
     app.include_router(local_models_router, prefix="/api/v1")
 

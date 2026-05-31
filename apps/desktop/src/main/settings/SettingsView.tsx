@@ -1018,6 +1018,139 @@ function GuideModal({
 // ---------------------------------------------------------------------------
 // API Keys tab
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Reminders card (inside ApiTab)
+// ---------------------------------------------------------------------------
+interface RemindersStatus {
+	reminders_linked: boolean;
+	reminders_last_sync_at: string | null;
+	reminders_last_sync_error: string | null;
+}
+
+function RemindersCard() {
+	const [status, setStatus] = useState<RemindersStatus | null>(null);
+	const [syncing, setSyncing] = useState(false);
+	const [linking, setLinking] = useState(false);
+	const [syncResult, setSyncResult] = useState<string | null>(null);
+	const [error, setError] = useState<string | null>(null);
+
+	const fetchStatus = () => {
+		fetch(`${API}/integrations/google/status`)
+			.then((r) => r.json())
+			.then((d: RemindersStatus) => setStatus(d))
+			.catch(() => {});
+	};
+
+	useEffect(() => { fetchStatus(); }, []);
+
+	const handleLink = async () => {
+		setLinking(true); setError(null); setSyncResult(null);
+		try {
+			const res = await fetch(`${API}/integrations/reminders/link`, { method: "POST" });
+			if (!res.ok) {
+				const d = await res.json().catch(() => ({}));
+				throw new Error((d as { detail?: string }).detail ?? `HTTP ${res.status}`);
+			}
+			fetchStatus();
+		} catch (e) {
+			setError(e instanceof Error ? e.message : "Link failed.");
+		} finally { setLinking(false); }
+	};
+
+	const handleUnlink = async () => {
+		setLinking(true); setError(null); setSyncResult(null);
+		try {
+			await fetch(`${API}/integrations/reminders/link`, { method: "DELETE" });
+			fetchStatus();
+		} catch (e) {
+			setError(e instanceof Error ? e.message : "Unlink failed.");
+		} finally { setLinking(false); }
+	};
+
+	const handleSync = async () => {
+		setSyncing(true); setError(null); setSyncResult(null);
+		try {
+			const res = await fetch(`${API}/integrations/reminders/sync`, { method: "POST" });
+			if (!res.ok) {
+				const d = await res.json().catch(() => ({}));
+				throw new Error((d as { detail?: string }).detail ?? `HTTP ${res.status}`);
+			}
+			const stats = await res.json() as Record<string, number>;
+			const total = Object.values(stats).reduce((a, b) => a + b, 0);
+			setSyncResult(total === 0 ? "Up to date." : `${total} change${total !== 1 ? "s" : ""} applied.`);
+			fetchStatus();
+		} catch (e) {
+			setError(e instanceof Error ? e.message : "Sync failed.");
+		} finally { setSyncing(false); }
+	};
+
+	const linked = status?.reminders_linked ?? false;
+	const lastSync = status?.reminders_last_sync_at
+		? new Date(status.reminders_last_sync_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+		: null;
+
+	return (
+		<section className="card p-4 space-y-3">
+			<div>
+				<h3 className="display text-[11px] font-semibold uppercase tracking-wider mb-0.5"
+					style={{ color: "var(--color-ink-mute)" }}>
+					Apple Reminders
+				</h3>
+				<p className="text-[12px]" style={{ color: "var(--color-ink-faint)" }}>
+					Mirror projects + tasks to macOS Reminders for phone access.
+				</p>
+			</div>
+
+			<div className="flex items-center justify-between">
+				<div className="flex items-center gap-2">
+					<span className="w-2 h-2 rounded-full" style={{
+						background: linked ? "var(--color-moss)" : "var(--color-red)",
+						opacity: linked ? 1 : 0.7,
+					}} />
+					<span className="text-[12px]" style={{ color: "var(--color-ink-mute)" }}>
+						{linked ? "Linked" : "Not linked"}
+					</span>
+					{lastSync && (
+						<span className="text-[11px]" style={{ color: "var(--color-ink-faint)" }}>
+							· last sync {lastSync}
+						</span>
+					)}
+				</div>
+				<div className="flex items-center gap-2">
+					{linked && (
+						<button type="button"
+							className="btn-primary text-[11px] px-3 py-1 rounded-lg disabled:opacity-40"
+							disabled={syncing}
+							onClick={() => void handleSync()}>
+							{syncing ? "Syncing…" : "Sync now"}
+						</button>
+					)}
+					<button type="button"
+						className="text-[11px] px-3 py-1 rounded-lg transition-colors disabled:opacity-40"
+						style={{
+							background: "var(--color-surface-2)",
+							color: "var(--color-ink-mute)",
+						}}
+						disabled={linking}
+						onClick={() => void (linked ? handleUnlink() : handleLink())}>
+						{linking ? "…" : linked ? "Unlink" : "Link"}
+					</button>
+				</div>
+			</div>
+
+			{(error || syncResult || status?.reminders_last_sync_error) && (
+				<p className="text-[11px]" style={{
+					color: error || status?.reminders_last_sync_error
+						? "var(--color-ink-faint)"
+						: "var(--color-red)",
+				}}>
+					{error ?? syncResult ?? status?.reminders_last_sync_error}
+				</p>
+			)}
+		</section>
+	);
+}
+
 function ApiTab() {
 	const [drafts, setDrafts] = useState<Record<string, string>>({});
 	const [statuses, setStatuses] = useState<Record<string, boolean>>({});
@@ -1214,6 +1347,8 @@ function ApiTab() {
 					})}
 				</section>
 			))}
+
+			<RemindersCard />
 
 			{/* Save bar */}
 			<div className="flex items-center gap-3 pb-2">

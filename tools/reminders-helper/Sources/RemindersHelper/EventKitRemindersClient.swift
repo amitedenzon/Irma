@@ -22,7 +22,7 @@ final class EventKitRemindersClient: RemindersClient {
         switch EKEventStore.authorizationStatus(for: .reminder) {
         case .authorized: return .authorized
         case .fullAccess: return .authorized
-        case .writeOnly: return .authorized
+        case .writeOnly: return .authorized  // SDK-26 case; treat as granted
         case .denied: return .denied
         case .restricted: return .restricted
         case .notDetermined: return .notDetermined
@@ -40,6 +40,23 @@ final class EventKitRemindersClient: RemindersClient {
         cal.source = pickSource()
         try store.saveCalendar(cal, commit: true)
         return cal.calendarIdentifier
+    }
+
+    func listCalendars(prefix: String) async throws -> [CalendarSummary] {
+        return store.calendars(for: .reminder)
+            .filter { $0.title.hasPrefix(prefix) }
+            .map { CalendarSummary(calendarId: $0.calendarIdentifier, title: $0.title) }
+            .sorted { $0.title < $1.title }
+    }
+
+    func renameCalendar(calendarId: String, title: String) async throws -> Bool {
+        guard let cal = store.calendar(withIdentifier: calendarId) else {
+            throw RemindersClientError.calendarNotFound(calendarId)
+        }
+        if cal.title == title { return false }
+        cal.title = title
+        try store.saveCalendar(cal, commit: true)
+        return true
     }
 
     private func pickSource() -> EKSource? {
@@ -145,7 +162,6 @@ final class EventKitRemindersClient: RemindersClient {
     private func toHelperReminder(_ r: EKReminder) -> HelperReminder {
         return HelperReminder(
             uuid: r.calendarItemIdentifier,
-            parentUuid: nil,
             title: r.title ?? "",
             notes: r.notes ?? "",
             dueDate: r.dueDateComponents.flatMap(componentsToDateString),

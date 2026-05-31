@@ -106,3 +106,39 @@ async def test_delete_missing_raises(db_conn: aiosqlite.Connection) -> None:
     repo = ProjectRepo(db_conn)
     with pytest.raises(NotFoundError):
         await repo.delete("nope")
+
+
+# ---------------------------------------------------------------------------
+# Reminder linkage (added 2026-05-30)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_set_reminder_calendar_id_persists(db_conn: aiosqlite.Connection) -> None:
+    repo = ProjectRepo(db_conn)
+    p = await repo.create(ProjectCreate(name="Alpha"))
+    assert p.reminder_calendar_id is None
+    await repo.set_reminder_calendar_id(p.id, "CAL-A")
+    refreshed = await repo.get(p.id)
+    assert refreshed.reminder_calendar_id == "CAL-A"
+
+
+@pytest.mark.asyncio
+async def test_set_reminder_calendar_id_to_none_clears(
+    db_conn: aiosqlite.Connection,
+) -> None:
+    repo = ProjectRepo(db_conn)
+    p = await repo.create(ProjectCreate(name="Alpha"))
+    await repo.set_reminder_calendar_id(p.id, "CAL-X")
+    await repo.set_reminder_calendar_id(p.id, None)
+    refreshed = await repo.get(p.id)
+    assert refreshed.reminder_calendar_id is None
+
+
+@pytest.mark.asyncio
+async def test_set_reminder_calendar_id_missing_project_raises(
+    db_conn: aiosqlite.Connection,
+) -> None:
+    repo = ProjectRepo(db_conn)
+    with pytest.raises(NotFoundError):
+        await repo.set_reminder_calendar_id("missing", "CAL-X")
