@@ -5,10 +5,14 @@
 //! the dog's x/y inside that strip via `set_companion_pos`; Rust only handles
 //! initial placement and reanchoring on scale-factor changes.
 
+use std::sync::atomic::Ordering;
+
 use serde::Serialize;
 use tauri::{
-    App, AppHandle, Emitter, LogicalPosition, Manager, Monitor, WebviewWindow, WindowEvent,
+    App, AppHandle, Emitter, LogicalPosition, Manager, Monitor, State, WebviewWindow, WindowEvent,
 };
+
+use crate::DialogOpen;
 
 const MARGIN_X: f64 = 12.0;
 const DEFAULT_DOCK_CLEARANCE: f64 = 80.0;
@@ -191,7 +195,7 @@ fn target_monitor(window: &WebviewWindow) -> tauri::Result<Option<Monitor>> {
 
 fn compute_bounds(
     window: &WebviewWindow,
-    beside_dock: bool,
+    dock_position: &str,
 ) -> tauri::Result<Option<CompanionBounds>> {
     let Some(monitor) = target_monitor(window)? else {
         return Ok(None);
@@ -200,32 +204,38 @@ fn compute_bounds(
     let area = monitor.size().to_logical::<f64>(scale);
     let origin = monitor.position().to_logical::<f64>(scale);
     let win_size = window.outer_size()?.to_logical::<f64>(scale);
-    // Beside the Dock there's nothing below her, so replace the Dock clearance
-    // with a small lift so she sits just above the screen's bottom edge.
-    let clearance = if beside_dock { BESIDE_DOCK_LIFT } else { dock_clearance() };
+    // Left/right of dock have nothing below them, so use a small lift instead
+    // of the full Dock clearance.
+    let clearance = if dock_position == "on-dock" { dock_clearance() } else { BESIDE_DOCK_LIFT };
     let y_offset = dog_y_offset();
     let y = origin.y + area.height - win_size.height - clearance + y_offset;
 
     // Horizontal walking strip.
     let monitor_left = origin.x;
     let monitor_right = origin.x + area.width;
-    let (strip_left, strip_right) = if beside_dock {
-        // Beside the Dock: roam the bottom-left, from the screen's left edge
-        // (x=0) up to where the centred Dock begins. macOS exposes no public
-        // API for the Dock's width, so use IRMA_DOCK_WIDTH as the estimated
-        // Dock footprint (default DEFAULT_DOCK_WIDTH).
-        let dock_w = dock_width().unwrap_or(DEFAULT_DOCK_WIDTH);
-        let dock_left = origin.x + area.width / 2.0 - dock_w / 2.0 - 50.0;
-        (monitor_left, dock_left)
-    } else {
-        // In front of the Dock: a centred strip (IRMA_DOCK_WIDTH wide), or the
-        // full monitor width when IRMA_DOCK_WIDTH=0.
-        match dock_width() {
-            Some(dw) => {
-                let center = origin.x + area.width / 2.0;
-                (center - dw / 2.0, center + dw / 2.0)
+    let (strip_left, strip_right) = match dock_position {
+        "left-of-dock" => {
+            // Roam from the screen's left edge up to where the centred Dock begins.
+            let dock_w = dock_width().unwrap_or(DEFAULT_DOCK_WIDTH);
+            let dock_left = origin.x + area.width / 2.0 - dock_w / 2.0 - 50.0;
+            (monitor_left, dock_left)
+        }
+        "right-of-dock" => {
+            // Roam from where the centred Dock ends to the screen's right edge.
+            let dock_w = dock_width().unwrap_or(DEFAULT_DOCK_WIDTH);
+            let dock_right = origin.x + area.width / 2.0 + dock_w / 2.0 + 50.0;
+            (dock_right, monitor_right)
+        }
+        _ => {
+            // "on-dock": a centred strip (IRMA_DOCK_WIDTH wide), or the full
+            // monitor width when IRMA_DOCK_WIDTH=0.
+            match dock_width() {
+                Some(dw) => {
+                    let center = origin.x + area.width / 2.0;
+                    (center - dw / 2.0, center + dw / 2.0)
+                }
+                None => (origin.x, origin.x + area.width),
             }
-            None => (origin.x, origin.x + area.width),
         }
     };
     let strip_left = strip_left.max(monitor_left);
@@ -247,7 +257,7 @@ fn compute_bounds(
 }
 
 fn place_companion(window: &WebviewWindow) -> tauri::Result<()> {
-    let Some(bounds) = compute_bounds(window, false)? else {
+    let Some(bounds) = compute_bounds(window, "left-of-dock")? else {
         eprintln!("[irma] place_companion: no monitor available");
         return Ok(());
     };
@@ -332,11 +342,38 @@ pub fn toggle_main(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn is_main_visible(app: AppHandle) -> bool {
+    app.get_webview_window("main")
+        .and_then(|w| w.is_visible().ok())
+        .unwrap_or(false)
+}
+
+/// True while the main window is actually *presented to the user*: on-screen
+/// AND the key (focused) window. `is_visible()` alone stays true when the user
+/// switches to another app (the window is merely occluded, not hidden), which
+/// would otherwise leave the companion stuck barking. The `DialogOpen` guard
+/// keeps her "present" while our own native folder picker steals key focus, so
+/// browsing for a folder doesn't break her out of bark mode.
+#[tauri::command]
+pub fn is_main_active(app: AppHandle, dialog_open: State<'_, DialogOpen>) -> bool {
+    let Some(win) = app.get_webview_window("main") else {
+        return false;
+    };
+    if !win.is_visible().unwrap_or(false) {
+        return false;
+    }
+    if dialog_open.0.load(Ordering::Acquire) {
+        return true;
+    }
+    win.is_focused().unwrap_or(false)
+}
+
+#[tauri::command]
 pub fn get_companion_bounds(
     window: WebviewWindow,
-    beside_dock: bool,
+    dock_position: String,
 ) -> Result<CompanionBounds, String> {
-    compute_bounds(&window, beside_dock)
+    compute_bounds(&window, &dock_position)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "no monitor available".to_string())
 }
@@ -349,10 +386,10 @@ pub fn set_companion_pos(window: WebviewWindow, x: f64, y: f64) -> Result<(), St
 }
 
 /// Show a native context menu on the companion window with placement options.
-/// `beside_dock` reflects the current setting so the active item gets a checkmark.
+/// `dock_position` reflects the current setting so the active item gets a checkmark.
 #[tauri::command]
-pub fn show_companion_context_menu(app: AppHandle, beside_dock: bool) -> Result<(), String> {
-    crate::tray::show_companion_menu(&app, beside_dock).map_err(|e| e.to_string())
+pub fn show_companion_context_menu(app: AppHandle, dock_position: String) -> Result<(), String> {
+    crate::tray::show_companion_menu(&app, &dock_position).map_err(|e| e.to_string())
 }
 
 /// Wire window-event listeners on both windows. Called once during setup.
@@ -384,8 +421,9 @@ pub fn wire_windows(app: &mut App) -> tauri::Result<()> {
                     emit_main_visibility(&app_handle, false);
                 }
                 WindowEvent::Focused(false) => {
-                    let _ = main_clone.hide();
-                    emit_main_visibility(&app_handle, false);
+                    // Do not auto-hide on focus loss — native dialogs (folder picker,
+                    // file input) all steal focus and would collapse the window.
+                    // The window hides only via the sprite-click toggle or the tray.
                 }
                 _ => {}
             }

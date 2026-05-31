@@ -14,10 +14,10 @@ use crate::windows;
 fn build_tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let toggle = MenuItem::with_id(app, "toggle", "Toggle Irma", true, None::<&str>)?;
     let sep1 = PredefinedMenuItem::separator(app)?;
-    let beside = CheckMenuItem::with_id(
+    let left = CheckMenuItem::with_id(
         app,
-        "companion_beside_dock",
-        "Beside the Dock",
+        "companion_left_of_dock",
+        "Left of Dock",
         true,
         true,
         None::<&str>,
@@ -30,10 +30,18 @@ fn build_tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         false,
         None::<&str>,
     )?;
+    let right = CheckMenuItem::with_id(
+        app,
+        "companion_right_of_dock",
+        "Right of Dock",
+        true,
+        false,
+        None::<&str>,
+    )?;
     let sep2 = PredefinedMenuItem::separator(app)?;
     let settings = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    Menu::with_items(app, &[&toggle, &sep1, &beside, &on_dock, &sep2, &settings, &quit])
+    Menu::with_items(app, &[&toggle, &sep1, &left, &on_dock, &right, &sep2, &settings, &quit])
 }
 
 /// Called from the global tray event listener in lib.rs to show the tray menu.
@@ -46,13 +54,13 @@ pub fn popup_tray_menu(app: &AppHandle) -> tauri::Result<()> {
 }
 
 /// Show a native popup context menu on the companion window with placement options.
-pub fn show_companion_menu(app: &AppHandle, beside_dock: bool) -> tauri::Result<()> {
-    let beside = CheckMenuItem::with_id(
+pub fn show_companion_menu(app: &AppHandle, dock_position: &str) -> tauri::Result<()> {
+    let left = CheckMenuItem::with_id(
         app,
-        "companion_beside_dock",
-        "Beside the Dock",
+        "companion_left_of_dock",
+        "Left of Dock",
         true,
-        beside_dock,
+        dock_position == "left-of-dock",
         None::<&str>,
     )?;
     let on_dock = CheckMenuItem::with_id(
@@ -60,10 +68,18 @@ pub fn show_companion_menu(app: &AppHandle, beside_dock: bool) -> tauri::Result<
         "companion_on_dock",
         "On the Dock",
         true,
-        !beside_dock,
+        dock_position == "on-dock",
         None::<&str>,
     )?;
-    let menu = Menu::with_items(app, &[&beside, &on_dock])?;
+    let right = CheckMenuItem::with_id(
+        app,
+        "companion_right_of_dock",
+        "Right of Dock",
+        true,
+        dock_position == "right-of-dock",
+        None::<&str>,
+    )?;
+    let menu = Menu::with_items(app, &[&left, &on_dock, &right])?;
     if let Some(window) = app.get_webview_window("companion") {
         let _ = window.popup_menu(&menu);
     }
@@ -90,11 +106,14 @@ pub fn init(app: &AppHandle) -> tauri::Result<()> {
                         eprintln!("[irma] toggle_main_internal failed: {err}");
                     }
                 }
-                "companion_beside_dock" => {
-                    let _ = app.emit("companion:placement", "beside-dock");
+                "companion_left_of_dock" => {
+                    let _ = app.emit("companion:placement", "left-of-dock");
                 }
                 "companion_on_dock" => {
                     let _ = app.emit("companion:placement", "on-dock");
+                }
+                "companion_right_of_dock" => {
+                    let _ = app.emit("companion:placement", "right-of-dock");
                 }
                 "settings" => {
                     windows::show_main(app);

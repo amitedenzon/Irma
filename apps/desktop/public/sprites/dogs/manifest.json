@@ -47,6 +47,11 @@
 			"frames": [56, 57, 58, 59, 60, 61, 62, 63],
 			"fps": 8,
 			"loop": true
+		},
+		"treat_partial": {
+			"frames": [56, 57, 58, 59, 60, 61],
+			"fps": 8,
+			"loop": true
 		}
 	}
 }

@@ -2,16 +2,29 @@ mod claude_pty;
 mod tray;
 mod windows;
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconEvent},
     Emitter, Manager,
 };
 
+/// Shared flag — true while a native file/folder dialog is open.
+/// The main-window `Focused(false)` handler skips the auto-hide while this is set,
+/// preventing the window from collapsing the moment the picker steals focus.
+#[derive(Default)]
+pub struct DialogOpen(pub Arc<AtomicBool>);
+
 /// Open a folder picker dialog, briefly activating the app so macOS allows it.
 /// Uses a oneshot channel so the async command waits without blocking the runtime.
 #[tauri::command]
-async fn browse_folder(app: tauri::AppHandle) -> Result<Option<String>, String> {
+async fn browse_folder(
+    app: tauri::AppHandle,
+    dialog_open: tauri::State<'_, DialogOpen>,
+) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
+
+    dialog_open.0.store(true, Ordering::Release);
 
     #[cfg(target_os = "macos")]
     let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
@@ -24,6 +37,8 @@ async fn browse_folder(app: tauri::AppHandle) -> Result<Option<String>, String> 
 
     #[cfg(target_os = "macos")]
     let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
+    dialog_open.0.store(false, Ordering::Release);
 
     Ok(result.map(|p| p.to_string()))
 }
@@ -39,9 +54,12 @@ pub fn run() {
             None,
         ))
         .manage(claude_pty::ClaudePty::default())
+        .manage(DialogOpen::default())
         .invoke_handler(tauri::generate_handler![
             windows::position_companion,
             windows::toggle_main,
+            windows::is_main_visible,
+            windows::is_main_active,
             windows::get_companion_bounds,
             windows::set_companion_pos,
             windows::show_companion_context_menu,
@@ -58,11 +76,14 @@ pub fn run() {
             // Handle companion context-menu placement selections.
             app.on_menu_event(|app, event| {
                 match event.id().as_ref() {
-                    "companion_beside_dock" => {
-                        let _ = app.emit("companion:placement", "beside-dock");
+                    "companion_left_of_dock" => {
+                        let _ = app.emit("companion:placement", "left-of-dock");
                     }
                     "companion_on_dock" => {
                         let _ = app.emit("companion:placement", "on-dock");
+                    }
+                    "companion_right_of_dock" => {
+                        let _ = app.emit("companion:placement", "right-of-dock");
                     }
                     _ => {}
                 }

@@ -35,6 +35,7 @@ const FALLBACK_MANIFEST: SpriteManifest = {
     lay: { frames: [16, 17, 18, 19, 20, 21], fps: 4, loop: true },
     sit_bark: { frames: [8, 9, 10, 11, 12, 13, 14, 15], fps: 6, loop: true },
     treat: { frames: [56, 57, 58, 59, 60, 61, 62, 63], fps: 8, loop: true },
+    treat_partial: { frames: [56, 57, 58, 59, 60, 61], fps: 8, loop: true },
   },
 };
 
@@ -82,7 +83,8 @@ type DogVariant =
   | "lay"
   | "cuddle"
   | "sit_bark"
-  | "treat";
+  | "treat"
+  | "treat_partial";
 
 interface DogRender {
   variant: DogVariant;
@@ -215,8 +217,6 @@ export function Companion() {
     let raf = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let mode: "autonomous" | "bark" | "treat" = "autonomous";
-    let modeBeforeTreat: "autonomous" | "bark" = "autonomous";
-    let unlistenVis: UnlistenFn | undefined;
     let unlistenTreat: UnlistenFn | undefined;
 
     const clearTimers = (): void => {
@@ -238,7 +238,7 @@ export function Companion() {
     const refreshBounds = async (): Promise<CompanionBounds | null> => {
       try {
         const b = (await invoke("get_companion_bounds", {
-          besideDock: dockPosition === "beside-dock",
+          dockPosition,
         })) as CompanionBounds;
         const migrating = monitorsDiffer(boundsRef.current, b);
         boundsRef.current = b;
@@ -345,7 +345,8 @@ export function Companion() {
     };
 
     const exitBarkMode = (): void => {
-      if (mode !== "bark") return;
+      // Also cancel treat mid-sequence — window closed while cheese animation played.
+      if (mode !== "bark" && mode !== "treat") return;
       mode = "autonomous";
       clearTimers();
       // lay (1 loop) → cuddle → resume walking
@@ -354,29 +355,38 @@ export function Companion() {
       console.info("[companion] exit bark mode → lay → cuddle → walk");
     };
 
-    // ---- Treat mode (steak button) ------------------------------------
-    const TREAT_FRAMES = 8;
-    const TREAT_FPS = 8;
-    const TREAT_LOOPS = 2;
-    const TREAT_DURATION_MS = (TREAT_FRAMES / TREAT_FPS) * TREAT_LOOPS * 1000;
+    // ---- Treat mode (cheese button) ------------------------------------
+    // Sequence: 2 full treat cycles → 6-frame treat cycle → 1 stand cycle → sit_bark
+    const TREAT_FULL_MS  = (8 / 8) * 2 * 1000; // 2000ms — 2 × 8 frames @ 8 fps
+    const TREAT_SHORT_MS = (6 / 8) * 1000;       //  750ms — 6 frames @ 8 fps
+    // STAND_MS (1200ms) is already defined above: 6 frames @ 5 fps
 
     const enterTreatMode = (): void => {
       if (cancelled) return;
-      if (mode !== "treat") modeBeforeTreat = mode as "autonomous" | "bark";
       mode = "treat";
       clearTimers();
+
+      // Phase 1 — 2 full treat loops
       setDog((d) => ({ variant: "treat", facingRight: d.facingRight }));
+
       timer = setTimeout(() => {
-        if (cancelled) return;
-        if (modeBeforeTreat === "bark") {
-          mode = "bark";
-          enterBarkMode();
-        } else {
-          mode = "autonomous";
-          setDog((d) => ({ variant: "lay", facingRight: d.facingRight }));
-          timer = setTimeout(() => startCuddle(), LAY_MS);
-        }
-      }, TREAT_DURATION_MS);
+        if (cancelled || mode !== "treat") return;
+        // Phase 2 — first 6 frames of treat (no tail frames)
+        setDog((d) => ({ variant: "treat_partial", facingRight: d.facingRight }));
+
+        timer = setTimeout(() => {
+          if (cancelled || mode !== "treat") return;
+          // Phase 3 — one full standing cycle
+          setDog((d) => ({ variant: "stand", facingRight: d.facingRight }));
+
+          timer = setTimeout(() => {
+            if (cancelled) return;
+            // Phase 4 — sit and bark
+            mode = "bark";
+            setDog((d) => ({ variant: "sit_bark", facingRight: d.facingRight }));
+          }, STAND_MS);
+        }, TREAT_SHORT_MS);
+      }, TREAT_FULL_MS);
     };
 
     // ---- Bootstrap ----------------------------------------------------
@@ -394,16 +404,6 @@ export function Companion() {
       }
     })();
 
-    listen<boolean>("main:visibility", (event) => {
-      if (cancelled) return;
-      if (event.payload) enterBarkMode();
-      else exitBarkMode();
-    })
-      .then((u) => {
-        unlistenVis = u;
-      })
-      .catch((e) => console.error("[companion] listen main:visibility failed", e));
-
     listen<void>("companion:treat", () => {
       if (cancelled) return;
       enterTreatMode();
@@ -413,10 +413,25 @@ export function Companion() {
       })
       .catch((e) => console.error("[companion] listen companion:treat failed", e));
 
+    // Poll whether the main window is actually presented to the user every
+    // 250 ms. We key off "active" (visible AND focused), not just "visible":
+    // a window that's merely on-screen but behind another app (the user
+    // clicked away) must still calm the dog. `is_main_active` returns false
+    // the moment the window loses key focus — except while our own folder
+    // picker is up — so she leaves bark mode no matter how the window is
+    // dismissed (X, companion, tray, app-switch, hide, …).
+    const visibilityPoll = setInterval(() => {
+      void invoke<boolean>("is_main_active").then((active) => {
+        if (cancelled) return;
+        if (active && mode === "autonomous") enterBarkMode();
+        else if (!active && (mode === "bark" || mode === "treat")) exitBarkMode();
+      });
+    }, 250);
+
     return () => {
       cancelled = true;
       clearTimers();
-      if (unlistenVis) unlistenVis();
+      clearInterval(visibilityPoll);
       if (unlistenTreat) unlistenTreat();
     };
   }, [dockPosition]);
@@ -434,7 +449,7 @@ export function Companion() {
   const onContextMenu = (e: React.MouseEvent): void => {
     e.preventDefault();
     void invoke("show_companion_context_menu", {
-      besideDock: dockPosition === "beside-dock",
+      dockPosition,
     }).catch((e: unknown) =>
       console.error("[companion] show_companion_context_menu failed", e),
     );

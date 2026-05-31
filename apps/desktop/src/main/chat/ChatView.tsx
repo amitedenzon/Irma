@@ -41,9 +41,10 @@ export function ChatView({
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Fetch available local models on mount
+  // Fetch available local models on mount — include any GGUF folder saved in settings
   useEffect(() => {
-    fetchLocalModels()
+    const savedPath = localStorage.getItem("irma.settings.modelsPath") ?? undefined;
+    fetchLocalModels(savedPath)
       .then((res) => {
         setModels(res.models);
         if (res.models.length > 0) {

@@ -5,7 +5,7 @@
 
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 
-export type DockPosition = "on-dock" | "beside-dock";
+export type DockPosition = "on-dock" | "left-of-dock" | "right-of-dock";
 
 export interface Companion {
   id: string;
@@ -24,7 +24,7 @@ export const COMPANIONS: readonly Companion[] = [
 ] as const;
 
 export const DEFAULT_COMPANION_ID: string = COMPANIONS[0].id;
-export const DEFAULT_DOCK_POSITION: DockPosition = "beside-dock";
+export const DEFAULT_DOCK_POSITION: DockPosition = "left-of-dock";
 
 export interface IrmaSettings {
   companionId: string;
@@ -48,7 +48,10 @@ function readCompanionId(): string {
 
 function readDockPosition(): DockPosition {
   const raw = localStorage.getItem(DOCK_KEY);
-  return raw === "on-dock" || raw === "beside-dock" ? raw : DEFAULT_DOCK_POSITION;
+  if (raw === "beside-dock") return "left-of-dock"; // migrate legacy value
+  return raw === "on-dock" || raw === "left-of-dock" || raw === "right-of-dock"
+    ? raw
+    : DEFAULT_DOCK_POSITION;
 }
 
 export function loadSettings(): IrmaSettings {
