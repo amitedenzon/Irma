@@ -1,4 +1,9 @@
+import AppKit
 import Foundation
+
+// Establish a GUI activation context so macOS 15 will present the TCC
+// permission dialog when request-access is called from a terminal.
+NSApplication.shared.setActivationPolicy(.accessory)
 
 let args = Array(CommandLine.arguments.dropFirst())
 if args.first == "--version" {
