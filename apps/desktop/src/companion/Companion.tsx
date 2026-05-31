@@ -343,7 +343,7 @@ export function Companion() {
       const durMs = (Math.abs(targetX - startX) / WALK_SPEED_PX_PER_SEC) * 1000;
       const startT = performance.now();
       const step = (): void => {
-        if (cancelled || mode !== "autonomous") return;
+        if (cancelled || mode !== "autonomous" || draggingRef.current) return;
         const t = Math.min(1, (performance.now() - startT) / durMs);
         const x = startX + (targetX - startX) * t;
         moveTo(x);
@@ -419,6 +419,8 @@ export function Companion() {
       const bounds = await refreshBounds();
       if (!bounds || cancelled) return;
       const fallbackCenter = bounds.minX + (bounds.maxX - bounds.minX) / 2;
+      // startXRef is the drop landing-x handed off by onPointerUp; consume it
+      // once (clear below) so a later non-drop re-boot falls back to center.
       const startX = clamp(
         startXRef.current ?? fallbackCenter,
         bounds.minX,
@@ -530,12 +532,22 @@ export function Companion() {
           x: number;
           bounds: CompanionBounds;
         };
+        // Normalize "" → null so it matches what readMonitorName() will later
+        // report; otherwise the async settings-changed event would re-set a
+        // different value and trigger a redundant second re-bootstrap.
+        const nextMonitor =
+          drop.monitorName.length > 0 ? drop.monitorName : null;
         boundsRef.current = drop.bounds;
         startXRef.current = drop.x;
         await invoke("set_companion_pos", { x: drop.x, y: drop.bounds.y });
         draggingRef.current = false;
-        saveCompanionPlacement(drop.monitorName, drop.dockPosition);
-        // Force a brain re-bootstrap even if monitor/zone are unchanged.
+        saveCompanionPlacement(nextMonitor, drop.dockPosition);
+        // Apply locally AND bump the version in one batch so the brain re-boots
+        // exactly once (reading startXRef before it's cleared). The cross-window
+        // settings event that saveCompanionPlacement fires then re-sets these
+        // same values → no-op, no second re-bootstrap.
+        setMonitorName(nextMonitor);
+        setDockPosition(drop.dockPosition);
         setPlacementVersion((v) => v + 1);
       } catch (err) {
         console.error("[companion] resolve_companion_drop failed", err);
