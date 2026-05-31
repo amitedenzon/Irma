@@ -7,6 +7,7 @@ import type { AgentState, Project } from "../lib/types";
 import { ProjectsView } from "./projects/ProjectsView";
 import { ChatView } from "./chat/ChatView";
 import { SettingsView } from "./settings/SettingsView";
+import { ScheduleView } from "./schedule/ScheduleView";
 import { BriefIcon, SettingsIcon } from "../lib/icons";
 
 const LOADING_SCREEN_KEY = "irma.settings.loadingScreen";
@@ -54,7 +55,7 @@ function useApiReady() {
   return { ready, dots };
 }
 
-type Tab = "projects" | "chat" | "settings";
+type Tab = "projects" | "chat" | "schedule" | "settings";
 
 type BriefSendState = "idle" | "sending" | "sent" | "error";
 
@@ -181,6 +182,11 @@ export function App() {
             tabVisible={tab === "chat"}
           />
         </div>
+        {tab === "schedule" && (
+          <div className="absolute inset-0 overflow-y-auto">
+            <ScheduleView />
+          </div>
+        )}
         {/* Settings fills the pane; inner tab bar is sticky, content scrolls */}
         {tab === "settings" && (
           <div className="absolute inset-0 flex flex-col">
@@ -326,6 +332,7 @@ function Header({
       <nav className="flex items-center gap-1 -mb-px">
         <Tab id="projects" current={tab} onClick={onTabChange}>Projects</Tab>
         <Tab id="chat"     current={tab} onClick={onTabChange}>Chat</Tab>
+        <Tab id="schedule" current={tab} onClick={onTabChange}>Schedule</Tab>
         <div className="ml-auto flex items-center">
           <button
             type="button"

@@ -47,6 +47,12 @@ async def link(request: Request) -> LinkResponse:
     if not granted:
         raise HTTPException(status_code=403, detail="reminders access denied")
 
+    from irma_api.routers.settings import _read_env, _write_env
+
+    env = _read_env()
+    env["REMINDERS_LINKED"] = "true"
+    _write_env(env)
+
     request.app.state.settings.reminders_linked = True
     svc = factory()
     request.app.state.reminder_sync = svc
@@ -62,6 +68,13 @@ async def unlink(request: Request) -> Response:
     await conn.execute("UPDATE task SET reminder_uuid = NULL")
     await conn.execute("UPDATE project SET reminder_calendar_id = NULL")
     await conn.commit()
+
+    from irma_api.routers.settings import _read_env, _write_env
+
+    env = _read_env()
+    env["REMINDERS_LINKED"] = "false"
+    _write_env(env)
+
     request.app.state.settings.reminders_linked = False
     request.app.state.reminder_sync = None
     return Response(status_code=status.HTTP_204_NO_CONTENT)

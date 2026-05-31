@@ -70,7 +70,9 @@ class ListTasksTool:
         name="list_tasks",
         description=(
             "List tasks, optionally filtered by project, status, due-by, or "
-            "scheduled window. Defaults to all tasks across all projects."
+            "scheduled window. Defaults to all tasks across all projects. "
+            "To filter by project name, first call list_projects to get the "
+            "project_id, then pass it here."
         ),
         input_schema={
             "type": "object",
@@ -85,7 +87,10 @@ class ListTasksTool:
                 },
                 "due_before": {
                     "type": "string",
-                    "description": "ISO date (YYYY-MM-DD).",
+                    "description": (
+                        "Inclusive upper bound on due_date (YYYY-MM-DD). "
+                        "Pass today's date to get all tasks due today or overdue."
+                    ),
                 },
                 "scheduled_from": {"type": "string", "description": "ISO date."},
                 "scheduled_to": {"type": "string", "description": "ISO date."},

@@ -7,6 +7,28 @@ import {
   useSensors,
   type DragEndEvent,
 } from "@dnd-kit/core";
+import type { PointerEvent } from "react";
+
+function isInteractive(el: Element | null): boolean {
+  const tags = new Set(["INPUT", "BUTTON", "SELECT", "TEXTAREA", "A", "LABEL"]);
+  while (el) {
+    if (tags.has(el.tagName)) return true;
+    el = el.parentElement;
+  }
+  return false;
+}
+
+class SmartPointerSensor extends PointerSensor {
+  static activators = [
+    {
+      eventName: "onPointerDown" as const,
+      handler: ({ nativeEvent }: PointerEvent<Element>) => {
+        if (!nativeEvent.isPrimary || nativeEvent.button !== 0) return false;
+        return !isInteractive(nativeEvent.target as Element);
+      },
+    },
+  ];
+}
 import {
   SortableContext,
   arrayMove,
@@ -87,7 +109,7 @@ export function ProjectsView({
   });
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(SmartPointerSensor, { activationConstraint: { distance: 8 } }),
   );
 
   const filtered = projects.filter((p) => showArchived || p.status !== "archived");

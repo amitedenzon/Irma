@@ -134,7 +134,10 @@ class ReadCalendarTool:
         client = ClientCreds(
             client_id=s.google_oauth_client_id.get_secret_value(),
             client_secret=s.google_oauth_client_secret.get_secret_value(),
-            scopes=["https://www.googleapis.com/auth/calendar.events"],
+            scopes=[
+                "https://www.googleapis.com/auth/calendar.events",
+                "https://www.googleapis.com/auth/calendar.readonly",
+            ],
         )
         user = UserCreds(
             refresh_token=s.google_oauth_refresh_token.get_secret_value(),
@@ -150,17 +153,31 @@ class ReadCalendarTool:
     ) -> list[dict[str, Any]]:
         async with Aiogoogle(user_creds=user, client_creds=client) as g:
             calendar = await g.discover("calendar", "v3")
-            req = calendar.events.list(
-                calendarId="primary",
-                timeMin=time_min,
-                timeMax=time_max,
-                singleEvents=True,
-                orderBy="startTime",
-                maxResults=_MAX_EVENTS,
-            )
-            resp = await g.as_user(req)
-            items = cast(dict[str, Any], resp).get("items", [])
-            return cast(list[dict[str, Any]], items)
+
+            cal_resp = cast(dict[str, Any], await g.as_user(calendar.calendarList.list(maxResults=250)))
+            exclude = set(self._settings.irma_calendar_exclude_ids)
+            cal_ids = [c["id"] for c in cast(list[dict[str, Any]], cal_resp.get("items", [])) if c.get("id") and c["id"] not in exclude]
+
+            seen: set[str] = set()
+            all_events: list[dict[str, Any]] = []
+            for cal_id in cal_ids:
+                resp = cast(dict[str, Any], await g.as_user(calendar.events.list(
+                    calendarId=cal_id,
+                    timeMin=time_min,
+                    timeMax=time_max,
+                    singleEvents=True,
+                    orderBy="startTime",
+                    maxResults=_MAX_EVENTS,
+                )))
+                for e in cast(list[dict[str, Any]], resp.get("items", [])):
+                    eid = str(e.get("id") or "")
+                    if eid and eid in seen:
+                        continue
+                    seen.add(eid)
+                    all_events.append(e)
+
+        all_events.sort(key=lambda e: (e.get("start") or {}).get("dateTime") or (e.get("start") or {}).get("date") or "")
+        return all_events[:_MAX_EVENTS]
 
     @staticmethod
     def _has_start(event: dict[str, Any]) -> bool:
@@ -346,7 +363,10 @@ class CreateCalendarEventTool:
         client = ClientCreds(
             client_id=s.google_oauth_client_id.get_secret_value(),
             client_secret=s.google_oauth_client_secret.get_secret_value(),
-            scopes=["https://www.googleapis.com/auth/calendar.events"],
+            scopes=[
+                "https://www.googleapis.com/auth/calendar.events",
+                "https://www.googleapis.com/auth/calendar.readonly",
+            ],
         )
         user = UserCreds(
             refresh_token=s.google_oauth_refresh_token.get_secret_value(),
