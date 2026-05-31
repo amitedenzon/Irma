@@ -132,6 +132,7 @@ pub fn run() {
             windows::is_main_active,
             windows::get_companion_bounds,
             windows::set_companion_pos,
+            windows::resolve_companion_drop,
             windows::show_companion_context_menu,
             browse_folder,
             claude_pty::claude_pty_spawn,

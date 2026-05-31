@@ -398,6 +398,82 @@ pub struct CompanionBounds {
     pub dog_y_offset: f64,
 }
 
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolvedDrop {
+    /// Monitor the window landed on (empty string if the monitor is unnamed).
+    pub monitor_name: String,
+    /// Resolved zone: "left-of-dock" | "on-dock" | "right-of-dock".
+    pub dock_position: String,
+    /// Landing x (logical px, window top-left), clamped into the zone strip.
+    pub x: f64,
+    pub bounds: CompanionBounds,
+}
+
+/// Resolve where the companion should snap to, based on its current (post-drag)
+/// window position. Reads the live window geometry so the result is correct even
+/// if the live drag drifted under mixed DPI.
+#[tauri::command]
+pub fn resolve_companion_drop(window: WebviewWindow) -> Result<ResolvedDrop, String> {
+    let pos = window.outer_position().map_err(|e| e.to_string())?;
+    let size = window.outer_size().map_err(|e| e.to_string())?;
+    let center_phys_x = pos.x as f64 + size.width as f64 / 2.0;
+    let center_phys_y = pos.y as f64 + size.height as f64 / 2.0;
+
+    // Monitor containing the window center; fall back to primary.
+    let monitors = window.available_monitors().map_err(|e| e.to_string())?;
+    let monitor = monitors
+        .into_iter()
+        .find(|m| {
+            let mp = m.position();
+            let ms = m.size();
+            let x0 = mp.x as f64;
+            let y0 = mp.y as f64;
+            center_phys_x >= x0
+                && center_phys_x < x0 + ms.width as f64
+                && center_phys_y >= y0
+                && center_phys_y < y0 + ms.height as f64
+        })
+        .or(window.primary_monitor().map_err(|e| e.to_string())?)
+        .ok_or_else(|| "no monitor available".to_string())?;
+
+    let scale = monitor.scale_factor();
+    let area = monitor.size().to_logical::<f64>(scale);
+    let origin = monitor.position().to_logical::<f64>(scale);
+    let win_size = size.to_logical::<f64>(scale);
+    let center_x = center_phys_x / scale;
+
+    let is_primary = is_primary_monitor(&window, &monitor).map_err(|e| e.to_string())?;
+    let (dock_left, dock_right) = if is_primary {
+        let dock_w = dock_width().unwrap_or(DEFAULT_DOCK_WIDTH);
+        let c = origin.x + area.width / 2.0;
+        (c - dock_w / 2.0 - 50.0, c + dock_w / 2.0 + 50.0)
+    } else {
+        (0.0, 0.0)
+    };
+    let z = ZoneInput {
+        monitor_left: origin.x,
+        monitor_right: origin.x + area.width,
+        is_primary,
+        dock_left,
+        dock_right,
+    };
+    // Deterministic tie-break for an exact-center secondary drop (measure-zero).
+    let tie_left = (pos.x & 1) == 0;
+    let zone = decide_drop_zone(center_x, &z, tie_left);
+
+    let bounds = compute_bounds_for(&window, &monitor, zone).map_err(|e| e.to_string())?;
+    let landing_x = (center_x - win_size.width / 2.0).clamp(bounds.min_x, bounds.max_x);
+    let monitor_name = monitor.name().cloned().unwrap_or_default();
+
+    Ok(ResolvedDrop {
+        monitor_name,
+        dock_position: zone.to_string(),
+        x: landing_x,
+        bounds,
+    })
+}
+
 fn emit_main_visibility(app: &AppHandle, visible: bool) {
     if let Err(err) = app.emit(MAIN_VISIBILITY_EVENT, visible) {
         eprintln!("[irma] emit {MAIN_VISIBILITY_EVENT} failed: {err}");
