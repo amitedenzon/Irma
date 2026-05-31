@@ -73,6 +73,14 @@ class Settings(BaseSettings):
     irma_dock_clearance: float = 80.0
     irma_db_path: Path = Path("./irma.db")
 
+    # --- Apple Reminders -----------------------------------------------------
+    reminders_linked: bool = False
+    reminders_calendar_prefix: str = "Irma · "
+    reminders_sync_interval_seconds: int = 60
+    reminders_helper_path: Path = Path(
+        "tools/reminders-helper/bin/irma-reminders-helper"
+    )
+
     # --- HTTP ----------------------------------------------------------------
     irma_api_host: str = "127.0.0.1"
     irma_api_port: int = 8765
