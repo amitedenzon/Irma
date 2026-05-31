@@ -1,0 +1,10 @@
+[build]
+incremental = true
+
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "link-arg=-fuse-ld=/usr/bin/ld"]
+
+[profile.dev]
+opt-level = 0
+debug = 0          # no debug symbols in dev — halves link time
+split-debuginfo = "unpacked"

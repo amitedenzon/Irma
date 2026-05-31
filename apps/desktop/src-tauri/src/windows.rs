@@ -5,16 +5,29 @@
 //! the dog's x/y inside that strip via `set_companion_pos`; Rust only handles
 //! initial placement and reanchoring on scale-factor changes.
 
+use std::sync::atomic::Ordering;
+
 use serde::Serialize;
 use tauri::{
-    App, AppHandle, Emitter, LogicalPosition, Manager, Monitor, WebviewWindow, WindowEvent,
+    App, AppHandle, Emitter, LogicalPosition, Manager, Monitor, State, WebviewWindow, WindowEvent,
 };
+
+use crate::DialogOpen;
 
 const MARGIN_X: f64 = 12.0;
 const DEFAULT_DOCK_CLEARANCE: f64 = 80.0;
 const DEFAULT_DOG_Y_OFFSET: f64 = 28.0;
 const DEFAULT_DOCK_WIDTH: f64 = 450.0;
+/// Dock tile layout factors, used to reconstruct the Dock's pixel width from
+/// `com.apple.dock` preferences (mirrors the approach used by lil-agents).
+const DEFAULT_DOCK_TILESIZE: f64 = 48.0;
+const DOCK_TILE_SLOT_FACTOR: f64 = 1.25;
+const DOCK_DIVIDER_WIDTH: f64 = 12.0;
+const DOCK_EDGE_FUDGE: f64 = 1.15;
 const MAIN_VISIBILITY_EVENT: &str = "main:visibility";
+/// Vertical lift (logical px) above the screen's bottom edge when she's beside
+/// the Dock — sits her slightly off the floor rather than flush.
+const BESIDE_DOCK_LIFT: f64 = 28.0;
 
 fn env_f64(key: &str, default: f64) -> f64 {
     std::env::var(key)
@@ -34,19 +47,105 @@ fn dog_y_offset() -> f64 {
     env_f64("IRMA_DOG_Y_OFFSET", DEFAULT_DOG_Y_OFFSET)
 }
 
-/// Width (logical px) of the horizontal walking strip, centered on the
-/// monitor. Defaults to 490 — calibrated for a typical macOS Dock. Set
-/// `IRMA_DOCK_WIDTH=0` to allow the dog to walk the entire monitor width.
+/// Width (logical px) of the centred Dock footprint, used to size the walking
+/// strip and to locate the Dock's left edge for "beside the Dock" mode.
+///
+/// Resolution order: an explicit `IRMA_DOCK_WIDTH` env var wins (`0` ⇒ no strip,
+/// i.e. roam the full monitor width); otherwise the width is measured live from
+/// the Dock's own preferences; failing that, `DEFAULT_DOCK_WIDTH`.
 fn dock_width() -> Option<f64> {
-    let val = std::env::var("IRMA_DOCK_WIDTH")
-        .ok()
-        .and_then(|s| s.parse::<f64>().ok())
-        .unwrap_or(DEFAULT_DOCK_WIDTH);
-    if val > 0.0 {
-        Some(val)
-    } else {
-        None
+    if let Ok(raw) = std::env::var("IRMA_DOCK_WIDTH") {
+        if let Ok(val) = raw.parse::<f64>() {
+            return if val > 0.0 { Some(val) } else { None };
+        }
     }
+    Some(measured_dock_width().unwrap_or(DEFAULT_DOCK_WIDTH))
+}
+
+/// Read a single scalar value from the `com.apple.dock` preferences domain via
+/// `defaults`. Returns None if the key is unset or unreadable.
+fn dock_default(key: &str) -> Option<String> {
+    let out = std::process::Command::new("/usr/bin/defaults")
+        .args(["read", "com.apple.dock", key])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let value = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value)
+    }
+}
+
+/// Count the elements of an array-valued `com.apple.dock` preference. Each Dock
+/// tile is one dictionary carrying a `GUID` entry, so we count those lines.
+fn dock_array_count(key: &str) -> usize {
+    let Some(out) = std::process::Command::new("/usr/bin/defaults")
+        .args(["read", "com.apple.dock", key])
+        .output()
+        .ok()
+    else {
+        return 0;
+    };
+    if !out.status.success() {
+        return 0;
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter(|line| line.trim_start().starts_with("GUID ="))
+        .count()
+}
+
+/// Best-effort Dock width (logical px), reconstructed from the Dock's own
+/// preferences the same way the Dock lays its tiles out: tile size × icon count
+/// + a divider between each populated group, plus a small edge-padding fudge.
+/// Port of lil-agents' `getDockIconArea`. Returns None only if the layout works
+/// out to zero tiles (the fallback below normally prevents that).
+fn measured_dock_width() -> Option<f64> {
+    let tile_size = dock_default("tilesize")
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(DEFAULT_DOCK_TILESIZE);
+    let slot = tile_size * DOCK_TILE_SLOT_FACTOR;
+
+    let mut persistent_apps = dock_array_count("persistent-apps");
+    let mut persistent_others = dock_array_count("persistent-others");
+    // Fallback when prefs can't be read (sandbox / empty Dock): assume a
+    // typical Dock so we still produce a sane width.
+    if persistent_apps == 0 && persistent_others == 0 {
+        persistent_apps = 5;
+        persistent_others = 3;
+    }
+
+    let show_recents = dock_default("show-recents")
+        .map(|s| s == "1")
+        .unwrap_or(true);
+    let recent_apps = if show_recents {
+        dock_array_count("recent-apps")
+    } else {
+        0
+    };
+
+    let total_icons = persistent_apps + persistent_others + recent_apps;
+    if total_icons == 0 {
+        return None;
+    }
+
+    let mut dividers = 0usize;
+    if persistent_apps > 0 && (persistent_others > 0 || recent_apps > 0) {
+        dividers += 1;
+    }
+    if persistent_others > 0 && recent_apps > 0 {
+        dividers += 1;
+    }
+    if show_recents && recent_apps > 0 {
+        dividers += 1;
+    }
+
+    let width = slot * total_icons as f64 + dividers as f64 * DOCK_DIVIDER_WIDTH;
+    Some(width * DOCK_EDGE_FUDGE)
 }
 
 /// Pick the monitor that contains the system cursor, so the dog follows
@@ -94,7 +193,10 @@ fn target_monitor(window: &WebviewWindow) -> tauri::Result<Option<Monitor>> {
     cursor_monitor(window)
 }
 
-fn compute_bounds(window: &WebviewWindow) -> tauri::Result<Option<CompanionBounds>> {
+fn compute_bounds(
+    window: &WebviewWindow,
+    dock_position: &str,
+) -> tauri::Result<Option<CompanionBounds>> {
     let Some(monitor) = target_monitor(window)? else {
         return Ok(None);
     };
@@ -102,21 +204,40 @@ fn compute_bounds(window: &WebviewWindow) -> tauri::Result<Option<CompanionBound
     let area = monitor.size().to_logical::<f64>(scale);
     let origin = monitor.position().to_logical::<f64>(scale);
     let win_size = window.outer_size()?.to_logical::<f64>(scale);
-    let clearance = dock_clearance();
+    // Left/right of dock have nothing below them, so use a small lift instead
+    // of the full Dock clearance.
+    let clearance = if dock_position == "on-dock" { dock_clearance() } else { BESIDE_DOCK_LIFT };
     let y_offset = dog_y_offset();
     let y = origin.y + area.height - win_size.height - clearance + y_offset;
 
-    // Horizontal walking strip. If IRMA_DOCK_WIDTH is set, center a strip of
-    // that width on the monitor; otherwise allow the full width.
-    let (strip_left, strip_right) = match dock_width() {
-        Some(dw) => {
-            let center = origin.x + area.width / 2.0;
-            (center - dw / 2.0, center + dw / 2.0)
-        }
-        None => (origin.x, origin.x + area.width),
-    };
+    // Horizontal walking strip.
     let monitor_left = origin.x;
     let monitor_right = origin.x + area.width;
+    let (strip_left, strip_right) = match dock_position {
+        "left-of-dock" => {
+            // Roam from the screen's left edge up to where the centred Dock begins.
+            let dock_w = dock_width().unwrap_or(DEFAULT_DOCK_WIDTH);
+            let dock_left = origin.x + area.width / 2.0 - dock_w / 2.0 - 50.0;
+            (monitor_left, dock_left)
+        }
+        "right-of-dock" => {
+            // Roam from where the centred Dock ends to the screen's right edge.
+            let dock_w = dock_width().unwrap_or(DEFAULT_DOCK_WIDTH);
+            let dock_right = origin.x + area.width / 2.0 + dock_w / 2.0 + 50.0;
+            (dock_right, monitor_right)
+        }
+        _ => {
+            // "on-dock": a centred strip (IRMA_DOCK_WIDTH wide), or the full
+            // monitor width when IRMA_DOCK_WIDTH=0.
+            match dock_width() {
+                Some(dw) => {
+                    let center = origin.x + area.width / 2.0;
+                    (center - dw / 2.0, center + dw / 2.0)
+                }
+                None => (origin.x, origin.x + area.width),
+            }
+        }
+    };
     let strip_left = strip_left.max(monitor_left);
     let strip_right = strip_right.min(monitor_right);
     let min_x = strip_left;
@@ -136,7 +257,7 @@ fn compute_bounds(window: &WebviewWindow) -> tauri::Result<Option<CompanionBound
 }
 
 fn place_companion(window: &WebviewWindow) -> tauri::Result<()> {
-    let Some(bounds) = compute_bounds(window)? else {
+    let Some(bounds) = compute_bounds(window, "left-of-dock")? else {
         eprintln!("[irma] place_companion: no monitor available");
         return Ok(());
     };
@@ -221,8 +342,38 @@ pub fn toggle_main(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn get_companion_bounds(window: WebviewWindow) -> Result<CompanionBounds, String> {
-    compute_bounds(&window)
+pub fn is_main_visible(app: AppHandle) -> bool {
+    app.get_webview_window("main")
+        .and_then(|w| w.is_visible().ok())
+        .unwrap_or(false)
+}
+
+/// True while the main window is actually *presented to the user*: on-screen
+/// AND the key (focused) window. `is_visible()` alone stays true when the user
+/// switches to another app (the window is merely occluded, not hidden), which
+/// would otherwise leave the companion stuck barking. The `DialogOpen` guard
+/// keeps her "present" while our own native folder picker steals key focus, so
+/// browsing for a folder doesn't break her out of bark mode.
+#[tauri::command]
+pub fn is_main_active(app: AppHandle, dialog_open: State<'_, DialogOpen>) -> bool {
+    let Some(win) = app.get_webview_window("main") else {
+        return false;
+    };
+    if !win.is_visible().unwrap_or(false) {
+        return false;
+    }
+    if dialog_open.0.load(Ordering::Acquire) {
+        return true;
+    }
+    win.is_focused().unwrap_or(false)
+}
+
+#[tauri::command]
+pub fn get_companion_bounds(
+    window: WebviewWindow,
+    dock_position: String,
+) -> Result<CompanionBounds, String> {
+    compute_bounds(&window, &dock_position)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "no monitor available".to_string())
 }
@@ -232,6 +383,13 @@ pub fn set_companion_pos(window: WebviewWindow, x: f64, y: f64) -> Result<(), St
     window
         .set_position(LogicalPosition::new(x, y))
         .map_err(|e| e.to_string())
+}
+
+/// Show a native context menu on the companion window with placement options.
+/// `dock_position` reflects the current setting so the active item gets a checkmark.
+#[tauri::command]
+pub fn show_companion_context_menu(app: AppHandle, dock_position: String) -> Result<(), String> {
+    crate::tray::show_companion_menu(&app, &dock_position).map_err(|e| e.to_string())
 }
 
 /// Wire window-event listeners on both windows. Called once during setup.
@@ -256,10 +414,18 @@ pub fn wire_windows(app: &mut App) -> tauri::Result<()> {
         let main_clone = main.clone();
         let app_handle = app.handle().clone();
         main.on_window_event(move |event| {
-            if let WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                let _ = main_clone.hide();
-                emit_main_visibility(&app_handle, false);
+            match event {
+                WindowEvent::CloseRequested { api, .. } => {
+                    api.prevent_close();
+                    let _ = main_clone.hide();
+                    emit_main_visibility(&app_handle, false);
+                }
+                WindowEvent::Focused(false) => {
+                    // Do not auto-hide on focus loss — native dialogs (folder picker,
+                    // file input) all steal focus and would collapse the window.
+                    // The window hides only via the sprite-click toggle or the tray.
+                }
+                _ => {}
             }
         });
     }

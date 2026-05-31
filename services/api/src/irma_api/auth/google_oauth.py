@@ -5,8 +5,9 @@ the authorization code on a loopback HTTP redirect, and exchanges it for a
 refresh token. The caller is responsible for persisting the result (e.g.
 writing it to ``.env``).
 
-Scopes are read-only Calendar access — Irma's TimeAgent consumes events as
-a passive data stream, never modifies them, and never reads mail.
+Scopes cover `calendar.events` — sufficient for both reading and writing
+calendar events. Irma's TimeAgent reads passively; write tools use the same
+token. Never reads mail.
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ from typing import Any
 import httpx
 
 SCOPES: tuple[str, ...] = (
-    "https://www.googleapis.com/auth/calendar.readonly",
+    "https://www.googleapis.com/auth/calendar.events",
 )
 
 _AUTH_URI = "https://accounts.google.com/o/oauth2/v2/auth"

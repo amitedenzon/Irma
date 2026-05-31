@@ -51,3 +51,35 @@ async def brief_month(request: Request) -> Brief | JSONResponse:
 @router.get("/overview", response_model=Brief)
 async def brief_overview(request: Request) -> Brief | JSONResponse:
     return await _synthesize(request, "all")
+
+
+@router.post("/email")
+async def send_brief_email(request: Request) -> JSONResponse:
+    """Build today's brief and email it now (on-demand 'Brief' button).
+
+    Bypasses the once-a-day idempotency guard — always re-sends.
+    """
+    job = getattr(request.app.state, "daily_brief_job", None)
+    if job is None:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "email_unavailable",
+                "detail": (
+                    "daily brief requires a configured LLM + Resend "
+                    "(RESEND_API_KEY, IRMA_USER_EMAIL)"
+                ),
+            },
+            headers={"Retry-After": "30"},
+        )
+    try:
+        result = await job.run_once(force=True)
+    except Exception as exc:  # surface send failures as 502
+        return JSONResponse(
+            status_code=502,
+            content={"error": "email_send_failed", "detail": str(exc)},
+        )
+    return JSONResponse(
+        status_code=200,
+        content={"status": "sent", "detail": str(result.get("result", ""))},
+    )

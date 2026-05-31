@@ -46,51 +46,47 @@ export function ProjectCard({
     <article className="card px-4 py-3"
              onMouseEnter={() => setShowActions(true)}
              onMouseLeave={() => setShowActions(false)}>
-      <header className="flex items-center justify-between gap-3 mb-2">
-        <div className="flex items-center gap-2 min-w-0 flex-1">
-          <h2 className="display text-[14px] font-semibold truncate"
-              style={{ color: "var(--color-ink)" }}>
-            {project.name}
-          </h2>
-          <span className={priorityClass(project.priority)}>P{project.priority}</span>
-          {project.status !== "active" && (
-            <span className="badge">{project.status}</span>
-          )}
-          {project.target_date && (
-            <span className="text-[11px]"
-                  style={{
-                    color: daysToTarget !== null && daysToTarget < 7
-                      ? "var(--color-red)"
-                      : "var(--color-ink-faint)",
-                    fontFamily: "var(--font-mono)",
-                  }}>
-              {daysToTarget !== null
-                ? (daysToTarget >= 0 ? `${daysToTarget}d` : `${-daysToTarget}d over`)
-                : project.target_date}
-            </span>
-          )}
+      <header className="mb-2">
+        <div className="flex items-center justify-between gap-2 mb-1">
+          <div className="flex items-center gap-2">
+            <span className="text-[13px] leading-none">{"🌶️".repeat(4 - project.priority)}</span>
+            {project.status !== "active" && (
+              <span className="badge">{project.status}</span>
+            )}
+            {project.target_date && (
+              <span className="text-[11px]"
+                    style={{
+                      color: daysToTarget !== null && daysToTarget < 7
+                        ? "var(--color-red)"
+                        : "var(--color-ink-faint)",
+                      fontFamily: "var(--font-mono)",
+                    }}>
+                {daysToTarget !== null
+                  ? (daysToTarget >= 0 ? `${daysToTarget}d` : `${-daysToTarget}d over`)
+                  : project.target_date}
+              </span>
+            )}
+          </div>
+          <div
+            className="flex items-center gap-3 text-[11px] shrink-0 transition-opacity"
+            style={{ color: "var(--color-ink-faint)", opacity: showActions ? 1 : 0 }}
+          >
+            <button onClick={() => setEditing(true)} className="hover:underline">edit</button>
+            {project.status !== "archived" ? (
+              <button onClick={() => void archive()} className="hover:underline">archive</button>
+            ) : (
+              <button onClick={() => void unarchive()} className="hover:underline">restore</button>
+            )}
+            <button onClick={() => void remove()} className="hover:underline" style={{ color: "var(--color-red)" }}>delete</button>
+          </div>
         </div>
-        <div
-          className="flex items-center gap-3 text-[11px] shrink-0 transition-opacity"
-          style={{ color: "var(--color-ink-faint)", opacity: showActions ? 1 : 0 }}
-        >
-          <button onClick={() => setEditing(true)} className="hover:underline">edit</button>
-          {project.status !== "archived" ? (
-            <button onClick={() => void archive()} className="hover:underline">archive</button>
-          ) : (
-            <button onClick={() => void unarchive()} className="hover:underline">restore</button>
-          )}
-          <button onClick={() => void remove()} className="hover:underline" style={{ color: "var(--color-red)" }}>delete</button>
-        </div>
+        <h2 className="display text-[14px] font-semibold truncate"
+            style={{ color: "var(--color-ink)" }}>
+          {project.name}
+        </h2>
       </header>
 
       <TaskList projectId={project.id} />
     </article>
   );
-}
-
-function priorityClass(p: 1 | 2 | 3): string {
-  if (p === 1) return "pill pill-p1";
-  if (p === 2) return "pill pill-p2";
-  return "pill pill-p3";
 }

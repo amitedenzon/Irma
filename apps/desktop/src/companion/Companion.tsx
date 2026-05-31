@@ -4,10 +4,17 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { AgentState, SpriteFrameSpec, SpriteManifest } from "../lib/types";
 import { subscribeAgentState } from "../lib/sse";
+import {
+  getCompanion,
+  loadSettings,
+  saveDockPosition,
+  subscribeSettings,
+  type DockPosition,
+} from "../lib/settings";
 import { Sprite } from "./Sprite";
 
 const FALLBACK_MANIFEST: SpriteManifest = {
-  image: "Dogs-Remastered-12.png",
+  image: "Irma.png",
   frameWidth: 64,
   frameHeight: 48,
   columns: 8,
@@ -27,6 +34,8 @@ const FALLBACK_MANIFEST: SpriteManifest = {
     sit: { frames: [8, 9, 10, 11, 12, 13], fps: 4, loop: true },
     lay: { frames: [16, 17, 18, 19, 20, 21], fps: 4, loop: true },
     sit_bark: { frames: [8, 9, 10, 11, 12, 13, 14, 15], fps: 6, loop: true },
+    treat: { frames: [56, 57, 58, 59, 60, 61, 62, 63], fps: 8, loop: true },
+    treat_partial: { frames: [56, 57, 58, 59, 60, 61], fps: 8, loop: true },
   },
 };
 
@@ -48,7 +57,7 @@ const WRAPPER_STYLE: CSSProperties = {
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
-  cursor: "pointer",
+  pointerEvents: "none",
 };
 
 const WALK_SPEED_PX_PER_SEC = 60;
@@ -73,7 +82,9 @@ type DogVariant =
   | "sit"
   | "lay"
   | "cuddle"
-  | "sit_bark";
+  | "sit_bark"
+  | "treat"
+  | "treat_partial";
 
 interface DogRender {
   variant: DogVariant;
@@ -109,6 +120,12 @@ function monitorsDiffer(a: CompanionBounds | null, b: CompanionBounds): boolean 
 export function Companion() {
   const [manifest, setManifest] = useState<SpriteManifest>(FALLBACK_MANIFEST);
   const [sheetAvailable, setSheetAvailable] = useState<boolean>(false);
+  const [companionId, setCompanionId] = useState<string>(
+    () => loadSettings().companionId,
+  );
+  const [dockPosition, setDockPosition] = useState<DockPosition>(
+    () => loadSettings().dockPosition,
+  );
   const [agentState, setAgentState] = useState<AgentState>("idle");
   const [dog, setDog] = useState<DogRender>({
     variant: "cuddle",
@@ -118,7 +135,12 @@ export function Companion() {
   const boundsRef = useRef<CompanionBounds | null>(null);
   const xRef = useRef<number>(0);
 
-  // Load manifest + probe for real spritesheet.
+  // The selected companion overrides the manifest's sheet image. Frame layout
+  // (grid, fps, state→frame maps) is shared across the dog sheets.
+  const selectedImage = getCompanion(companionId).image;
+  const effectiveManifest: SpriteManifest = { ...manifest, image: selectedImage };
+
+  // Load manifest JSON (frame layout) once.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -129,12 +151,8 @@ export function Companion() {
           return;
         }
         const m = (await res.json()) as SpriteManifest;
-        if (cancelled) return;
-        setManifest(m);
-        const probe = await fetch(`/sprites/dogs/${m.image}`, { method: "HEAD" });
-        const ct = probe.headers.get("content-type") ?? "";
-        if (!cancelled) setSheetAvailable(probe.ok && ct.startsWith("image/"));
-        console.info("[companion] manifest loaded; sheet=", probe.ok && ct.startsWith("image/"));
+        if (!cancelled) setManifest(m);
+        console.info("[companion] manifest loaded");
       } catch (e) {
         console.warn("[companion] manifest fetch failed", e);
       }
@@ -144,10 +162,53 @@ export function Companion() {
     };
   }, []);
 
+  // Probe the selected companion's spritesheet whenever it changes.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const probe = await fetch(`/sprites/dogs/${selectedImage}`, { method: "HEAD" });
+        const ct = probe.headers.get("content-type") ?? "";
+        if (!cancelled) setSheetAvailable(probe.ok && ct.startsWith("image/"));
+      } catch (e) {
+        if (!cancelled) setSheetAvailable(false);
+        console.warn("[companion] sheet probe failed", e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedImage]);
+
+  // React to settings changes made in the settings window (and on launch).
+  useEffect(() => {
+    const unsub = subscribeSettings((s) => {
+      setCompanionId(s.companionId);
+      setDockPosition(s.dockPosition);
+    });
+    return unsub;
+  }, []);
+
   // Agent-state SSE — kept for future use; doesn't drive the dog brain.
   useEffect(() => {
     const sub = subscribeAgentState(setAgentState);
     return () => sub.close();
+  }, []);
+
+  // Listen for placement changes emitted by the companion context menu.
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: UnlistenFn | undefined;
+    listen<string>("companion:placement", (event) => {
+      if (cancelled) return;
+      saveDockPosition(event.payload as DockPosition);
+    })
+      .then((u) => { if (cancelled) u(); else unlisten = u; })
+      .catch((e) => console.error("[companion] listen companion:placement failed", e));
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+    };
   }, []);
 
   // Dog brain.
@@ -155,8 +216,8 @@ export function Companion() {
     let cancelled = false;
     let raf = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    let mode: "autonomous" | "bark" = "autonomous";
-    let unlistenVis: UnlistenFn | undefined;
+    let mode: "autonomous" | "bark" | "treat" = "autonomous";
+    let unlistenTreat: UnlistenFn | undefined;
 
     const clearTimers = (): void => {
       if (raf) cancelAnimationFrame(raf);
@@ -176,7 +237,9 @@ export function Companion() {
 
     const refreshBounds = async (): Promise<CompanionBounds | null> => {
       try {
-        const b = (await invoke("get_companion_bounds")) as CompanionBounds;
+        const b = (await invoke("get_companion_bounds", {
+          dockPosition,
+        })) as CompanionBounds;
         const migrating = monitorsDiffer(boundsRef.current, b);
         boundsRef.current = b;
         if (migrating) {
@@ -282,13 +345,48 @@ export function Companion() {
     };
 
     const exitBarkMode = (): void => {
-      if (mode !== "bark") return;
+      // Also cancel treat mid-sequence — window closed while cheese animation played.
+      if (mode !== "bark" && mode !== "treat") return;
       mode = "autonomous";
       clearTimers();
       // lay (1 loop) → cuddle → resume walking
       setDog((d) => ({ variant: "lay", facingRight: d.facingRight }));
       timer = setTimeout(() => startCuddle(), LAY_MS);
       console.info("[companion] exit bark mode → lay → cuddle → walk");
+    };
+
+    // ---- Treat mode (cheese button) ------------------------------------
+    // Sequence: 2 full treat cycles → 6-frame treat cycle → 1 stand cycle → sit_bark
+    const TREAT_FULL_MS  = (8 / 8) * 2 * 1000; // 2000ms — 2 × 8 frames @ 8 fps
+    const TREAT_SHORT_MS = (6 / 8) * 1000;       //  750ms — 6 frames @ 8 fps
+    // STAND_MS (1200ms) is already defined above: 6 frames @ 5 fps
+
+    const enterTreatMode = (): void => {
+      if (cancelled) return;
+      mode = "treat";
+      clearTimers();
+
+      // Phase 1 — 2 full treat loops
+      setDog((d) => ({ variant: "treat", facingRight: d.facingRight }));
+
+      timer = setTimeout(() => {
+        if (cancelled || mode !== "treat") return;
+        // Phase 2 — first 6 frames of treat (no tail frames)
+        setDog((d) => ({ variant: "treat_partial", facingRight: d.facingRight }));
+
+        timer = setTimeout(() => {
+          if (cancelled || mode !== "treat") return;
+          // Phase 3 — one full standing cycle
+          setDog((d) => ({ variant: "stand", facingRight: d.facingRight }));
+
+          timer = setTimeout(() => {
+            if (cancelled) return;
+            // Phase 4 — sit and bark
+            mode = "bark";
+            setDog((d) => ({ variant: "sit_bark", facingRight: d.facingRight }));
+          }, STAND_MS);
+        }, TREAT_SHORT_MS);
+      }, TREAT_FULL_MS);
     };
 
     // ---- Bootstrap ----------------------------------------------------
@@ -306,26 +404,41 @@ export function Companion() {
       }
     })();
 
-    listen<boolean>("main:visibility", (event) => {
+    listen<void>("companion:treat", () => {
       if (cancelled) return;
-      if (event.payload) enterBarkMode();
-      else exitBarkMode();
+      enterTreatMode();
     })
       .then((u) => {
-        unlistenVis = u;
+        unlistenTreat = u;
       })
-      .catch((e) => console.error("[companion] listen main:visibility failed", e));
+      .catch((e) => console.error("[companion] listen companion:treat failed", e));
+
+    // Poll whether the main window is actually presented to the user every
+    // 250 ms. We key off "active" (visible AND focused), not just "visible":
+    // a window that's merely on-screen but behind another app (the user
+    // clicked away) must still calm the dog. `is_main_active` returns false
+    // the moment the window loses key focus — except while our own folder
+    // picker is up — so she leaves bark mode no matter how the window is
+    // dismissed (X, companion, tray, app-switch, hide, …).
+    const visibilityPoll = setInterval(() => {
+      void invoke<boolean>("is_main_active").then((active) => {
+        if (cancelled) return;
+        if (active && mode === "autonomous") enterBarkMode();
+        else if (!active && (mode === "bark" || mode === "treat")) exitBarkMode();
+      });
+    }, 250);
 
     return () => {
       cancelled = true;
       clearTimers();
-      if (unlistenVis) unlistenVis();
+      clearInterval(visibilityPoll);
+      if (unlistenTreat) unlistenTreat();
     };
-  }, []);
+  }, [dockPosition]);
 
-  const extras = manifest.extras ?? {};
+  const extras = effectiveManifest.extras ?? {};
   const spec: SpriteFrameSpec =
-    extras[dog.variant] ?? manifest.states[agentState];
+    extras[dog.variant] ?? effectiveManifest.states[agentState];
 
   const onClick = (): void => {
     void invoke("toggle_main").catch((e: unknown) =>
@@ -333,20 +446,41 @@ export function Companion() {
     );
   };
 
+  const onContextMenu = (e: React.MouseEvent): void => {
+    e.preventDefault();
+    void invoke("show_companion_context_menu", {
+      dockPosition,
+    }).catch((e: unknown) =>
+      console.error("[companion] show_companion_context_menu failed", e),
+    );
+  };
+
   return (
-    <div
-      style={WRAPPER_STYLE}
-      onClick={onClick}
-      role="button"
-      aria-label="Irma companion"
-    >
-      <Sprite
-        spec={spec}
-        manifest={manifest}
-        sheetAvailable={sheetAvailable}
-        fallbackState={agentState}
-        mirror={dog.facingRight}
-      />
+    <div style={WRAPPER_STYLE}>
+      <div style={{ position: "relative", pointerEvents: "none" }}>
+        <Sprite
+          spec={spec}
+          manifest={effectiveManifest}
+          sheetAvailable={sheetAvailable}
+          fallbackState={agentState}
+          mirror={dog.facingRight}
+        />
+        <div
+          style={{
+            position: "absolute",
+            bottom: 0,
+            left: 0,
+            right: 0,
+            height: "50%",
+            cursor: "pointer",
+            pointerEvents: "auto",
+          }}
+          onClick={onClick}
+          onContextMenu={onContextMenu}
+          role="button"
+          aria-label="Irma companion"
+        />
+      </div>
     </div>
   );
 }

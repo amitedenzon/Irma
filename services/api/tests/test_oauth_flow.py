@@ -31,10 +31,10 @@ def test_auth_uri_includes_required_scopes_and_loopback_redirect() -> None:
     assert "state=abc" in uri
 
 
-def test_scopes_are_calendar_readonly_only() -> None:
-    """Only Calendar read is granted — Gmail send was dropped in favor of Resend."""
+def test_scopes_are_calendar_events_only() -> None:
+    """calendar.events is granted — covers both reads and writes."""
     assert SCOPES == (
-        "https://www.googleapis.com/auth/calendar.readonly",
+        "https://www.googleapis.com/auth/calendar.events",
     )
 
 

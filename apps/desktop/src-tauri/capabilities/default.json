@@ -5,11 +5,21 @@
   "windows": ["main", "companion"],
   "permissions": [
     "core:default",
+    "core:tray:default",
     "core:window:allow-show",
     "core:window:allow-hide",
     "core:window:allow-set-focus",
     "core:window:allow-is-visible",
     "core:window:allow-close",
-    "core:webview:allow-internal-toggle-devtools"
+    "core:webview:allow-internal-toggle-devtools",
+    "core:event:allow-emit-to",
+    "autostart:allow-enable",
+    "autostart:allow-disable",
+    "autostart:allow-is-enabled",
+    "dialog:default",
+    "fs:allow-read-file",
+    "fs:allow-read-dir",
+    "process:allow-restart",
+    "process:allow-exit"
   ]
 }

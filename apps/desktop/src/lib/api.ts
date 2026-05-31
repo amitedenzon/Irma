@@ -1,9 +1,6 @@
 import type {
-  Brief,
-  ChatBackends,
   ChatMessage,
   ChatResponse,
-  Horizon,
   Project,
   ProjectCreate,
   ProjectStatus,
@@ -137,16 +134,12 @@ export async function completeTask(id: string): Promise<Task> {
   );
 }
 
-// --- Brief ----------------------------------------------------------------
+// --- Brief (email-only) ---------------------------------------------------
 
-export async function fetchBrief(horizon: Horizon): Promise<Brief> {
-  const path = ({
-    day: "today",
-    week: "week",
-    month: "month",
-    all: "overview",
-  } as const)[horizon];
-  return jsonOrThrow(await fetch(url(`/api/v1/brief/${path}`)));
+export async function sendBriefEmail(): Promise<{ status: string; detail: string }> {
+  return jsonOrThrow(
+    await fetch(url("/api/v1/brief/email"), { method: "POST" }),
+  );
 }
 
 // --- Signals / refresh / chat (existing, kept) ----------------------------
@@ -161,20 +154,36 @@ export async function forceRefresh(): Promise<void> {
 
 export async function sendChat(
   messages: ChatMessage[],
-  opts: { backend?: string; sessionId?: string } = {},
+  opts: { model?: string } = {},
 ): Promise<ChatResponse> {
-  const payload: Record<string, unknown> = { messages };
-  if (opts.backend) payload.backend = opts.backend;
-  if (opts.sessionId) payload.session_id = opts.sessionId;
   return jsonOrThrow(
     await fetch(url("/api/v1/chat"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ messages, model: opts.model ?? null }),
     }),
   );
 }
 
-export async function getChatBackends(): Promise<ChatBackends> {
-  return jsonOrThrow(await fetch(url("/api/v1/chat/backends")));
+export interface LocalModel {
+  name: string;
+  display_name: string;
+  source: "ollama" | "file";
+  size_bytes: number;
+  size_label: string;
+  proficiency: string[];
+  quantization: string | null;
+  path: string | null;
+}
+
+export interface LocalModelsResponse {
+  models: LocalModel[];
+  ollama_reachable: boolean;
+  scan_path: string | null;
+}
+
+export async function fetchLocalModels(path?: string): Promise<LocalModelsResponse> {
+  return jsonOrThrow(
+    await fetch(url("/api/v1/local-models", path ? { path } : undefined)),
+  );
 }

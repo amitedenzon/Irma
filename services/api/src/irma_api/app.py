@@ -18,12 +18,15 @@ from irma_api.agents.base import LeadAgentProtocol, Observer
 from irma_api.agents.codebase_agent import CodebaseAgent
 from irma_api.agents.llm import LLMClient, OllamaLLM, build_llm_registry
 from irma_api.agents.time_agent import TimeAgent
-from irma_api.config import get_settings
+from irma_api.config import get_settings, secret_value_or_none
 from irma_api.logging import configure_logging
 from irma_api.routers.brief import router as brief_router
+from irma_api.routers.email import router as email_router
 from irma_api.routers.chat import router as chat_router
 from irma_api.routers.integrations import router as integrations_router
+from irma_api.routers.local_models import router as local_models_router
 from irma_api.routers.reminders import router as reminders_router
+from irma_api.routers.settings import router as settings_router
 from irma_api.routers.projects import router as projects_router
 from irma_api.routers.signals import router as signals_router
 from irma_api.routers.signals import run_refresh
@@ -33,8 +36,10 @@ from irma_api.runtime.scheduler import Scheduler
 from irma_api.runtime.state import StateBus
 from irma_api.store.sqlite import SignalStore
 from irma_api.tools.base import Tool, ToolRegistry
-from irma_api.tools.calendar import ReadCalendarTool
+from irma_api.tools.calendar import CreateCalendarEventTool, ReadCalendarTool
+from irma_api.tools.projects import CreateProjectTool, ListProjectsTool
 from irma_api.tools.resend import ResendSendTool
+from irma_api.tools.tasks import CompleteTaskTool, CreateTaskTool, ListTasksTool
 
 logger = structlog.get_logger(__name__)
 
@@ -57,27 +62,43 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
 
     tools: list[Tool] = []
-    if settings.resend_api_key is not None and settings.irma_user_email is not None:
-        tools.append(ResendSendTool(settings))
+    resend_key = secret_value_or_none(settings.resend_api_key)
+    send_email_tool: ResendSendTool | None = None
+    if resend_key is not None and settings.irma_user_email:
+        send_email_tool = ResendSendTool(settings)
+        tools.append(send_email_tool)
     else:
         logger.info(
             "tools.send_email_disabled",
             missing=[
                 key
                 for key, val in (
-                    ("RESEND_API_KEY", settings.resend_api_key),
+                    ("RESEND_API_KEY", resend_key),
                     ("IRMA_USER_EMAIL", settings.irma_user_email),
                 )
-                if val is None
+                if not val
             ],
         )
-    if settings.google_oauth_refresh_token is not None:
-        tools.append(ReadCalendarTool(settings))
+    calendar_keys = {
+        "GOOGLE_OAUTH_CLIENT_ID": secret_value_or_none(settings.google_oauth_client_id),
+        "GOOGLE_OAUTH_CLIENT_SECRET": secret_value_or_none(settings.google_oauth_client_secret),
+        "GOOGLE_OAUTH_REFRESH_TOKEN": secret_value_or_none(settings.google_oauth_refresh_token),
+    }
+    calendar_missing = [k for k, v in calendar_keys.items() if v is None]
+    read_calendar_tool: ReadCalendarTool | None = None
+    if not calendar_missing:
+        read_calendar_tool = ReadCalendarTool(settings)
+        tools.append(read_calendar_tool)
+        tools.append(CreateCalendarEventTool(settings))
     else:
-        logger.info(
-            "tools.read_calendar_disabled",
-            missing=["GOOGLE_OAUTH_REFRESH_TOKEN"],
-        )
+        logger.info("tools.calendar_disabled", missing=calendar_missing)
+
+    tools.append(ListProjectsTool(store))
+    tools.append(CreateProjectTool(store))
+    tools.append(ListTasksTool(store))
+    tools.append(CreateTaskTool(store))
+    tools.append(CompleteTaskTool(store))
+
     registry = ToolRegistry(tools)
 
     lead_agent: LeadAgentProtocol | None = None
@@ -99,6 +120,31 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.default_backend = default_backend
     app.state.tools = registry
     app.state.lead_agent = lead_agent
+    app.state.send_email_tool = send_email_tool
+
+    daily_brief_job = None
+    if llm is not None and send_email_tool is not None:
+        from irma_api.agents.daily_brief import DailyBriefService
+        from irma_api.runtime.daily_job import DailyBriefJob
+
+        daily_service = DailyBriefService(
+            settings=settings,
+            llm=llm,
+            store=store,
+            observers=observers,
+            bus=bus,
+            calendar=read_calendar_tool,
+        )
+        daily_brief_job = DailyBriefJob(
+            service=daily_service, sender=send_email_tool, settings=settings
+        )
+    else:
+        logger.info(
+            "app.daily_brief_disabled",
+            has_llm=llm is not None,
+            has_email=send_email_tool is not None,
+        )
+    app.state.daily_brief_job = daily_brief_job
 
     # --- Apple Reminders bridge + sync factory ---
     reminder_bridge = None
@@ -154,6 +200,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     scheduler.start()
     app.state.scheduler = scheduler
+
+    if daily_brief_job is not None and settings.irma_daily_brief_enabled:
+        async def daily_tick() -> None:
+            await daily_brief_job.run_once()
+
+        scheduler.add_daily_job(
+            daily_tick,
+            hour=settings.irma_brief_hour,
+            timezone=settings.irma_brief_timezone,
+        )
     logger.info(
         "app.ready",
         observers=[o.name for o in observers],
@@ -204,8 +260,11 @@ def create_app() -> FastAPI:
     app.include_router(projects_router, prefix="/api/v1")
     app.include_router(tasks_router, prefix="/api/v1")
     app.include_router(brief_router, prefix="/api/v1")
+    app.include_router(email_router, prefix="/api/v1")
     app.include_router(integrations_router, prefix="/api/v1")
     app.include_router(reminders_router, prefix="/api/v1")
+    app.include_router(settings_router, prefix="/api/v1")
+    app.include_router(local_models_router, prefix="/api/v1")
 
     @app.get("/", include_in_schema=False)
     async def root() -> dict[str, str]:
