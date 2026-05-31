@@ -274,6 +274,14 @@ fn resolve_monitor(
     target_monitor(window)
 }
 
+/// The padded Dock edges (logical x) on the primary monitor: the left strip ends
+/// at `.0` and the right strip begins at `.1`. The ±50 padding keeps the companion
+/// clear of the centred Dock.
+fn dock_zone_edges(origin_x: f64, area_width: f64, dock_w: f64) -> (f64, f64) {
+    let center = origin_x + area_width / 2.0;
+    (center - dock_w / 2.0 - 50.0, center + dock_w / 2.0 + 50.0)
+}
+
 fn compute_bounds_for(
     window: &WebviewWindow,
     monitor: &Monitor,
@@ -305,13 +313,13 @@ fn compute_bounds_for(
         // Primary monitor hosts the Dock: zones are relative to the Dock footprint.
         match dock_position {
             "left-of-dock" => {
-                let dock_w = dock_width().unwrap_or(DEFAULT_DOCK_WIDTH);
-                let dock_left = origin.x + area.width / 2.0 - dock_w / 2.0 - 50.0;
+                let (dock_left, _) =
+                    dock_zone_edges(origin.x, area.width, dock_width().unwrap_or(DEFAULT_DOCK_WIDTH));
                 (monitor_left, dock_left)
             }
             "right-of-dock" => {
-                let dock_w = dock_width().unwrap_or(DEFAULT_DOCK_WIDTH);
-                let dock_right = origin.x + area.width / 2.0 + dock_w / 2.0 + 50.0;
+                let (_, dock_right) =
+                    dock_zone_edges(origin.x, area.width, dock_width().unwrap_or(DEFAULT_DOCK_WIDTH));
                 (dock_right, monitor_right)
             }
             _ => match dock_width() {
@@ -434,9 +442,13 @@ pub fn resolve_companion_drop(window: WebviewWindow) -> Result<ResolvedDrop, Str
                 && center_phys_y >= y0
                 && center_phys_y < y0 + ms.height as f64
         })
-        .or(window.primary_monitor().map_err(|e| e.to_string())?)
+        .or_else(|| window.primary_monitor().ok().flatten())
         .ok_or_else(|| "no monitor available".to_string())?;
 
+    // NOTE: a cross-monitor drop to a different-DPI screen relies on macOS having
+    // applied the scale change by the time this runs; in practice the scale update
+    // lands in the same run-loop cycle as the window move, so reading the landed
+    // monitor's scale here is correct.
     let scale = monitor.scale_factor();
     let area = monitor.size().to_logical::<f64>(scale);
     let origin = monitor.position().to_logical::<f64>(scale);
@@ -445,9 +457,7 @@ pub fn resolve_companion_drop(window: WebviewWindow) -> Result<ResolvedDrop, Str
 
     let is_primary = is_primary_monitor(&window, &monitor).map_err(|e| e.to_string())?;
     let (dock_left, dock_right) = if is_primary {
-        let dock_w = dock_width().unwrap_or(DEFAULT_DOCK_WIDTH);
-        let c = origin.x + area.width / 2.0;
-        (c - dock_w / 2.0 - 50.0, c + dock_w / 2.0 + 50.0)
+        dock_zone_edges(origin.x, area.width, dock_width().unwrap_or(DEFAULT_DOCK_WIDTH))
     } else {
         (0.0, 0.0)
     };
