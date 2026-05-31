@@ -143,8 +143,6 @@ export function Companion() {
   const pressRef = useRef<{
     screenX: number;
     screenY: number;
-    offsetX: number;
-    offsetY: number;
     moved: boolean;
   } | null>(null);
   const [placementVersion, setPlacementVersion] = useState<number>(0);
@@ -500,16 +498,7 @@ export function Companion() {
   const onPointerDown = (e: React.PointerEvent): void => {
     if (e.button !== 0) return; // primary button only
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
-    const b = boundsRef.current;
-    const originX = xRef.current;
-    const originY = b ? b.y : e.screenY;
-    pressRef.current = {
-      screenX: e.screenX,
-      screenY: e.screenY,
-      offsetX: originX - e.screenX,
-      offsetY: originY - e.screenY,
-      moved: false,
-    };
+    pressRef.current = { screenX: e.screenX, screenY: e.screenY, moved: false };
   };
 
   const onPointerMove = (e: React.PointerEvent): void => {
@@ -520,11 +509,11 @@ export function Companion() {
       if (dist < DRAG_THRESHOLD) return;
       p.moved = true;
       draggingRef.current = true; // suspend the dog brain's movement
+      void invoke("companion_drag_begin").catch((err: unknown) =>
+        console.error("[companion] companion_drag_begin failed", err),
+      );
     }
-    const nx = e.screenX + p.offsetX;
-    const ny = e.screenY + p.offsetY;
-    console.log("[drag] screen=", e.screenX, e.screenY, "→ send=", nx, ny);
-    void invoke("companion_drag_to", { x: nx, y: ny }).catch((err: unknown) =>
+    void invoke("companion_drag_to").catch((err: unknown) =>
       console.error("[companion] companion_drag_to failed", err),
     );
   };

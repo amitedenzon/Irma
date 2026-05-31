@@ -17,6 +17,11 @@ pub struct DialogOpen(pub Arc<AtomicBool>);
 #[derive(Default)]
 pub struct BackendProcess(pub Mutex<Option<std::process::Child>>);
 
+/// Physical-pixel offset (window_origin - cursor) captured at drag start, so the
+/// window can follow the OS cursor without the JS pointer-coordinate feedback loop.
+#[derive(Default)]
+pub struct CompanionDrag(pub Mutex<Option<(f64, f64)>>);
+
 /// Spawn `uv run uvicorn irma_api.app:create_app --factory --port 8765` from
 /// the services/api directory. Stdout/stderr are appended to ~/Library/Logs/Irma/api.log.
 fn spawn_backend() -> Option<std::process::Child> {
@@ -125,6 +130,7 @@ pub fn run() {
         .manage(claude_pty::ClaudePty::default())
         .manage(DialogOpen::default())
         .manage(BackendProcess::default())
+        .manage(CompanionDrag::default())
         .invoke_handler(tauri::generate_handler![
             windows::position_companion,
             windows::toggle_main,
@@ -133,6 +139,7 @@ pub fn run() {
             windows::get_companion_bounds,
             windows::set_companion_pos,
             windows::resolve_companion_drop,
+            windows::companion_drag_begin,
             windows::companion_drag_to,
             windows::show_companion_context_menu,
             browse_folder,

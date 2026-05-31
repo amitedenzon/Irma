@@ -9,7 +9,8 @@ use std::sync::atomic::Ordering;
 
 use serde::Serialize;
 use tauri::{
-    App, AppHandle, Emitter, LogicalPosition, Manager, Monitor, State, WebviewWindow, WindowEvent,
+    App, AppHandle, Emitter, LogicalPosition, Manager, Monitor, PhysicalPosition, State,
+    WebviewWindow, WindowEvent,
 };
 
 use crate::DialogOpen;
@@ -571,18 +572,41 @@ pub fn set_companion_pos(window: WebviewWindow, x: f64, y: f64) -> Result<(), St
         .map_err(|e| e.to_string())
 }
 
-/// TEMP DIAGNOSTIC: like set_companion_pos but logs the input, the window's
-/// current scale factor, and the resulting physical outer position — used to
-/// diagnose cross-monitor drag flicker. Remove once the flicker is fixed.
+/// Capture the physical offset between the window's top-left and the OS cursor at
+/// the start of a drag, so subsequent `companion_drag_to` calls can move the
+/// window to follow the real cursor (no JS pointer-coordinate feedback).
 #[tauri::command]
-pub fn companion_drag_to(window: WebviewWindow, x: f64, y: f64) -> Result<(), String> {
+pub fn companion_drag_begin(
+    window: WebviewWindow,
+    drag: State<'_, crate::CompanionDrag>,
+) -> Result<(), String> {
+    let outer = window.outer_position().map_err(|e| e.to_string())?;
+    let cursor = window.cursor_position().map_err(|e| e.to_string())?;
+    let offset = (outer.x as f64 - cursor.x, outer.y as f64 - cursor.y);
+    *drag.0.lock().map_err(|e| e.to_string())? = Some(offset);
+    Ok(())
+}
+
+/// Move the companion window to follow the live OS cursor, using the offset
+/// captured by `companion_drag_begin`. Reads the cursor from the OS each call so
+/// moving the window doesn't perturb the input (the old JS-screenXY approach
+/// oscillated). TEMP: keeps a diagnostic log; remove once the flicker is confirmed fixed.
+#[tauri::command]
+pub fn companion_drag_to(
+    window: WebviewWindow,
+    drag: State<'_, crate::CompanionDrag>,
+) -> Result<(), String> {
+    let offset = *drag.0.lock().map_err(|e| e.to_string())?;
+    let Some((ox, oy)) = offset else {
+        return Ok(());
+    };
+    let cursor = window.cursor_position().map_err(|e| e.to_string())?;
+    let nx = (cursor.x + ox).round() as i32;
+    let ny = (cursor.y + oy).round() as i32;
     window
-        .set_position(LogicalPosition::new(x, y))
+        .set_position(PhysicalPosition::new(nx, ny))
         .map_err(|e| e.to_string())?;
-    let scale = window.scale_factor().unwrap_or(1.0);
-    if let Ok(pos) = window.outer_position() {
-        eprintln!("[irma][drag] in=({x:.1},{y:.1}) scale={scale:.2} outer=({},{})", pos.x, pos.y);
-    }
+    eprintln!("[irma][drag] cursor=({:.0},{:.0}) outer=({nx},{ny})", cursor.x, cursor.y);
     Ok(())
 }
 
