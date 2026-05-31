@@ -29,10 +29,12 @@ export const DEFAULT_DOCK_POSITION: DockPosition = "left-of-dock";
 export interface IrmaSettings {
   companionId: string;
   dockPosition: DockPosition;
+  monitorName: string | null;
 }
 
 const COMPANION_KEY = "irma.settings.companionId";
 const DOCK_KEY = "irma.settings.dockPosition";
+const MONITOR_KEY = "irma.settings.monitorName";
 
 /** Tauri event broadcast to every window whenever a setting changes. */
 const CHANGE_EVENT = "irma:settings-changed";
@@ -54,8 +56,17 @@ function readDockPosition(): DockPosition {
     : DEFAULT_DOCK_POSITION;
 }
 
+function readMonitorName(): string | null {
+  const raw = localStorage.getItem(MONITOR_KEY);
+  return raw && raw.length > 0 ? raw : null;
+}
+
 export function loadSettings(): IrmaSettings {
-  return { companionId: readCompanionId(), dockPosition: readDockPosition() };
+  return {
+    companionId: readCompanionId(),
+    dockPosition: readDockPosition(),
+    monitorName: readMonitorName(),
+  };
 }
 
 export function saveCompanionId(id: string): void {
@@ -63,8 +74,27 @@ export function saveCompanionId(id: string): void {
   void emit(CHANGE_EVENT, loadSettings());
 }
 
+// Zone-only change (the Settings UI): monitorName is intentionally left
+// unchanged — the zone changes on whichever monitor she currently lives on.
 export function saveDockPosition(position: DockPosition): void {
   localStorage.setItem(DOCK_KEY, position);
+  void emit(CHANGE_EVENT, loadSettings());
+}
+
+/**
+ * Persist a full placement (monitor + zone) — used by drag-drop and reset.
+ * A null/empty monitorName means "primary monitor".
+ */
+export function saveCompanionPlacement(
+  monitorName: string | null,
+  dockPosition: DockPosition,
+): void {
+  if (monitorName && monitorName.length > 0) {
+    localStorage.setItem(MONITOR_KEY, monitorName);
+  } else {
+    localStorage.removeItem(MONITOR_KEY);
+  }
+  localStorage.setItem(DOCK_KEY, dockPosition);
   void emit(CHANGE_EVENT, loadSettings());
 }
 
