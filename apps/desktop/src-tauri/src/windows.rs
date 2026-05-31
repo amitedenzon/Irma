@@ -234,49 +234,97 @@ fn target_monitor(window: &WebviewWindow) -> tauri::Result<Option<Monitor>> {
     cursor_monitor(window)
 }
 
-fn compute_bounds(
+/// Two monitors are "the same" if their names match (preferred) or, lacking
+/// names, their physical origins coincide.
+fn monitors_equal(a: &Monitor, b: &Monitor) -> bool {
+    match (a.name(), b.name()) {
+        (Some(na), Some(nb)) => na == nb,
+        _ => a.position() == b.position(),
+    }
+}
+
+fn is_primary_monitor(window: &WebviewWindow, monitor: &Monitor) -> tauri::Result<bool> {
+    match window.primary_monitor()? {
+        Some(primary) => Ok(monitors_equal(monitor, &primary)),
+        None => Ok(true), // no primary info → single-screen assumption
+    }
+}
+
+fn monitor_by_name(window: &WebviewWindow, name: &str) -> tauri::Result<Option<Monitor>> {
+    for m in window.available_monitors()? {
+        if m.name().map(|n| n.as_str()) == Some(name) {
+            return Ok(Some(m));
+        }
+    }
+    Ok(None)
+}
+
+/// Resolve the monitor the companion should use: a saved monitor by name wins,
+/// otherwise fall back to `target_monitor` (env → primary → cursor).
+fn resolve_monitor(
     window: &WebviewWindow,
+    monitor_name: Option<&str>,
+) -> tauri::Result<Option<Monitor>> {
+    if let Some(name) = monitor_name {
+        if let Some(m) = monitor_by_name(window, name)? {
+            return Ok(Some(m));
+        }
+    }
+    target_monitor(window)
+}
+
+fn compute_bounds_for(
+    window: &WebviewWindow,
+    monitor: &Monitor,
     dock_position: &str,
-) -> tauri::Result<Option<CompanionBounds>> {
-    let Some(monitor) = target_monitor(window)? else {
-        return Ok(None);
-    };
+) -> tauri::Result<CompanionBounds> {
     let scale = monitor.scale_factor();
     let area = monitor.size().to_logical::<f64>(scale);
     let origin = monitor.position().to_logical::<f64>(scale);
     let win_size = window.outer_size()?.to_logical::<f64>(scale);
     // Left/right of dock have nothing below them, so use a small lift instead
     // of the full Dock clearance.
-    let clearance = if dock_position == "on-dock" { dock_clearance() } else { BESIDE_DOCK_LIFT };
+    let clearance = if dock_position == "on-dock" {
+        dock_clearance()
+    } else {
+        BESIDE_DOCK_LIFT
+    };
     let y_offset = dog_y_offset();
     let y = origin.y + area.height - win_size.height - clearance + y_offset;
 
-    // Horizontal walking strip.
     let monitor_left = origin.x;
     let monitor_right = origin.x + area.width;
-    let (strip_left, strip_right) = match dock_position {
-        "left-of-dock" => {
-            // Roam from the screen's left edge up to where the centred Dock begins.
-            let dock_w = dock_width().unwrap_or(DEFAULT_DOCK_WIDTH);
-            let dock_left = origin.x + area.width / 2.0 - dock_w / 2.0 - 50.0;
-            (monitor_left, dock_left)
-        }
-        "right-of-dock" => {
-            // Roam from where the centred Dock ends to the screen's right edge.
-            let dock_w = dock_width().unwrap_or(DEFAULT_DOCK_WIDTH);
-            let dock_right = origin.x + area.width / 2.0 + dock_w / 2.0 + 50.0;
-            (dock_right, monitor_right)
-        }
-        _ => {
-            // "on-dock": a centred strip (IRMA_DOCK_WIDTH wide), or the full
-            // monitor width when IRMA_DOCK_WIDTH=0.
-            match dock_width() {
+    let is_primary = is_primary_monitor(window, monitor)?;
+
+    let (strip_left, strip_right) = if is_primary {
+        // Primary monitor hosts the Dock: zones are relative to the Dock footprint.
+        match dock_position {
+            "left-of-dock" => {
+                let dock_w = dock_width().unwrap_or(DEFAULT_DOCK_WIDTH);
+                let dock_left = origin.x + area.width / 2.0 - dock_w / 2.0 - 50.0;
+                (monitor_left, dock_left)
+            }
+            "right-of-dock" => {
+                let dock_w = dock_width().unwrap_or(DEFAULT_DOCK_WIDTH);
+                let dock_right = origin.x + area.width / 2.0 + dock_w / 2.0 + 50.0;
+                (dock_right, monitor_right)
+            }
+            _ => match dock_width() {
                 Some(dw) => {
                     let center = origin.x + area.width / 2.0;
                     (center - dw / 2.0, center + dw / 2.0)
                 }
-                None => (origin.x, origin.x + area.width),
-            }
+                None => (monitor_left, monitor_right),
+            },
+        }
+    } else {
+        // Secondary monitor has no Dock: split at center into left/right halves.
+        // `on-dock` should never be selected here; treat it defensively as the
+        // left half.
+        let center = origin.x + area.width / 2.0;
+        match dock_position {
+            "right-of-dock" => (center, monitor_right),
+            _ => (monitor_left, center),
         }
     };
     let strip_left = strip_left.max(monitor_left);
@@ -284,7 +332,7 @@ fn compute_bounds(
     let min_x = strip_left;
     let max_x = (strip_right - win_size.width).max(strip_left);
 
-    Ok(Some(CompanionBounds {
+    Ok(CompanionBounds {
         monitor_width: area.width,
         monitor_height: area.height,
         sprite_width: win_size.width,
@@ -294,14 +342,15 @@ fn compute_bounds(
         max_x,
         dock_clearance: clearance,
         dog_y_offset: y_offset,
-    }))
+    })
 }
 
 fn place_companion(window: &WebviewWindow) -> tauri::Result<()> {
-    let Some(bounds) = compute_bounds(window, "left-of-dock")? else {
+    let Some(monitor) = target_monitor(window)? else {
         eprintln!("[irma] place_companion: no monitor available");
         return Ok(());
     };
+    let bounds = compute_bounds_for(window, &monitor, "left-of-dock")?;
     // Default anchor: a little in from the left edge of the primary monitor.
     // JS will move it elsewhere once it has bounds.
     let x = bounds.min_x + MARGIN_X;
@@ -412,11 +461,13 @@ pub fn is_main_active(app: AppHandle, dialog_open: State<'_, DialogOpen>) -> boo
 #[tauri::command]
 pub fn get_companion_bounds(
     window: WebviewWindow,
+    monitor_name: Option<String>,
     dock_position: String,
 ) -> Result<CompanionBounds, String> {
-    compute_bounds(&window, &dock_position)
+    let monitor = resolve_monitor(&window, monitor_name.as_deref())
         .map_err(|e| e.to_string())?
-        .ok_or_else(|| "no monitor available".to_string())
+        .ok_or_else(|| "no monitor available".to_string())?;
+    compute_bounds_for(&window, &monitor, &dock_position).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
