@@ -589,8 +589,8 @@ pub fn companion_drag_begin(
 
 /// Move the companion window to follow the live OS cursor, using the offset
 /// captured by `companion_drag_begin`. Reads the cursor from the OS each call so
-/// moving the window doesn't perturb the input (the old JS-screenXY approach
-/// oscillated). TEMP: keeps a diagnostic log; remove once the flicker is confirmed fixed.
+/// moving the window never perturbs the next event's reported coordinates (the
+/// old JS-screenXY approach fed back on itself and oscillated).
 #[tauri::command]
 pub fn companion_drag_to(
     window: WebviewWindow,
@@ -605,9 +605,7 @@ pub fn companion_drag_to(
     let ny = (cursor.y + oy).round() as i32;
     window
         .set_position(PhysicalPosition::new(nx, ny))
-        .map_err(|e| e.to_string())?;
-    eprintln!("[irma][drag] cursor=({:.0},{:.0}) outer=({nx},{ny})", cursor.x, cursor.y);
-    Ok(())
+        .map_err(|e| e.to_string())
 }
 
 /// Show a native context menu on the companion window with a reset action.
