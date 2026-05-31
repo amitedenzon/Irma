@@ -29,6 +29,43 @@ const MAIN_VISIBILITY_EVENT: &str = "main:visibility";
 /// the Dock — sits her slightly off the floor rather than flush.
 const BESIDE_DOCK_LIFT: f64 = 28.0;
 
+/// Inputs for the pure drop→zone decision. All x values are logical px in the
+/// monitor's coordinate space. `dock_left`/`dock_right` are only meaningful when
+/// `is_primary` (a secondary monitor has no Dock).
+pub struct ZoneInput {
+    pub monitor_left: f64,
+    pub monitor_right: f64,
+    pub is_primary: bool,
+    pub dock_left: f64,
+    pub dock_right: f64,
+}
+
+/// Decide which zone a drop at `center_x` lands in. Pure (no window access) so
+/// it can be unit-tested. `tie_left` resolves the measure-zero exact-center case
+/// on a secondary monitor.
+pub fn decide_drop_zone(center_x: f64, z: &ZoneInput, tie_left: bool) -> &'static str {
+    if z.is_primary {
+        if center_x < z.dock_left {
+            "left-of-dock"
+        } else if center_x > z.dock_right {
+            "right-of-dock"
+        } else {
+            "on-dock"
+        }
+    } else {
+        let mid = (z.monitor_left + z.monitor_right) / 2.0;
+        if center_x < mid {
+            "left-of-dock"
+        } else if center_x > mid {
+            "right-of-dock"
+        } else if tie_left {
+            "left-of-dock"
+        } else {
+            "right-of-dock"
+        }
+    }
+}
+
 fn env_f64(key: &str, default: f64) -> f64 {
     std::env::var(key)
         .ok()
@@ -431,4 +468,53 @@ pub fn wire_windows(app: &mut App) -> tauri::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod zone_tests {
+    use super::{decide_drop_zone, ZoneInput};
+
+    fn primary(dock_left: f64, dock_right: f64) -> ZoneInput {
+        ZoneInput {
+            monitor_left: 0.0,
+            monitor_right: 1440.0,
+            is_primary: true,
+            dock_left,
+            dock_right,
+        }
+    }
+
+    fn secondary() -> ZoneInput {
+        ZoneInput {
+            monitor_left: 1440.0,
+            monitor_right: 2960.0,
+            is_primary: false,
+            dock_left: 0.0,
+            dock_right: 0.0,
+        }
+    }
+
+    #[test]
+    fn primary_picks_left_on_dock_right() {
+        let z = primary(600.0, 840.0);
+        assert_eq!(decide_drop_zone(100.0, &z, true), "left-of-dock");
+        assert_eq!(decide_drop_zone(720.0, &z, true), "on-dock");
+        assert_eq!(decide_drop_zone(1000.0, &z, true), "right-of-dock");
+    }
+
+    #[test]
+    fn secondary_splits_at_center() {
+        let z = secondary();
+        assert_eq!(decide_drop_zone(1500.0, &z, true), "left-of-dock");
+        assert_eq!(decide_drop_zone(2900.0, &z, true), "right-of-dock");
+    }
+
+    #[test]
+    fn secondary_never_returns_on_dock() {
+        let z = secondary();
+        let mid = (z.monitor_left + z.monitor_right) / 2.0;
+        assert_eq!(decide_drop_zone(mid, &z, true), "left-of-dock");
+        assert_eq!(decide_drop_zone(mid, &z, false), "right-of-dock");
+        assert_ne!(decide_drop_zone(1500.0, &z, true), "on-dock");
+    }
 }
