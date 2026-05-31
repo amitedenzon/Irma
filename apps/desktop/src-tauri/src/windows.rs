@@ -571,6 +571,21 @@ pub fn set_companion_pos(window: WebviewWindow, x: f64, y: f64) -> Result<(), St
         .map_err(|e| e.to_string())
 }
 
+/// TEMP DIAGNOSTIC: like set_companion_pos but logs the input, the window's
+/// current scale factor, and the resulting physical outer position — used to
+/// diagnose cross-monitor drag flicker. Remove once the flicker is fixed.
+#[tauri::command]
+pub fn companion_drag_to(window: WebviewWindow, x: f64, y: f64) -> Result<(), String> {
+    window
+        .set_position(LogicalPosition::new(x, y))
+        .map_err(|e| e.to_string())?;
+    let scale = window.scale_factor().unwrap_or(1.0);
+    if let Ok(pos) = window.outer_position() {
+        eprintln!("[irma][drag] in=({x:.1},{y:.1}) scale={scale:.2} outer=({},{})", pos.x, pos.y);
+    }
+    Ok(())
+}
+
 /// Show a native context menu on the companion window with a reset action.
 #[tauri::command]
 pub fn show_companion_context_menu(app: AppHandle) -> Result<(), String> {

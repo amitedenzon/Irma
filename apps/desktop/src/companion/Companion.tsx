@@ -521,11 +521,11 @@ export function Companion() {
       p.moved = true;
       draggingRef.current = true; // suspend the dog brain's movement
     }
-    void invoke("set_companion_pos", {
-      x: e.screenX + p.offsetX,
-      y: e.screenY + p.offsetY,
-    }).catch((err: unknown) =>
-      console.error("[companion] drag set_companion_pos failed", err),
+    const nx = e.screenX + p.offsetX;
+    const ny = e.screenY + p.offsetY;
+    console.log("[drag] screen=", e.screenX, e.screenY, "→ send=", nx, ny);
+    void invoke("companion_drag_to", { x: nx, y: ny }).catch((err: unknown) =>
+      console.error("[companion] companion_drag_to failed", err),
     );
   };
 
