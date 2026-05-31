@@ -8,7 +8,6 @@ import aiosqlite
 import pytest
 
 from irma_api.integrations.reminders.bridge import ReminderBridge
-from irma_api.integrations.reminders.inbox import INBOX_NAME
 from irma_api.integrations.reminders.models import BatchOp, ReminderFields
 from irma_api.integrations.reminders.sync import ReminderSyncService, SyncStats
 from irma_api.models.project import ProjectCreate
@@ -59,7 +58,7 @@ async def test_first_sync_creates_one_calendar_per_project_and_pushes_tasks(
     # First sync: creates Inbox project row + "Irma · Inbox" calendar +
     # "Irma · Alpha" calendar. Tasks created in the calendar after that.
     stats_1 = await svc.sync_once()
-    assert stats_1.created_calendars == 2  # Alpha + Inbox
+    assert stats_1.created_calendars == 1  # Alpha only
     # Reminder creation may be deferred to a second pass because Phase 2
     # only just discovered the calendar ids. Acceptable per the algorithm.
 

@@ -17,7 +17,6 @@ from typing import Any
 import structlog
 
 from irma_api.integrations.reminders.bridge import BridgeError, ReminderBridge
-from irma_api.integrations.reminders.inbox import ensure_inbox_project
 from irma_api.integrations.reminders.models import BatchOp, ReminderFields
 from irma_api.integrations.reminders.planner import (
     HelperCalendarSnap,
@@ -86,7 +85,6 @@ class ReminderSyncService:
 
     async def _run_once_locked(self) -> SyncStats:
         try:
-            await ensure_inbox_project(self._projects)
             irma_snap = await self._snapshot_irma()
             helper_calendars = await self._snapshot_helper()
             sync_plan = plan(irma_snap, helper_calendars, calendar_prefix=self._calendar_prefix)
