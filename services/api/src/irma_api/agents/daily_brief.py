@@ -15,12 +15,14 @@ from zoneinfo import ZoneInfo
 import structlog
 
 from irma_api.agents.llm import ChatTurn, LLMClient, TextResult
+from irma_api.agents.persona import build_owner_context
 from irma_api.agents.prompts import load_prompt
 from irma_api.config import Settings
 from irma_api.models.brief import FocusItem, FocusKind
 from irma_api.models.daily_brief import DailyBrief, LookaheadItem, ProjectProgress
 from irma_api.models.project import Project, ProjectStatus
 from irma_api.models.task import Task, TaskStatus
+from irma_api.runtime.profile_cache import ProfileCache
 from irma_api.runtime.state import StateBus
 from irma_api.store.repos.project_repo import ProjectRepo
 from irma_api.store.repos.snapshot_repo import DailySnapshot, SnapshotRepo
@@ -101,6 +103,7 @@ class DailyBriefService:
         self,
         *,
         settings: Settings,
+        profile_cache: ProfileCache,
         llm: LLMClient,
         store: SignalStore,
         observers: list[Observer],
@@ -109,6 +112,7 @@ class DailyBriefService:
         max_tokens: int = 1200,
     ) -> None:
         self._settings = settings
+        self._profile_cache = profile_cache
         self._llm = llm
         self._store = store
         self._observers = observers
@@ -117,7 +121,7 @@ class DailyBriefService:
         self._max_tokens = max_tokens
 
     def _today(self) -> date:
-        return datetime.now(ZoneInfo(self._settings.irma_brief_timezone)).date()
+        return datetime.now(ZoneInfo(self._profile_cache.current.timezone)).date()
 
     async def build(self) -> DailyBrief:
         from irma_api.routers.signals import run_refresh  # local: avoid circular import
@@ -128,7 +132,8 @@ class DailyBriefService:
             logger.warning("daily_brief.refresh_failed", error=str(exc))
 
         today = self._today()
-        window_end = today + timedelta(days=self._settings.irma_brief_lookahead_days)
+        profile = self._profile_cache.current
+        window_end = today + timedelta(days=profile.brief_lookahead_days)
 
         prepo = ProjectRepo(self._store.connection)
         trepo = TaskRepo(self._store.connection)
@@ -230,7 +235,9 @@ class DailyBriefService:
         lookahead: list[LookaheadItem],
         calendar_text: str | None,
     ) -> tuple[str, str, list[str]]:
-        system = load_prompt("daily_brief_system")
+        base_system = load_prompt("daily_brief_system")
+        owner_ctx = build_owner_context(self._profile_cache.current)
+        system = f"{base_system}\n\n{owner_ctx}"
         user = self._compose(today, progress, today_focus, lookahead, calendar_text)
         messages = [ChatTurn(role="user", content=user)]
         outcome = await self._llm.complete(
@@ -289,7 +296,7 @@ class DailyBriefService:
         else:
             lines.append("  (none)")
         lines.append("")
-        lines.append(f"NEXT {self._settings.irma_brief_lookahead_days} DAYS (task deadlines):")
+        lines.append(f"NEXT {self._profile_cache.current.brief_lookahead_days} DAYS (task deadlines):")
         if lookahead:
             lines.extend(f"  • {it.when} {it.title} ({it.kind})" for it in lookahead)
         else:

@@ -63,7 +63,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.profile_cache = profile_cache
 
     bus = StateBus()
-    observers: list[Observer] = [TimeAgent(settings)]
+    observers: list[Observer] = [TimeAgent(settings, profile_cache)]
     if settings.irma_codebase_agent_enabled:
         observers.append(CodebaseAgent(settings.irma_repos))
 
@@ -82,20 +82,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     tools: list[Tool] = []
     resend_key = secret_value_or_none(settings.resend_api_key)
     send_email_tool: ResendSendTool | None = None
-    if resend_key is not None and settings.irma_user_email:
-        send_email_tool = ResendSendTool(settings)
+    if resend_key is not None:
+        send_email_tool = ResendSendTool(settings, profile_cache)
         tools.append(send_email_tool)
     else:
         logger.info(
             "tools.send_email_disabled",
-            missing=[
-                key
-                for key, val in (
-                    ("RESEND_API_KEY", resend_key),
-                    ("IRMA_USER_EMAIL", settings.irma_user_email),
-                )
-                if not val
-            ],
+            missing=["RESEND_API_KEY"],
         )
     calendar_keys = {
         "GOOGLE_OAUTH_CLIENT_ID": secret_value_or_none(settings.google_oauth_client_id),
@@ -105,7 +98,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     calendar_missing = [k for k, v in calendar_keys.items() if v is None]
     read_calendar_tool: ReadCalendarTool | None = None
     if not calendar_missing:
-        read_calendar_tool = ReadCalendarTool(settings)
+        read_calendar_tool = ReadCalendarTool(settings, profile_cache)
         tools.append(read_calendar_tool)
         tools.append(CreateCalendarEventTool(settings))
     else:
@@ -147,6 +140,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         daily_service = DailyBriefService(
             settings=settings,
+            profile_cache=profile_cache,
             llm=llm,
             store=store,
             observers=observers,
@@ -154,7 +148,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             calendar=read_calendar_tool,
         )
         daily_brief_job = DailyBriefJob(
-            service=daily_service, sender=send_email_tool, settings=settings
+            service=daily_service,
+            sender=send_email_tool,
+            settings=settings,
+            profile_cache=profile_cache,
         )
     else:
         logger.info(
