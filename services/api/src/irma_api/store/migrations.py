@@ -80,6 +80,22 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
         created_at          TEXT NOT NULL
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS profile (
+        id                   INTEGER PRIMARY KEY CHECK (id = 1),
+        owner_name           TEXT    NOT NULL DEFAULT 'there',
+        owner_role           TEXT    NOT NULL DEFAULT '',
+        owner_email          TEXT,
+        timezone             TEXT    NOT NULL DEFAULT 'UTC',
+        persona_blurb        TEXT    NOT NULL DEFAULT '',
+        calendar_exclude_ids TEXT    NOT NULL DEFAULT '[]',
+        daily_brief_enabled  INTEGER NOT NULL DEFAULT 1,
+        brief_hour           INTEGER NOT NULL DEFAULT 8,
+        brief_lookahead_days INTEGER NOT NULL DEFAULT 3,
+        setup_complete       INTEGER NOT NULL DEFAULT 0,
+        updated_at           TEXT    NOT NULL
+    )
+    """,
     "DROP TABLE IF EXISTS briefs",
 )
 
