@@ -7,8 +7,24 @@ value from the database.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from typing import Any
+
 from irma_api.models.profile import Profile
 from irma_api.store.repos.profile_repo import ProfileRepo
+
+
+def current_profile(app_state: Any) -> Profile:
+    """Return the cached Profile from *app_state*, or a neutral default.
+
+    A neutral (all-defaults) Profile is returned whenever the
+    ``profile_cache`` attribute is absent — typically in tests or during
+    early startup before the cache has been loaded.
+    """
+    cache: ProfileCache | None = getattr(app_state, "profile_cache", None)
+    if cache is not None:
+        return cache.current
+    return Profile(updated_at=datetime.now(UTC))
 
 
 class ProfileCache:

@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from irma_api.agents.llm import ChatTurn, TextResult
 from irma_api.agents.persona import build_routine_prefix, render_routine_system_prompt
+from irma_api.runtime.profile_cache import current_profile
 from irma_api.runtime.state import AgentState
 
 logger = structlog.get_logger(__name__)
@@ -96,15 +97,7 @@ def _save(request: Request, routines: list[dict[str, Any]]) -> None:
 
 @router.get("/prefix")
 async def get_prefix(request: Request) -> dict[str, str]:
-    from irma_api.models.profile import Profile
-
-    profile_cache = getattr(request.app.state, "profile_cache", None)
-    if profile_cache is not None:
-        profile: Profile = profile_cache.current
-    else:
-        from datetime import UTC, datetime
-        profile = Profile(updated_at=datetime.now(UTC))
-    return {"prefix": build_routine_prefix(profile)}
+    return {"prefix": build_routine_prefix(current_profile(request.app.state))}
 
 
 @router.get("/routines")
@@ -180,15 +173,9 @@ async def run_routine(routine_id: str, request: Request) -> dict[str, Any]:
     if send_tool is None:
         raise HTTPException(status_code=503, detail="Email not configured (RESEND_API_KEY / IRMA_USER_EMAIL)")
 
-    from irma_api.models.profile import Profile
     from irma_api.tools.base import ToolError
 
-    profile_cache = getattr(request.app.state, "profile_cache", None)
-    if profile_cache is not None:
-        profile: Profile = profile_cache.current
-    else:
-        from datetime import UTC, datetime
-        profile = Profile(updated_at=datetime.now(UTC))
+    profile = current_profile(request.app.state)
 
     date_str = today.strftime("%d %B %Y")
     day_str = today.strftime("%A, %d %B %Y")

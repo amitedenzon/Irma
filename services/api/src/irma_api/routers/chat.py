@@ -18,6 +18,7 @@ from irma_api.agents.llm import (
     ToolResult,
 )
 from irma_api.agents.persona import render_chat_system_prompt
+from irma_api.runtime.profile_cache import current_profile
 from irma_api.runtime.state import AgentState, StateBus
 from irma_api.tools.base import ToolError, ToolRegistry
 
@@ -30,16 +31,7 @@ _STUCK_REPLY = "I got stuck mid-tool-call — try rephrasing."
 
 
 def _build_system_prompt(tool_names: list[str], request: Request) -> str:
-    from irma_api.models.profile import Profile
-
-    profile_cache = getattr(request.app.state, "profile_cache", None)
-    if profile_cache is not None:
-        profile: Profile = profile_cache.current
-    else:
-        # Fallback for tests or contexts where profile_cache is not mounted.
-        from datetime import UTC, datetime
-        profile = Profile(updated_at=datetime.now(UTC))
-    return render_chat_system_prompt(profile, tool_names)
+    return render_chat_system_prompt(current_profile(request.app.state), tool_names)
 
 
 class ChatMessage(BaseModel):

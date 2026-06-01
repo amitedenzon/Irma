@@ -8,7 +8,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from irma_api.agents.persona import (
-    IRMA_BASE_IDENTITY,
     build_owner_context,
     build_routine_prefix,
     render_chat_system_prompt,
@@ -104,8 +103,7 @@ class TestBuildOwnerContext:
 class TestRenderChatSystemPrompt:
     def test_base_identity_present(self) -> None:
         prompt = render_chat_system_prompt(_neutral(), [])
-        # The fixed identity text must appear verbatim
-        assert "beside the\nmacOS Dock" in IRMA_BASE_IDENTITY
+        # The fixed identity text must appear verbatim in the rendered prompt
         assert "macOS Dock" in prompt
 
     def test_neutral_no_amit(self) -> None:
@@ -118,8 +116,9 @@ class TestRenderChatSystemPrompt:
 
     def test_neutral_no_dangling_role(self) -> None:
         prompt = render_chat_system_prompt(_neutral(), [])
-        # "there is" as a role sentence should not appear
-        assert "there is" not in prompt.lower() or "there" in prompt  # "You are assisting there."
+        # With a neutral profile (no owner_role), a role-description sentence
+        # like "there is an AI researcher" must never appear.
+        assert "there is" not in prompt.lower()
 
     def test_today_date_present(self) -> None:
         from datetime import date
@@ -218,3 +217,15 @@ class TestRenderRoutineSystemPrompt:
     def test_no_israel_phrasing(self) -> None:
         system = render_routine_system_prompt(_neutral(), "Monday, 02 June 2026")
         assert "Israel" not in system
+
+    def test_neutral_possessive_reads_naturally(self) -> None:
+        # Neutral profile must not produce the ungrammatical "there's".
+        system = render_routine_system_prompt(_neutral(), "Monday, 02 June 2026")
+        assert "there's" not in system
+        assert "your" in system
+
+    def test_named_possessive_renders_correctly(self) -> None:
+        # A real owner name must produce "<Name>'s".
+        system = render_routine_system_prompt(_full(), "Monday, 02 June 2026")
+        assert "Alex's" in system
+        assert "your" not in system

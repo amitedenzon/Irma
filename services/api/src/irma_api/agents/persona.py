@@ -54,7 +54,7 @@ def build_owner_context(profile: Profile) -> str:
     """Return the owner-specific paragraph(s) to append to the base identity.
 
     Safe with neutral defaults: if ``owner_name`` is ``"there"`` (the
-    factory default) the salutation reads naturally as "Hi there".  Role
+    factory default) the output reads "You are assisting there.".  Role
     sentence is omitted when ``owner_role`` is empty.  ``persona_blurb``
     is appended only when non-empty.
     """
@@ -87,7 +87,7 @@ def render_chat_system_prompt(profile: Profile, tool_names: list[str]) -> str:
     """
     today = date.today().isoformat()
     owner_ctx = build_owner_context(profile)
-    date_line = f"\nToday's date is {today}.\n"
+    date_line = f"\n\nToday's date is {today}.\n"
 
     parts = [IRMA_BASE_IDENTITY, "\n\n", owner_ctx, date_line]
 
@@ -139,9 +139,10 @@ def render_routine_system_prompt(profile: Profile, day_str: str) -> str:
     ``day_str`` is a pre-formatted date string, e.g. ``"Monday, 02 June 2026"``.
     The ``[Irma]`` subject prefix is brand identity — kept verbatim.
     """
-    name = profile.owner_name or "there"
+    raw_name = profile.owner_name or ""
+    possessive = "your" if not raw_name or raw_name == "there" else f"{raw_name}'s"
     return (
-        f"You are Irma — {name}'s calm, precise, slightly proactive personal assistant.\n"
+        f"You are Irma — {possessive} calm, precise, slightly proactive personal assistant.\n"
         f"Today is {day_str}.\n"
         "Write the body of a brief email to the owner based on the task below. "
         "Plain text only, no markdown. Calm, terse, actionable — no filler."
