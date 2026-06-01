@@ -57,7 +57,7 @@ class ProfileRepo:
             INSERT OR IGNORE INTO profile ({_COLUMNS})
             VALUES (1, 'there', '', NULL, 'UTC', '', '[]', 1, 8, 3, 0, ?)
             """,
-            (_now().isoformat(),),
+            (_DEFAULT_UPDATED_AT,),
         )
         await self._conn.commit()
         return await self.get()

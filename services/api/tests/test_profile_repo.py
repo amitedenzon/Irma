@@ -50,13 +50,12 @@ async def test_ensure_seeded_returns_profile(db_conn: aiosqlite.Connection) -> N
 @pytest.mark.asyncio
 async def test_ensure_seeded_idempotent(db_conn: aiosqlite.Connection) -> None:
     repo = ProfileRepo(db_conn)
-    first = await repo.ensure_seeded()
+    await repo.ensure_seeded()
     # Second call must not reset any already-updated fields.
     await repo.update(ProfileUpdate(owner_name="Amit"))
     second = await repo.ensure_seeded()
     # ensure_seeded uses INSERT OR IGNORE — existing values must be preserved.
     assert second.owner_name == "Amit"
-    _ = first  # silence unused warning
 
 
 # ---------------------------------------------------------------------------
