@@ -5,10 +5,10 @@ import { applyTheme, applyPawCursor, applyPawCursorTheme, loadSettings } from ".
 import "./styles.css";
 
 // Apply persisted theme and cursor before first paint.
-const _settings = loadSettings();
-applyTheme(_settings.themeId);
-applyPawCursor(_settings.pawCursor);
-applyPawCursorTheme(_settings.themeId);
+const { themeId: _initThemeId, pawCursor: _initPawCursor } = loadSettings();
+applyTheme(_initThemeId);
+applyPawCursor(_initPawCursor);
+applyPawCursorTheme(_initThemeId);
 
 const rootEl = document.getElementById("root");
 if (!rootEl) throw new Error("root element missing in index.html");

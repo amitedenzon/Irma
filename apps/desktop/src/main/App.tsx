@@ -70,11 +70,12 @@ export function App() {
   // Drag-treat state
   const [dragging, setDragging] = useState(false);
   const [cheesePos, setCheesePos] = useState({ x: 0, y: 0 });
-  const [, setOverDog] = useState(false);
   const [thankYou, setThankYou] = useState(false);
   const dragStartPos = useRef<{ x: number; y: number } | null>(null);
   const draggingRef = useRef(false);
   const overDogRef = useRef(false);
+  const companionBoundsRef = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
+  const cleanupDragRef = useRef<(() => void) | null>(null);
 
   const loadProjects = useCallback(async () => {
     setProjectsError(null);
@@ -93,6 +94,14 @@ export function App() {
   useEffect(() => {
     const sub = subscribeAgentState((s) => setAgentState(s));
     return () => sub.close();
+  }, []);
+
+  // Clean up any live drag listeners if the component unmounts mid-drag
+  useEffect(() => {
+    return () => {
+      cleanupDragRef.current?.();
+      document.documentElement.classList.remove("cheese-dragging");
+    };
   }, []);
 
   const closeWindow = () => {
@@ -127,6 +136,7 @@ export function App() {
     e.preventDefault();
     dragStartPos.current = { x: e.clientX, y: e.clientY };
     draggingRef.current = false;
+    companionBoundsRef.current = null;
 
     const onMove = (me: MouseEvent) => {
       const dx = me.clientX - (dragStartPos.current?.x ?? me.clientX);
@@ -135,48 +145,44 @@ export function App() {
       if (Math.sqrt(dx * dx + dy * dy) > 4 && !draggingRef.current) {
         draggingRef.current = true;
         setDragging(true);
-        // CSS class overrides paw cursor with cheese cursor (works inside window)
         document.documentElement.classList.add("cheese-dragging");
         void emitTo("companion", "cheese:drag-start");
-      }
-
-      if (draggingRef.current) {
-        // Update floating cheese position (visible inside window)
-        setCheesePos({ x: me.clientX, y: me.clientY });
-
-        // Hit-test companion via screen coords — works even outside the window
-        // because browser captures mouse during mousedown
+        // Fetch companion bounds once at drag start — reused for every mousemove hit-test
         void (async () => {
           try {
             const companion = new TauriWindow("companion");
             const pos = await companion.outerPosition();
             const sz = await companion.outerSize();
-            const dpr = window.devicePixelRatio ?? 1;
-            const cx = me.screenX * dpr;
-            const cy = me.screenY * dpr;
-            const hit = cx >= pos.x && cx <= pos.x + sz.width &&
-                        cy >= pos.y && cy <= pos.y + sz.height;
-            overDogRef.current = hit;
-            setOverDog(hit);
-          } catch { /* no-op */ }
+            companionBoundsRef.current = { x: pos.x, y: pos.y, w: sz.width, h: sz.height };
+          } catch { /* companion window not available */ }
         })();
+      }
+
+      if (draggingRef.current) {
+        setCheesePos({ x: me.clientX, y: me.clientY });
+        const b = companionBoundsRef.current;
+        if (b) {
+          const dpr = window.devicePixelRatio ?? 1;
+          const cx = me.screenX * dpr;
+          const cy = me.screenY * dpr;
+          overDogRef.current = cx >= b.x && cx <= b.x + b.w && cy >= b.y && cy <= b.y + b.h;
+        }
       }
     };
 
     const onUp = () => {
+      cleanupDragRef.current = null;
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
       document.documentElement.classList.remove("cheese-dragging");
 
       if (!draggingRef.current) {
-        // Pure click — old behavior, no confetti
         giveClickTreat();
         return;
       }
 
       draggingRef.current = false;
       setDragging(false);
-      setOverDog(false);
       void emitTo("companion", "cheese:drag-end");
 
       if (overDogRef.current) {
@@ -185,6 +191,10 @@ export function App() {
       }
     };
 
+    cleanupDragRef.current = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
   };
@@ -274,13 +284,6 @@ export function App() {
         </div>
       )}
 
-      <style>{`
-        @keyframes fadeInDown {
-          from { opacity: 0; transform: translateX(-50%) translateY(-10px); }
-          to   { opacity: 1; transform: translateX(-50%) translateY(0); }
-        }
-      `}</style>
-
       <main className="flex-1 min-h-0 overflow-hidden relative flex flex-col">
         {/* Projects — scrolls inside its own wrapper */}
         {tab === "projects" && (
@@ -366,8 +369,8 @@ function Header({
           <span className="text-[11px]" style={{ color: "var(--color-ink-faint)", fontFamily: "var(--font-mono)" }}>
             {stateLabel}
           </span>
-          <span
-            role="button"
+          <button
+            type="button"
             aria-label="Drag cheese to give Irma a treat"
             title="Drag to Irma to give a treat 🧀"
             onMouseDown={onCheeseDragStart}
@@ -376,12 +379,15 @@ function Header({
               lineHeight: 1,
               cursor: "grab",
               userSelect: "none",
+              background: "none",
+              border: "none",
+              padding: 0,
               // Exclude from Tauri's window drag region so mousedown isn't stolen
               WebkitAppRegion: "no-drag",
             } as React.CSSProperties}
           >
             🧀
-          </span>
+          </button>
         </div>
         <button onClick={onClose} aria-label="Close"
                 className="px-2 py-1 text-[14px] leading-none rounded-md hover:bg-[var(--color-surface-2)]"

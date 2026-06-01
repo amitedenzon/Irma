@@ -5,9 +5,9 @@ import { applyPawCursor, applyPawCursorTheme, loadSettings } from "./lib/setting
 import "./styles.css";
 
 document.body.classList.add("companion");
-const _companionSettings = loadSettings();
-applyPawCursor(_companionSettings.pawCursor);
-applyPawCursorTheme(_companionSettings.themeId);
+const { pawCursor: _initPawCursor, themeId: _initThemeId } = loadSettings();
+applyPawCursor(_initPawCursor);
+applyPawCursorTheme(_initThemeId);
 
 const rootEl = document.getElementById("root");
 if (!rootEl) throw new Error("root element missing in companion.html");

@@ -473,11 +473,11 @@ export function Companion() {
     listen<void>("cheese:drag-start", () => {
       if (cancelled) return;
       setCheeseDropTarget(true);
-    }).catch(() => {});
+    }).catch((e) => console.warn("[companion] listen cheese:drag-start failed", e));
     listen<void>("cheese:drag-end", () => {
       if (cancelled) return;
       setCheeseDropTarget(false);
-    }).catch(() => {});
+    }).catch((e) => console.warn("[companion] listen cheese:drag-end failed", e));
 
     // Poll whether the main window is actually presented to the user every
     // 250 ms. We key off "active" (visible AND focused), not just "visible":
