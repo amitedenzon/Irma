@@ -11,6 +11,7 @@ import {
 	saveCompanionId,
 	saveDockPosition,
 	saveTheme,
+	savePawCursor,
 	type DockPosition,
 	type ThemeId,
 } from "../../lib/settings";
@@ -307,6 +308,9 @@ function GeneralTab() {
 	const [loadingScreen, setLoadingScreen] = useState<boolean>(
 		() => localStorage.getItem("irma.settings.loadingScreen") !== "false",
 	);
+	const [pawCursor, setPawCursor] = useState<boolean>(
+		() => loadSettings().pawCursor,
+	);
 
 	useEffect(() => {
 		isEnabled()
@@ -320,6 +324,11 @@ function GeneralTab() {
 			"irma.settings.loadingScreen",
 			checked ? "true" : "false",
 		);
+	};
+
+	const onPawCursorChange = (checked: boolean) => {
+		setPawCursor(checked);
+		savePawCursor(checked);
 	};
 
 	const onAutostartChange = async (checked: boolean) => {
@@ -567,6 +576,57 @@ function GeneralTab() {
 								position: "absolute",
 								top: 2,
 								left: loadingScreen ? 18 : 2,
+								width: 18,
+								height: 18,
+								borderRadius: "50%",
+								background: "white",
+								boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
+								transition: "left 0.15s ease",
+							}}
+						/>
+					</button>
+				</div>
+			</section>
+
+			{/* Paw cursor */}
+			<section className="card p-4">
+				<div className="flex items-center justify-between gap-4">
+					<div className="min-w-0">
+						<p
+							className="text-[13px] font-medium"
+							style={{ color: "var(--color-ink)" }}>
+							Paw cursor
+						</p>
+						<p
+							className="text-[12px] mt-0.5"
+							style={{ color: "var(--color-ink-faint)" }}>
+							Replace the mouse cursor with a dog paw. Open = default, closed = clicking.
+						</p>
+					</div>
+					<button
+						type="button"
+						role="switch"
+						aria-checked={pawCursor}
+						onClick={() => onPawCursorChange(!pawCursor)}
+						className="shrink-0"
+						style={{
+							position: "relative",
+							width: 44,
+							height: 26,
+							borderRadius: 13,
+							background: pawCursor
+								? "var(--color-red)"
+								: "var(--color-surface-2)",
+							border: `1.5px solid ${pawCursor ? "var(--color-red)" : "var(--color-border)"}`,
+							cursor: "pointer",
+							transition: "background 0.15s ease, border-color 0.15s ease",
+							flexShrink: 0,
+						}}>
+						<span
+							style={{
+								position: "absolute",
+								top: 2,
+								left: pawCursor ? 18 : 2,
 								width: 18,
 								height: 18,
 								borderRadius: "50%",
