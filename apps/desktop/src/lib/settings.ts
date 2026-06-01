@@ -100,7 +100,6 @@ export const COMPANIONS: readonly Companion[] = [
   { id: "irma",    name: "Irma (Original)", image: "Irma.png" },
   { id: "lucky",   name: "Lucky",           image: "Lucky.png" },
   { id: "rio",     name: "Rio",             image: "Rio.png" },
-  { id: "chicken", name: "Chicken",         image: "Chicken.png" },
 ] as const;
 
 export const DEFAULT_COMPANION_ID: string = COMPANIONS[0].id;
