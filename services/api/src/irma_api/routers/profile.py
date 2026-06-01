@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import structlog
 from fastapi import APIRouter, Request
 
 from irma_api.models.profile import Profile, ProfileUpdate
@@ -9,6 +10,8 @@ from irma_api.runtime.profile_cache import ProfileCache
 from irma_api.runtime.scheduler import Scheduler
 from irma_api.store.repos.profile_repo import ProfileRepo
 from irma_api.store.sqlite import SignalStore
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/profile", tags=["profile"])
 
@@ -35,13 +38,24 @@ async def update_profile(request: Request, body: ProfileUpdate) -> Profile:
     cache.set(updated)
 
     # Hot-reschedule the daily-brief job when scheduling-relevant fields changed.
+    # Wrapped in try/except: reschedule is a side-effect — if APScheduler raises,
+    # the DB write has already committed and the caller gets the updated profile.
+    # Diverging scheduler state is logged and will self-heal on next restart.
     if body.model_fields_set & _SCHEDULE_FIELDS:
         scheduler: Scheduler | None = getattr(request.app.state, "scheduler", None)
         if scheduler is not None:
-            scheduler.reschedule_daily_job(
-                hour=updated.brief_hour,
-                timezone=updated.timezone,
-                enabled=updated.daily_brief_enabled,
-            )
+            try:
+                scheduler.reschedule_daily_job(
+                    hour=updated.brief_hour,
+                    timezone=updated.timezone,
+                    enabled=updated.daily_brief_enabled,
+                )
+            except Exception:
+                logger.exception(
+                    "profile.reschedule_failed",
+                    brief_hour=updated.brief_hour,
+                    timezone=updated.timezone,
+                    enabled=updated.daily_brief_enabled,
+                )
 
     return updated

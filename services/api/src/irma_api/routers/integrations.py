@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from irma_api.agents.llm import LLMClient
 from irma_api.config import Settings, secret_value_or_none
+from irma_api.runtime.profile_cache import current_profile
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 
@@ -30,8 +31,6 @@ def _build_status(request: Request) -> IntegrationsStatus:
     settings: Settings = request.app.state.settings
     llm: LLMClient | None = getattr(request.app.state, "llm", None)
     sync_svc = getattr(request.app.state, "reminder_sync", None)
-
-    from irma_api.runtime.profile_cache import current_profile
 
     profile = current_profile(request.app.state)
     # owner_email from profile takes precedence over the legacy settings field.

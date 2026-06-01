@@ -90,24 +90,22 @@ async def test_startup_disabled_then_enable_via_patch() -> None:
     """Simulates the app.py startup sequence when daily_brief_enabled=False.
 
     The exact startup sequence is:
-      1. add_daily_job(callback, ...) — stores callback, adds job
-      2. reschedule_daily_job(enabled=False, ...) — removes job, callback retained
+      1. add_daily_job(callback, ..., enabled=False) — stores callback, skips job
 
     Then a later PATCH with daily_brief_enabled=True calls:
-      3. reschedule_daily_job(enabled=True, ...) — must re-add the job using
+      2. reschedule_daily_job(enabled=True, ...) — must re-add the job using
          the stored callback, not silently return.
     """
     sched, noop = _make_sched()
 
-    # Step 1 + 2: startup while disabled
-    sched.add_daily_job(noop, hour=8, timezone="UTC")  # type: ignore[arg-type]
-    sched.reschedule_daily_job(hour=8, timezone="UTC", enabled=False)
+    # Step 1: startup while disabled — single call, no follow-up reschedule needed
+    sched.add_daily_job(noop, hour=8, timezone="UTC", enabled=False)  # type: ignore[arg-type]
 
     # Job must be absent, but callback must be retained
     assert sched._sched.get_job(DAILY_BRIEF_JOB_ID) is None
-    assert getattr(sched, "_daily_callback", None) is not None
+    assert sched._daily_callback is not None
 
-    # Step 3: user enables via PATCH
+    # Step 2: user enables via PATCH
     sched.reschedule_daily_job(hour=7, timezone="Asia/Jerusalem", enabled=True)
 
     job = sched._sched.get_job(DAILY_BRIEF_JOB_ID)
