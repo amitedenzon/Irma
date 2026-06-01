@@ -220,11 +220,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         app.state.daily_tick = daily_tick
         profile = profile_cache.current
-        if profile.daily_brief_enabled:
-            scheduler.add_daily_job(
-                daily_tick,
+        # Always register the callback so reschedule_daily_job(enabled=True)
+        # can re-add the job later even if the brief starts disabled.
+        scheduler.add_daily_job(
+            daily_tick,
+            hour=profile.brief_hour,
+            timezone=profile.timezone,
+        )
+        if not profile.daily_brief_enabled:
+            scheduler.reschedule_daily_job(
                 hour=profile.brief_hour,
                 timezone=profile.timezone,
+                enabled=False,
             )
     else:
         app.state.daily_tick = None

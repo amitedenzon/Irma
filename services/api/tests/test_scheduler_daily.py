@@ -83,3 +83,37 @@ async def test_reschedule_daily_job_readds_when_absent() -> None:
     assert str(trigger.timezone) == "America/New_York"
     hour_field = next(f for f in trigger.fields if f.name == "hour")
     assert str(hour_field) == "10"
+
+
+@pytest.mark.asyncio
+async def test_startup_disabled_then_enable_via_patch() -> None:
+    """Simulates the app.py startup sequence when daily_brief_enabled=False.
+
+    The exact startup sequence is:
+      1. add_daily_job(callback, ...) — stores callback, adds job
+      2. reschedule_daily_job(enabled=False, ...) — removes job, callback retained
+
+    Then a later PATCH with daily_brief_enabled=True calls:
+      3. reschedule_daily_job(enabled=True, ...) — must re-add the job using
+         the stored callback, not silently return.
+    """
+    sched, noop = _make_sched()
+
+    # Step 1 + 2: startup while disabled
+    sched.add_daily_job(noop, hour=8, timezone="UTC")  # type: ignore[arg-type]
+    sched.reschedule_daily_job(hour=8, timezone="UTC", enabled=False)
+
+    # Job must be absent, but callback must be retained
+    assert sched._sched.get_job(DAILY_BRIEF_JOB_ID) is None
+    assert getattr(sched, "_daily_callback", None) is not None
+
+    # Step 3: user enables via PATCH
+    sched.reschedule_daily_job(hour=7, timezone="Asia/Jerusalem", enabled=True)
+
+    job = sched._sched.get_job(DAILY_BRIEF_JOB_ID)
+    assert job is not None, "Job must exist after enable-after-disabled hot-reload"
+    trigger = job.trigger
+    assert isinstance(trigger, CronTrigger)
+    assert str(trigger.timezone) == "Asia/Jerusalem"
+    hour_field = next(f for f in trigger.fields if f.name == "hour")
+    assert str(hour_field) == "7"
