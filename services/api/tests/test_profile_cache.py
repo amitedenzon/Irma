@@ -49,3 +49,19 @@ async def test_hot_reload_reflects_repo_update(db_conn: aiosqlite.Connection) ->
     # Reload
     await cache.load()
     assert cache.current.owner_name == "Amit"  # now fresh
+
+
+@pytest.mark.asyncio
+async def test_set_updates_cache_without_db_round_trip(db_conn: aiosqlite.Connection) -> None:
+    """cache.set() assigns the profile immediately; no extra DB query is issued."""
+    repo = ProfileRepo(db_conn)
+    cache = ProfileCache(repo)
+    await cache.load()
+    assert cache.current.owner_name == "there"
+
+    # Write directly via repo and hand the result to cache.set() — simulating PATCH handler.
+    updated = await repo.update(ProfileUpdate(owner_name="Amit"))
+    cache.set(updated)
+
+    assert cache.current.owner_name == "Amit"
+    assert cache.current is updated

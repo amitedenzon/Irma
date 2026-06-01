@@ -23,6 +23,14 @@ class ProfileCache:
         self._profile = await self._repo.get()
         return self._profile
 
+    def set(self, profile: Profile) -> None:
+        """Assign an already-fetched Profile to the cache without a DB round-trip.
+
+        Used by PATCH handlers that already hold the updated row so the cache
+        stays consistent without an extra query.
+        """
+        self._profile = profile
+
     @property
     def current(self) -> Profile:
         """Return the cached Profile. Raises if :meth:`load` was never called."""

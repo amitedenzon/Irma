@@ -113,3 +113,37 @@ async def test_import_no_email_does_not_set_setup_complete(
     await import_env_defaults(repo, settings)
     profile = await repo.get()
     assert profile.setup_complete is False
+
+
+@pytest.mark.asyncio
+async def test_import_does_not_clobber_brief_lookahead_and_daily_enabled(
+    db_conn: aiosqlite.Connection,
+) -> None:
+    """Non-default brief_lookahead_days / daily_brief_enabled must not be overwritten.
+
+    Also asserts that setup_complete flips to True when a legacy owner email is
+    present (regression guard for item 4).
+    """
+    repo = ProfileRepo(db_conn)
+    # User has already set non-default values via the wizard.
+    await repo.update(
+        ProfileUpdate(
+            owner_email="legacy@example.com",
+            brief_lookahead_days=7,
+            daily_brief_enabled=False,
+        )
+    )
+
+    # .env carries different values — should NOT win because profile already differs from defaults.
+    settings = _settings(
+        irma_user_email="legacy@example.com",
+        irma_brief_lookahead_days=5,
+        irma_daily_brief_enabled=True,  # env says enabled, profile says disabled — no import
+    )
+    await import_env_defaults(repo, settings)
+    profile = await repo.get()
+
+    assert profile.brief_lookahead_days == 7, "brief_lookahead_days must not be clobbered"
+    assert profile.daily_brief_enabled is False, "daily_brief_enabled must not be clobbered"
+    # A legacy owner email was present, so the wizard should be skipped.
+    assert profile.setup_complete is True

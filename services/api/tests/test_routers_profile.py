@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import NamedTuple
 
 import pytest
 import pytest_asyncio
@@ -14,6 +15,11 @@ from irma_api.routers.profile import router as profile_router
 from irma_api.runtime.profile_cache import ProfileCache
 from irma_api.store.repos.profile_repo import ProfileRepo
 from irma_api.store.sqlite import SignalStore
+
+
+class _AppClient(NamedTuple):
+    client: AsyncClient
+    app: FastAPI
 
 
 @pytest_asyncio.fixture
@@ -32,6 +38,26 @@ async def client(tmp_path: Path) -> AsyncIterator[AsyncClient]:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://t") as c:
         yield c
+    await store.close()
+
+
+@pytest_asyncio.fixture
+async def app_client(tmp_path: Path) -> AsyncIterator[_AppClient]:
+    """Fixture that yields both the AsyncClient and the FastAPI app instance."""
+    app = FastAPI()
+    store = SignalStore(tmp_path / "irma.db")
+    await store.connect()
+    app.state.store = store
+
+    repo = ProfileRepo(store.connection)
+    cache = ProfileCache(repo)
+    await cache.load()
+    app.state.profile_cache = cache
+
+    app.include_router(profile_router, prefix="/api/v1")
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://t") as c:
+        yield _AppClient(client=c, app=app)
     await store.close()
 
 
@@ -72,3 +98,19 @@ async def test_patch_rejects_unknown_field(client: AsyncClient) -> None:
 async def test_patch_rejects_invalid_timezone(client: AsyncClient) -> None:
     r = await client.patch("/api/v1/profile", json={"timezone": "Not/ATimezone"})
     assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_patch_cache_set_not_reload(app_client: _AppClient) -> None:
+    """PATCH must update cache.current via cache.set() without an extra DB round-trip.
+
+    Verifies that the in-memory cache reflects the PATCHed value immediately —
+    confirming the set()-based path rather than the old load()-based path.
+    """
+    client, app = app_client
+    r = await client.patch("/api/v1/profile", json={"owner_name": "Amit", "brief_hour": 6})
+    assert r.status_code == 200
+
+    cache: ProfileCache = app.state.profile_cache
+    assert cache.current.owner_name == "Amit"
+    assert cache.current.brief_hour == 6

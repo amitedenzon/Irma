@@ -50,11 +50,13 @@ async def import_env_defaults(repo: ProfileRepo, settings: Settings) -> None:
     if not profile.calendar_exclude_ids and settings.irma_calendar_exclude_ids:
         patch_kwargs["calendar_exclude_ids"] = list(settings.irma_calendar_exclude_ids)
 
-    # brief_lookahead_days ── always import (no meaningful "neutral" vs. custom distinction)
-    patch_kwargs["brief_lookahead_days"] = settings.irma_brief_lookahead_days
+    # brief_lookahead_days ── import only if still on the neutral default (3) and env differs
+    if profile.brief_lookahead_days == 3 and settings.irma_brief_lookahead_days != 3:
+        patch_kwargs["brief_lookahead_days"] = settings.irma_brief_lookahead_days
 
-    # daily_brief_enabled ── always import
-    patch_kwargs["daily_brief_enabled"] = settings.irma_daily_brief_enabled
+    # daily_brief_enabled ── import only if profile is still True (default) and env disables it
+    if profile.daily_brief_enabled and not settings.irma_daily_brief_enabled:
+        patch_kwargs["daily_brief_enabled"] = settings.irma_daily_brief_enabled
 
     # Mark existing owners as already set up so they never see the wizard.
     if settings.irma_user_email:

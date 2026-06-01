@@ -26,7 +26,8 @@ async def get_profile(request: Request) -> Profile:
 
 @router.patch("", response_model=Profile)
 async def update_profile(request: Request, body: ProfileUpdate) -> Profile:
-    """Partially update the profile, reload the cache, and return the updated row."""
+    """Partially update the profile, sync the cache, and return the updated row."""
     updated = await _repo(request).update(body)
-    await request.app.state.profile_cache.load()
+    cache: ProfileCache = request.app.state.profile_cache
+    cache.set(updated)
     return updated

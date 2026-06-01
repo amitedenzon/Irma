@@ -34,8 +34,11 @@ from irma_api.routers.signals import router as signals_router
 from irma_api.routers.signals import run_refresh
 from irma_api.routers.state import router as state_router
 from irma_api.routers.tasks import router as tasks_router
+from irma_api.runtime.profile_cache import ProfileCache
 from irma_api.runtime.scheduler import Scheduler
 from irma_api.runtime.state import StateBus
+from irma_api.store.profile_seed import import_env_defaults
+from irma_api.store.repos.profile_repo import ProfileRepo
 from irma_api.store.sqlite import SignalStore
 from irma_api.tools.base import Tool, ToolRegistry
 from irma_api.tools.calendar import CreateCalendarEventTool, ReadCalendarTool
@@ -49,10 +52,6 @@ logger = structlog.get_logger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
-
-    from irma_api.runtime.profile_cache import ProfileCache
-    from irma_api.store.profile_seed import import_env_defaults
-    from irma_api.store.repos.profile_repo import ProfileRepo
 
     store = SignalStore(settings.irma_db_path)
     await store.connect()
