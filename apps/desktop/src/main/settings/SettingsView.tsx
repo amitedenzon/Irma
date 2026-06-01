@@ -6,10 +6,13 @@ import { fetchLocalModels } from "../../lib/api";
 import type { LocalModel } from "../../lib/api";
 import {
 	COMPANIONS,
+	THEMES,
 	loadSettings,
 	saveCompanionId,
 	saveDockPosition,
+	saveTheme,
 	type DockPosition,
+	type ThemeId,
 } from "../../lib/settings";
 
 const API = "http://127.0.0.1:8765/api/v1";
@@ -297,6 +300,9 @@ function GeneralTab() {
 	const [dockPosition, setDockPosition] = useState<DockPosition>(
 		() => loadSettings().dockPosition,
 	);
+	const [themeId, setThemeId] = useState<ThemeId>(
+		() => loadSettings().themeId,
+	);
 	const [autostart, setAutostart] = useState<boolean | null>(null);
 	const [loadingScreen, setLoadingScreen] = useState<boolean>(
 		() => localStorage.getItem("irma.settings.loadingScreen") !== "false",
@@ -336,6 +342,11 @@ function GeneralTab() {
 		saveDockPosition(position);
 	};
 
+	const onThemeChange = (id: ThemeId) => {
+		setThemeId(id);
+		saveTheme(id);
+	};
+
 	return (
 		<div className="space-y-4 w-full">
 			{/* Companion */}
@@ -365,6 +376,39 @@ function GeneralTab() {
 						{COMPANIONS.map((c) => (
 							<option key={c.id} value={c.id}>
 								{c.name}
+							</option>
+						))}
+					</select>
+				</div>
+			</section>
+
+			{/* Theme */}
+			<section className="card p-4 space-y-3">
+				<div>
+					<h3
+						className="display text-[11px] font-semibold uppercase tracking-wider mb-1"
+						style={{ color: "var(--color-ink-mute)" }}>
+						Theme
+					</h3>
+					<p
+						className="text-[12px]"
+						style={{ color: "var(--color-ink-faint)" }}>
+						Choose a colour palette for the interface.
+					</p>
+				</div>
+				<div>
+					<label
+						className="block text-[11px] uppercase tracking-wider mb-1"
+						style={{ color: "var(--color-ink-mute)" }}>
+						Colour Palette
+					</label>
+					<select
+						className="input"
+						value={themeId}
+						onChange={(e) => onThemeChange(e.target.value as ThemeId)}>
+						{THEMES.map((t) => (
+							<option key={t.id} value={t.id}>
+								{t.label}
 							</option>
 						))}
 					</select>
