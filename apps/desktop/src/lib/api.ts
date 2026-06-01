@@ -172,6 +172,7 @@ export interface IntegrationsStatus {
   reminders_linked: boolean;
   reminders_last_sync_at: string | null;
   reminders_last_sync_error: string | null;
+  setup_complete: boolean;
   user_email: string | null;
   llm_backend: string | null;
   llm_model: string | null;
@@ -207,5 +208,52 @@ export interface LocalModelsResponse {
 export async function fetchLocalModels(path?: string): Promise<LocalModelsResponse> {
   return jsonOrThrow(
     await fetch(url("/api/v1/local-models", path ? { path } : undefined)),
+  );
+}
+
+// --- Profile --------------------------------------------------------------
+
+export interface Profile {
+  owner_name: string | null;
+  owner_role: string | null;
+  owner_email: string | null;
+  timezone: string;
+  persona_blurb: string | null;
+  calendar_exclude_ids: string[];
+  daily_brief_enabled: boolean;
+  brief_hour: number;
+  brief_lookahead_days: number;
+  setup_complete: boolean;
+  updated_at: string;
+}
+
+/** Partial of the owner-editable profile fields accepted by PATCH /api/v1/profile. */
+export type ProfileUpdate = Partial<
+  Pick<
+    Profile,
+    | "owner_name"
+    | "owner_role"
+    | "owner_email"
+    | "timezone"
+    | "persona_blurb"
+    | "calendar_exclude_ids"
+    | "daily_brief_enabled"
+    | "brief_hour"
+    | "brief_lookahead_days"
+    | "setup_complete"
+  >
+>;
+
+export async function getProfile(): Promise<Profile> {
+  return jsonOrThrow(await fetch(url("/api/v1/profile")));
+}
+
+export async function patchProfile(patch: ProfileUpdate): Promise<Profile> {
+  return jsonOrThrow(
+    await fetch(url("/api/v1/profile"), {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    }),
   );
 }
