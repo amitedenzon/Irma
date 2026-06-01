@@ -13,6 +13,7 @@ import {
   type DockPosition,
 } from "../lib/settings";
 import { Sprite } from "./Sprite";
+import { VideoSprite, CHICKEN_CONFIG } from "./VideoSprite";
 
 const FALLBACK_MANIFEST: SpriteManifest = {
   image: "Irma.png",
@@ -140,6 +141,8 @@ export function Companion() {
   const xRef = useRef<number>(0);
   const draggingRef = useRef<boolean>(false);
   const startXRef = useRef<number | null>(null);
+  // Tap handler installed by the chicken brain — a tap makes her walk.
+  const chickenPokeRef = useRef<(() => void) | null>(null);
   const pressRef = useRef<{
     screenX: number;
     screenY: number;
@@ -252,8 +255,166 @@ export function Companion() {
     };
   }, []);
 
+  // ── Chicken brain (free-roam, replaces dog brain when chicken is selected) ──
+  useEffect(() => {
+    if (companionId !== "chicken") return;
+
+    let cancelled = false;
+    let raf = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const clearTimers = (): void => {
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }
+      if (timer) { clearTimeout(timer); timer = undefined; }
+    };
+
+    // Most of the time she STANDS (front-facing idle pose). Now and then she
+    // walks off on her own for a short spell, then returns to standing. A tap
+    // triggers a walk spell on demand (walking + the other animations).
+    const STRIDE_SPEED = 90; // px/s — matches the walk video's leg cadence
+    let lastDir: 1 | -1 = Math.random() < 0.5 ? 1 : -1;
+    let roaming = false;       // true during a walk spell
+    let actionsLeft = 0;       // remaining actions in the current spell
+
+    const moveTo = (x: number): void => {
+      if (draggingRef.current) return;
+      xRef.current = x;
+      const b = boundsRef.current;
+      if (!b) return;
+      void invoke("set_companion_pos", { x, y: b.y }).catch(() => {});
+    };
+
+    const refreshBounds = async (): Promise<CompanionBounds | null> => {
+      try {
+        const b = (await invoke("get_companion_bounds", {
+          monitorName, dockPosition,
+        })) as CompanionBounds;
+        boundsRef.current = b;
+        return b;
+      } catch { return null; }
+    };
+
+    // ── Rest pose: front-facing standing (the dominant state). ──
+    const standRest = (): void => {
+      setDog({ variant: "stand", facingRight: lastDir > 0 }); // → idle.mov (front)
+    };
+
+    // ── One forward walk burst (translates the window), then next action. ──
+    const walkBurst = async (): Promise<void> => {
+      if (cancelled || !roaming) return;
+      const bounds = await refreshBounds();
+      if (cancelled || !roaming || !bounds) return;
+
+      const startX = xRef.current;
+      const span = Math.max(1, bounds.maxX - bounds.minX);
+      const edge = span * 0.10;
+
+      let dir: 1 | -1 = Math.random() < 0.72 ? lastDir : (lastDir === 1 ? -1 : 1);
+      if (startX <= bounds.minX + edge) dir = 1;
+      else if (startX >= bounds.maxX - edge) dir = -1;
+      lastDir = dir;
+
+      const scurry = Math.random() < 0.15;
+      const frac = scurry ? 0.3 + Math.random() * 0.28 : 0.12 + Math.random() * 0.22;
+      const targetX = clamp(startX + dir * span * frac, bounds.minX, bounds.maxX);
+      const dist = Math.abs(targetX - startX);
+      if (dist < 10) { nextAction(); return; }
+
+      const speed = STRIDE_SPEED * (scurry ? 1.3 : 1) * (0.92 + Math.random() * 0.16);
+      const durMs = (dist / speed) * 1000;
+      setDog({ variant: "walk", facingRight: dir > 0 });
+
+      const startT = performance.now();
+      const step = (): void => {
+        if (cancelled || !roaming || draggingRef.current) return;
+        const t = Math.min(1, (performance.now() - startT) / durMs);
+        moveTo(startX + (targetX - startX) * t); // linear → constant cadence
+        if (t < 1) raf = requestAnimationFrame(step);
+        else nextAction();
+      };
+      raf = requestAnimationFrame(step);
+    };
+
+    // ── Peck / look-around in place (side profile), then next action. ──
+    const peckBout = (): void => {
+      if (cancelled || !roaming) return;
+      setDog({ variant: "sit", facingRight: lastDir > 0 }); // → peck.mov
+      timer = setTimeout(nextAction, 1300 + Math.random() * 1800);
+    };
+    const lookAround = (): void => {
+      if (cancelled || !roaming) return;
+      setDog({ variant: "sit_bark", facingRight: lastDir > 0 }); // → alert.mov
+      timer = setTimeout(nextAction, 700 + Math.random() * 1100);
+    };
+
+    // ── Spell driver: do a few actions (mostly walking) then settle to stand. ──
+    const nextAction = (): void => {
+      if (cancelled || !roaming) return;
+      if (actionsLeft <= 0) { endSpell(); return; }
+      actionsLeft--;
+      const r = Math.random();
+      timer = setTimeout(() => {
+        if (!roaming) return;
+        if (r < 0.62) void walkBurst();      // mostly walking
+        else if (r < 0.85) peckBout();
+        else lookAround();
+      }, 80 + Math.random() * 180);
+    };
+
+    const startSpell = (): void => {
+      if (cancelled || roaming) return;
+      roaming = true;
+      clearTimers();
+      actionsLeft = 2 + Math.floor(Math.random() * 3); // 2–4 actions, then rest
+      void walkBurst(); // begin by switching to the walking animation
+    };
+
+    const endSpell = (): void => {
+      roaming = false;
+      clearTimers();
+      standRest();
+      scheduleAutonomous(); // stand a good while, then wander again on her own
+    };
+
+    // She wanders off by herself only occasionally — long pauses of standing.
+    const scheduleAutonomous = (): void => {
+      timer = setTimeout(() => {
+        if (!cancelled && !roaming) startSpell();
+      }, 15000 + Math.random() * 22000); // 15–37s of standing between spells
+    };
+
+    // Tap → start a walk spell now (ignored if she's already walking).
+    const reactToTap = (): void => {
+      if (cancelled || roaming) return;
+      startSpell();
+    };
+    chickenPokeRef.current = reactToTap;
+
+    // Bootstrap — stand in place (front-facing); queue the first autonomous spell.
+    (async () => {
+      draggingRef.current = false;
+      const bounds = await refreshBounds();
+      if (!bounds || cancelled) return;
+      const center = bounds.minX + (bounds.maxX - bounds.minX) / 2;
+      const startX = clamp(startXRef.current ?? center, bounds.minX, bounds.maxX);
+      startXRef.current = null;
+      xRef.current = startX;
+      moveTo(startX);
+      standRest();
+      scheduleAutonomous();
+    })();
+
+    return () => {
+      cancelled = true;
+      roaming = false;
+      clearTimers();
+      chickenPokeRef.current = null;
+    };
+  }, [companionId, dockPosition, monitorName, placementVersion]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Dog brain.
   useEffect(() => {
+    if (companionId === "chicken") return; // chicken has its own brain above
     let cancelled = false;
     let raf = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -528,7 +689,15 @@ export function Companion() {
     }
     if (!p) return;
     if (!p.moved) {
-      // A click (no meaningful movement) → toggle the main window.
+      // Chicken: tap opens the dashboard AND triggers a walk spell.
+      if (companionId === "chicken") {
+        chickenPokeRef.current?.();
+        void invoke("toggle_main").catch((err: unknown) =>
+          console.error("[companion] toggle_main failed:", err),
+        );
+        return;
+      }
+      // Other companions: a click toggles the main window.
       void invoke("toggle_main").catch((err: unknown) =>
         console.error("[companion] toggle_main failed:", err),
       );
@@ -577,13 +746,22 @@ export function Companion() {
   return (
     <div style={WRAPPER_STYLE}>
       <div style={{ position: "relative", pointerEvents: "none" }}>
-        <Sprite
-          spec={spec}
-          manifest={effectiveManifest}
-          sheetAvailable={sheetAvailable}
-          fallbackState={agentState}
-          mirror={dog.facingRight}
-        />
+        {companionId === "chicken" ? (
+          <VideoSprite
+            config={CHICKEN_CONFIG}
+            state={dog.variant}
+            // Front-facing idle/stand is symmetric — don't mirror it.
+            mirror={dog.variant !== "stand" && dog.variant !== "cuddle" && dog.facingRight}
+          />
+        ) : (
+          <Sprite
+            spec={spec}
+            manifest={effectiveManifest}
+            sheetAvailable={sheetAvailable}
+            fallbackState={agentState}
+            mirror={dog.facingRight}
+          />
+        )}
         <div
           style={{
             position: "absolute",
