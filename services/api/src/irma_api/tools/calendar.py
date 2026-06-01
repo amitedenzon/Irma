@@ -256,7 +256,9 @@ class ReadCalendarTool:
         except (ValueError, AttributeError):
             when = raw_start[:10] if raw_start else "?"
 
-        return f"{when} → {title}"
+        location = str(event.get("location") or "").strip()
+        suffix = f" [{location}]" if location else ""
+        return f"{when} → {title}{suffix}"
 
 
 # Module-level sanity: ReadCalendarTool conforms to Tool.

@@ -15,7 +15,6 @@ from zoneinfo import ZoneInfo
 import structlog
 
 from irma_api.agents.email_render import render_daily_email, render_daily_email_html
-from irma_api.config import Settings
 from irma_api.models.daily_brief import DailyBrief
 from irma_api.runtime.profile_cache import ProfileCache
 
@@ -36,12 +35,10 @@ class DailyBriefJob:
         *,
         service: _Builder,
         sender: _Sender,
-        settings: Settings,
         profile_cache: ProfileCache,
     ) -> None:
         self._service = service
         self._sender = sender
-        self._settings = settings
         self._profile_cache = profile_cache
         self.last_sent_date: date | None = None
 

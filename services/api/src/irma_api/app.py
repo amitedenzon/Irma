@@ -139,7 +139,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         from irma_api.runtime.daily_job import DailyBriefJob
 
         daily_service = DailyBriefService(
-            settings=settings,
             profile_cache=profile_cache,
             llm=llm,
             store=store,
@@ -150,7 +149,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         daily_brief_job = DailyBriefJob(
             service=daily_service,
             sender=send_email_tool,
-            settings=settings,
             profile_cache=profile_cache,
         )
     else:

@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import MagicMock
 
 import httpx
 import pytest
@@ -13,9 +12,9 @@ import respx
 
 from irma_api.config import Settings
 from irma_api.models.profile import Profile
-from irma_api.runtime.profile_cache import ProfileCache
 from irma_api.tools.base import ToolError
 from irma_api.tools.resend import ResendSendTool
+from tests.conftest import make_profile_cache
 
 
 def _settings(**overrides: Any) -> Settings:
@@ -36,16 +35,8 @@ def _profile(**overrides: Any) -> Profile:
     return Profile(**defaults)
 
 
-def _loaded_cache(profile: Profile | None = None) -> ProfileCache:
-    """Return a ProfileCache whose .current is already set (no DB needed)."""
-    cache = ProfileCache.__new__(ProfileCache)
-    cache._repo = MagicMock()  # type: ignore[attr-defined]
-    cache._profile = profile or _profile()
-    return cache
-
-
 def _tool(**setting_overrides: Any) -> ResendSendTool:
-    return ResendSendTool(_settings(**setting_overrides), _loaded_cache())
+    return ResendSendTool(_settings(**setting_overrides), make_profile_cache(owner_email="amit@example.com"))
 
 
 @pytest.mark.asyncio
@@ -97,7 +88,7 @@ async def test_to_field_in_args_is_silently_dropped() -> None:
 
 @pytest.mark.asyncio
 async def test_missing_api_key_raises_unlinked() -> None:
-    tool = ResendSendTool(_settings(resend_api_key=None), _loaded_cache())
+    tool = ResendSendTool(_settings(resend_api_key=None), make_profile_cache(owner_email="amit@example.com"))
     with pytest.raises(ToolError) as exc_info:
         await tool.call({"subject": "s", "body": "b"})
     assert exc_info.value.code == "resend_unlinked"
@@ -106,7 +97,7 @@ async def test_missing_api_key_raises_unlinked() -> None:
 @pytest.mark.asyncio
 async def test_missing_user_email_raises_misconfigured() -> None:
     """profile.owner_email=None at call time → user_email_unset."""
-    cache = _loaded_cache(_profile(owner_email=None))
+    cache = make_profile_cache(profile=_profile(owner_email=None))
     tool = ResendSendTool(_settings(), cache)
     with pytest.raises(ToolError) as exc_info:
         await tool.call({"subject": "s", "body": "b"})
@@ -167,7 +158,7 @@ async def test_429_then_success_retries(monkeypatch: pytest.MonkeyPatch) -> None
 @pytest.mark.asyncio
 async def test_hot_reload_recipient_from_profile_cache() -> None:
     """Changing the profile email in the cache is reflected on the next send."""
-    cache = _loaded_cache(_profile(owner_email="first@example.com"))
+    cache = make_profile_cache(profile=_profile(owner_email="first@example.com"))
     tool = ResendSendTool(_settings(), cache)
 
     calls: list[str] = []

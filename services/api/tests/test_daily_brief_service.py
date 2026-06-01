@@ -4,23 +4,20 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 import pytest_asyncio
 
 from irma_api.agents.daily_brief import DailyBriefService
 from irma_api.agents.llm import TextResult
-from irma_api.config import Settings
-from irma_api.models.profile import Profile
 from irma_api.models.project import ProjectCreate
 from irma_api.models.task import TaskCreate, TaskStatus  # noqa: F401  (TaskStatus used indirectly)
-from irma_api.runtime.profile_cache import ProfileCache
 from irma_api.runtime.state import StateBus
 from irma_api.store.repos.project_repo import ProjectRepo
 from irma_api.store.repos.snapshot_repo import SnapshotRepo
 from irma_api.store.repos.task_repo import TaskRepo
 from irma_api.store.sqlite import SignalStore
+from tests.conftest import make_profile_cache
 
 
 class _FakeLLM:
@@ -35,22 +32,6 @@ class _FakeLLM:
         return TextResult(
             text='{"narrative":"Morning.","recommendation":"Ship it.","conflicts":["x clashes y"]}'
         )
-
-
-def _loaded_cache(**profile_overrides: object) -> ProfileCache:
-    """Return a ProfileCache with a pre-loaded profile (no DB needed)."""
-    # Build kwargs with defaults that can be overridden by callers.
-    kwargs: dict[str, object] = {
-        "updated_at": datetime.now(UTC),
-        "timezone": "UTC",
-        "brief_lookahead_days": 3,
-    }
-    kwargs.update(profile_overrides)
-    profile = Profile(**kwargs)  # type: ignore[arg-type]
-    cache = ProfileCache.__new__(ProfileCache)
-    cache._repo = MagicMock()  # type: ignore[attr-defined]
-    cache._profile = profile
-    return cache
 
 
 @pytest_asyncio.fixture
@@ -76,10 +57,8 @@ async def test_build_writes_snapshot_and_parses_prose(store: SignalStore) -> Non
     )
 
     llm = _FakeLLM()
-    settings = Settings(_env_file=None, irma_db_path=Path("x"), irma_brief_lookahead_days=3)
     svc = DailyBriefService(
-        settings=settings,
-        profile_cache=_loaded_cache(),
+        profile_cache=make_profile_cache(timezone="UTC", brief_lookahead_days=3),
         llm=llm,
         store=store,
         observers=[],
@@ -116,10 +95,8 @@ async def test_build_retries_once_on_bad_json(store: SignalStore) -> None:
             return TextResult(text='{"narrative":"ok","recommendation":"go","conflicts":[]}')
 
     llm = _FlakyLLM()
-    settings = Settings(_env_file=None, irma_db_path=Path("x"))
     svc = DailyBriefService(
-        settings=settings,
-        profile_cache=_loaded_cache(),
+        profile_cache=make_profile_cache(),
         llm=llm,
         store=store,
         observers=[],
@@ -146,10 +123,8 @@ async def test_owner_context_injected_in_system_prompt(store: SignalStore) -> No
                 text='{"narrative":"hi","recommendation":"go","conflicts":[]}'
             )
 
-    settings = Settings(_env_file=None, irma_db_path=Path("x"))
-    cache = _loaded_cache(owner_name="Amit", owner_role="AI Researcher")
+    cache = make_profile_cache(owner_name="Amit", owner_role="AI Researcher")
     svc = DailyBriefService(
-        settings=settings,
         profile_cache=cache,
         llm=_CaptureLLM(),
         store=store,

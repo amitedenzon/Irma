@@ -2,17 +2,15 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from irma_api.config import Settings
-from irma_api.models.profile import Profile
-from irma_api.runtime.profile_cache import ProfileCache
 from irma_api.tools.base import ToolError
 from irma_api.tools.calendar import ReadCalendarTool
+from tests.conftest import make_profile_cache
 
 
 def _settings(**overrides: Any) -> Settings:
@@ -25,20 +23,8 @@ def _settings(**overrides: Any) -> Settings:
     return Settings(_env_file=None, **defaults)
 
 
-def _loaded_cache(exclude_ids: list[str] | None = None) -> ProfileCache:
-    """Return a ProfileCache with .current already set."""
-    profile = Profile(
-        updated_at=datetime.now(UTC),
-        calendar_exclude_ids=exclude_ids or [],
-    )
-    cache = ProfileCache.__new__(ProfileCache)
-    cache._repo = MagicMock()  # type: ignore[attr-defined]
-    cache._profile = profile
-    return cache
-
-
 def _tool(**setting_overrides: Any) -> ReadCalendarTool:
-    return ReadCalendarTool(_settings(**setting_overrides), _loaded_cache())
+    return ReadCalendarTool(_settings(**setting_overrides), make_profile_cache())
 
 
 @pytest.mark.asyncio
@@ -54,7 +40,7 @@ async def test_spec_has_only_optional_days_arg() -> None:
 async def test_missing_refresh_token_raises_unlinked() -> None:
     tool = ReadCalendarTool(
         _settings(google_oauth_refresh_token=None),
-        _loaded_cache(),
+        make_profile_cache(),
     )
     with pytest.raises(ToolError) as exc_info:
         await tool.call({})
@@ -142,7 +128,7 @@ async def test_days_clamps_to_max() -> None:
 @pytest.mark.asyncio
 async def test_exclude_ids_read_from_profile_cache() -> None:
     """calendar_exclude_ids from the profile are passed to _fetch_events."""
-    cache = _loaded_cache(exclude_ids=["cal-skip@group.v.calendar.google.com"])
+    cache = make_profile_cache(calendar_exclude_ids=["cal-skip@group.v.calendar.google.com"])
     tool = ReadCalendarTool(_settings(), cache)
     captured_exclude: list[str] = []
 
@@ -162,3 +148,28 @@ async def test_exclude_ids_read_from_profile_cache() -> None:
         await tool.call({"days": 1})
 
     assert "cal-skip@group.v.calendar.google.com" in captured_exclude
+
+
+def test_format_event_includes_location_when_present() -> None:
+    """_format_event appends [location] when the event has a location field."""
+    event = {
+        "summary": "Standup",
+        "start": {"dateTime": "2026-05-28T09:00:00Z"},
+        "end": {"dateTime": "2026-05-28T09:30:00Z"},
+        "location": "Zoom",
+    }
+    result = ReadCalendarTool._format_event(event)
+    assert "Standup" in result
+    assert "[Zoom]" in result
+
+
+def test_format_event_no_location_suffix_when_absent() -> None:
+    """_format_event omits the location suffix when the event has no location."""
+    event = {
+        "summary": "Lunch",
+        "start": {"dateTime": "2026-05-28T12:00:00Z"},
+        "end": {"dateTime": "2026-05-28T13:00:00Z"},
+    }
+    result = ReadCalendarTool._format_event(event)
+    assert "Lunch" in result
+    assert "[" not in result

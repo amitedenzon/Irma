@@ -17,9 +17,9 @@ import structlog
 from irma_api.agents.llm import ChatTurn, LLMClient, TextResult
 from irma_api.agents.persona import build_owner_context
 from irma_api.agents.prompts import load_prompt
-from irma_api.config import Settings
 from irma_api.models.brief import FocusItem, FocusKind
 from irma_api.models.daily_brief import DailyBrief, LookaheadItem, ProjectProgress
+from irma_api.models.profile import Profile
 from irma_api.models.project import Project, ProjectStatus
 from irma_api.models.task import Task, TaskStatus
 from irma_api.runtime.profile_cache import ProfileCache
@@ -102,7 +102,6 @@ class DailyBriefService:
     def __init__(
         self,
         *,
-        settings: Settings,
         profile_cache: ProfileCache,
         llm: LLMClient,
         store: SignalStore,
@@ -111,7 +110,6 @@ class DailyBriefService:
         calendar: ReadCalendarTool | None,
         max_tokens: int = 1200,
     ) -> None:
-        self._settings = settings
         self._profile_cache = profile_cache
         self._llm = llm
         self._store = store
@@ -189,6 +187,7 @@ class DailyBriefService:
         progress = compute_progress(projects, all_tasks, baseline=baseline)
 
         narrative, recommendation, conflicts = await self._synthesize(
+            profile=profile,
             today=today,
             progress=progress,
             today_focus=today_focus,
@@ -229,6 +228,7 @@ class DailyBriefService:
     async def _synthesize(
         self,
         *,
+        profile: Profile,
         today: date,
         progress: list[ProjectProgress],
         today_focus: list[FocusItem],
@@ -236,9 +236,9 @@ class DailyBriefService:
         calendar_text: str | None,
     ) -> tuple[str, str, list[str]]:
         base_system = load_prompt("daily_brief_system")
-        owner_ctx = build_owner_context(self._profile_cache.current)
+        owner_ctx = build_owner_context(profile)
         system = f"{base_system}\n\n{owner_ctx}"
-        user = self._compose(today, progress, today_focus, lookahead, calendar_text)
+        user = self._compose(profile, today, progress, today_focus, lookahead, calendar_text)
         messages = [ChatTurn(role="user", content=user)]
         outcome = await self._llm.complete(
             system=system, messages=messages, max_tokens=self._max_tokens
@@ -265,6 +265,7 @@ class DailyBriefService:
 
     def _compose(
         self,
+        profile: Profile,
         today: date,
         progress: list[ProjectProgress],
         today_focus: list[FocusItem],
@@ -296,7 +297,7 @@ class DailyBriefService:
         else:
             lines.append("  (none)")
         lines.append("")
-        lines.append(f"NEXT {self._profile_cache.current.brief_lookahead_days} DAYS (task deadlines):")
+        lines.append(f"NEXT {profile.brief_lookahead_days} DAYS (task deadlines):")
         if lookahead:
             lines.extend(f"  • {it.when} {it.title} ({it.kind})" for it in lookahead)
         else:
