@@ -43,6 +43,7 @@ class Task(_TaskFields):
     created_at: datetime
     updated_at: datetime
     completed_at: datetime | None = None
+    reminder_uuid: str | None = None
 
 
 class TaskCreate(_TaskFields):

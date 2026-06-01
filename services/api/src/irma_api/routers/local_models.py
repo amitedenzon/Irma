@@ -26,7 +26,7 @@ _PROFICIENCY_RULES: list[tuple[list[str], str]] = [
     # Embeddings
     (["embed", "nomic-embed", "mxbai-embed", "all-minilm", "bge-"], "embeddings"),
     # Math / reasoning
-    (["math", "mathstral", "deepseek-r1", "o1", "qwq"], "math"),
+    (["math", "mathstral", "deepseek-r1", "o1", "qwq", "qwen3"], "math"),
 ]
 
 _QUANT_RE = re.compile(

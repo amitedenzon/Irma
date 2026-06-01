@@ -27,6 +27,15 @@ struct CommandHandler {
             let name = try requireOption(rest, "--name")
             let id = try await client.ensureList(name: name)
             return try encode(["calendar_id": id])
+        case "list-calendars":
+            let prefix = try requireOption(rest, "--prefix")
+            let cals = try await client.listCalendars(prefix: prefix)
+            return try encodeCodable(ListCalendarsOutput(calendars: cals))
+        case "rename-calendar":
+            let calId = try requireOption(rest, "--calendar-id")
+            let title = try requireOption(rest, "--title")
+            let renamed = try await client.renameCalendar(calendarId: calId, title: title)
+            return try encode(["renamed": renamed])
         case "list":
             let calId = try requireOption(rest, "--calendar-id")
             let rems = try await client.list(calendarId: calId)

@@ -11,6 +11,7 @@ from irma_api.models.project import (
     ProjectStatus,
     ProjectUpdate,
 )
+from irma_api.routers.integrations import _trigger_reminder_sync
 from irma_api.store.errors import ConflictError, NotFoundError
 from irma_api.store.repos.project_repo import ProjectRepo
 from irma_api.store.sqlite import SignalStore
@@ -41,9 +42,11 @@ async def create_project(
     request: Request, payload: ProjectCreate
 ) -> Project | JSONResponse:
     try:
-        return await _repo(request).create(payload)
+        result = await _repo(request).create(payload)
     except ConflictError as exc:
         return _err(409, "conflict", str(exc))
+    _trigger_reminder_sync(request)
+    return result
 
 
 @router.get("/{project_id}", response_model=Project)
@@ -59,11 +62,13 @@ async def update_project(
     request: Request, project_id: str, patch: ProjectUpdate
 ) -> Project | JSONResponse:
     try:
-        return await _repo(request).update(project_id, patch)
+        result = await _repo(request).update(project_id, patch)
     except NotFoundError as exc:
         return _err(404, "not_found", str(exc))
     except ConflictError as exc:
         return _err(409, "conflict", str(exc))
+    _trigger_reminder_sync(request)
+    return result
 
 
 @router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -74,4 +79,5 @@ async def delete_project(request: Request, project_id: str) -> Response:
         return _err(404, "not_found", str(exc))
     except ConflictError as exc:
         return _err(409, "conflict", str(exc))
+    _trigger_reminder_sync(request)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

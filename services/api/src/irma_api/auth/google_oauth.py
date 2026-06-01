@@ -5,9 +5,9 @@ the authorization code on a loopback HTTP redirect, and exchanges it for a
 refresh token. The caller is responsible for persisting the result (e.g.
 writing it to ``.env``).
 
-Scopes cover `calendar.events` — sufficient for both reading and writing
-calendar events. Irma's TimeAgent reads passively; write tools use the same
-token. Never reads mail.
+Scopes cover `calendar.events` (read/write events) and `calendar.readonly`
+(list all calendars). Irma's TimeAgent reads passively across all calendars;
+write tools use the same token. Never reads mail.
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ import httpx
 
 SCOPES: tuple[str, ...] = (
     "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/calendar.readonly",
 )
 
 _AUTH_URI = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -157,7 +158,8 @@ async def run_installed_app_flow(
         # Non-interactive callers print the URL and drive the callback themselves.
         print(f"Open this URL to grant access:\n  {auth_uri}")
 
-    thread.join()
+    import asyncio as _asyncio
+    await _asyncio.to_thread(thread.join)
     captured = server_thread_result.get("captured")
     if captured is None:
         raise OAuthCancelled("callback server exited without capturing a code")

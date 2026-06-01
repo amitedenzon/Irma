@@ -7,8 +7,9 @@ import { subscribeAgentState } from "../lib/sse";
 import {
   getCompanion,
   loadSettings,
-  saveDockPosition,
+  saveCompanionPlacement,
   subscribeSettings,
+  DEFAULT_DOCK_POSITION,
   type DockPosition,
 } from "../lib/settings";
 import { Sprite } from "./Sprite";
@@ -34,6 +35,8 @@ const FALLBACK_MANIFEST: SpriteManifest = {
     sit: { frames: [8, 9, 10, 11, 12, 13], fps: 4, loop: true },
     lay: { frames: [16, 17, 18, 19, 20, 21], fps: 4, loop: true },
     sit_bark: { frames: [8, 9, 10, 11, 12, 13, 14, 15], fps: 6, loop: true },
+    treat: { frames: [56, 57, 58, 59, 60, 61, 62, 63], fps: 8, loop: true },
+    treat_partial: { frames: [56, 57, 58, 59, 60, 61], fps: 8, loop: true },
   },
 };
 
@@ -80,7 +83,9 @@ type DogVariant =
   | "sit"
   | "lay"
   | "cuddle"
-  | "sit_bark";
+  | "sit_bark"
+  | "treat"
+  | "treat_partial";
 
 interface DogRender {
   variant: DogVariant;
@@ -122,6 +127,9 @@ export function Companion() {
   const [dockPosition, setDockPosition] = useState<DockPosition>(
     () => loadSettings().dockPosition,
   );
+  const [monitorName, setMonitorName] = useState<string | null>(
+    () => loadSettings().monitorName,
+  );
   const [agentState, setAgentState] = useState<AgentState>("idle");
   const [dog, setDog] = useState<DogRender>({
     variant: "cuddle",
@@ -130,6 +138,14 @@ export function Companion() {
 
   const boundsRef = useRef<CompanionBounds | null>(null);
   const xRef = useRef<number>(0);
+  const draggingRef = useRef<boolean>(false);
+  const startXRef = useRef<number | null>(null);
+  const pressRef = useRef<{
+    screenX: number;
+    screenY: number;
+    moved: boolean;
+  } | null>(null);
+  const [placementVersion, setPlacementVersion] = useState<number>(0);
 
   // The selected companion overrides the manifest's sheet image. Frame layout
   // (grid, fps, state→frame maps) is shared across the dog sheets.
@@ -181,6 +197,7 @@ export function Companion() {
     const unsub = subscribeSettings((s) => {
       setCompanionId(s.companionId);
       setDockPosition(s.dockPosition);
+      setMonitorName(s.monitorName);
     });
     return unsub;
   }, []);
@@ -191,16 +208,44 @@ export function Companion() {
     return () => sub.close();
   }, []);
 
-  // Listen for placement changes emitted by the companion context menu.
+  // Reset placement to the primary-monitor default (tray / right-click).
   useEffect(() => {
     let cancelled = false;
     let unlisten: UnlistenFn | undefined;
-    listen<string>("companion:placement", (event) => {
+    listen<void>("companion:reset-position", () => {
       if (cancelled) return;
-      saveDockPosition(event.payload as DockPosition);
+      saveCompanionPlacement(null, DEFAULT_DOCK_POSITION);
+      void invoke("position_companion").catch((e: unknown) =>
+        console.error("[companion] position_companion failed", e),
+      );
     })
-      .then((u) => { if (cancelled) u(); else unlisten = u; })
-      .catch((e) => console.error("[companion] listen companion:placement failed", e));
+      .then((u) => {
+        if (cancelled) u();
+        else unlisten = u;
+      })
+      .catch((e) => console.error("[companion] listen companion:reset-position failed", e));
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+    };
+  }, []);
+
+  // Re-anchor to her saved placement after a DPI/scale change — unless a drag is
+  // in progress (the drag owns her position while crossing monitors). Bumping
+  // placementVersion re-bootstraps the brain, which re-derives bounds for the
+  // saved monitor/zone via refreshBounds.
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: UnlistenFn | undefined;
+    listen<void>("companion:rescale", () => {
+      if (cancelled || draggingRef.current) return;
+      setPlacementVersion((v) => v + 1);
+    })
+      .then((u) => {
+        if (cancelled) u();
+        else unlisten = u;
+      })
+      .catch((e) => console.error("[companion] listen companion:rescale failed", e));
     return () => {
       cancelled = true;
       if (unlisten) unlisten();
@@ -212,8 +257,8 @@ export function Companion() {
     let cancelled = false;
     let raf = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    let mode: "autonomous" | "bark" = "autonomous";
-    let unlistenVis: UnlistenFn | undefined;
+    let mode: "autonomous" | "bark" | "treat" = "autonomous";
+    let unlistenTreat: UnlistenFn | undefined;
 
     const clearTimers = (): void => {
       if (raf) cancelAnimationFrame(raf);
@@ -223,6 +268,7 @@ export function Companion() {
     };
 
     const moveTo = (x: number): void => {
+      if (draggingRef.current) return;
       xRef.current = x;
       const b = boundsRef.current;
       if (!b) return;
@@ -234,7 +280,8 @@ export function Companion() {
     const refreshBounds = async (): Promise<CompanionBounds | null> => {
       try {
         const b = (await invoke("get_companion_bounds", {
-          besideDock: dockPosition === "beside-dock",
+          monitorName,
+          dockPosition,
         })) as CompanionBounds;
         const migrating = monitorsDiffer(boundsRef.current, b);
         boundsRef.current = b;
@@ -316,7 +363,7 @@ export function Companion() {
       const durMs = (Math.abs(targetX - startX) / WALK_SPEED_PX_PER_SEC) * 1000;
       const startT = performance.now();
       const step = (): void => {
-        if (cancelled || mode !== "autonomous") return;
+        if (cancelled || mode !== "autonomous" || draggingRef.current) return;
         const t = Math.min(1, (performance.now() - startT) / durMs);
         const x = startX + (targetX - startX) * t;
         moveTo(x);
@@ -333,6 +380,7 @@ export function Companion() {
 
     // ---- Bark mode (main window open) ---------------------------------
     const enterBarkMode = (): void => {
+      if (draggingRef.current) return;
       mode = "bark";
       clearTimers();
       const facingRight = Math.random() < 0.5;
@@ -341,7 +389,8 @@ export function Companion() {
     };
 
     const exitBarkMode = (): void => {
-      if (mode !== "bark") return;
+      // Also cancel treat mid-sequence — window closed while cheese animation played.
+      if (mode !== "bark" && mode !== "treat") return;
       mode = "autonomous";
       clearTimers();
       // lay (1 loop) → cuddle → resume walking
@@ -350,13 +399,56 @@ export function Companion() {
       console.info("[companion] exit bark mode → lay → cuddle → walk");
     };
 
+    // ---- Treat mode (cheese button) ------------------------------------
+    // Sequence: 2 full treat cycles → 6-frame treat cycle → 1 stand cycle → sit_bark
+    const TREAT_FULL_MS  = (8 / 8) * 2 * 1000; // 2000ms — 2 × 8 frames @ 8 fps
+    const TREAT_SHORT_MS = (6 / 8) * 1000;       //  750ms — 6 frames @ 8 fps
+    // STAND_MS (1200ms) is already defined above: 6 frames @ 5 fps
+
+    const enterTreatMode = (): void => {
+      if (cancelled) return;
+      mode = "treat";
+      clearTimers();
+
+      // Phase 1 — 2 full treat loops
+      setDog((d) => ({ variant: "treat", facingRight: d.facingRight }));
+
+      timer = setTimeout(() => {
+        if (cancelled || mode !== "treat") return;
+        // Phase 2 — first 6 frames of treat (no tail frames)
+        setDog((d) => ({ variant: "treat_partial", facingRight: d.facingRight }));
+
+        timer = setTimeout(() => {
+          if (cancelled || mode !== "treat") return;
+          // Phase 3 — one full standing cycle
+          setDog((d) => ({ variant: "stand", facingRight: d.facingRight }));
+
+          timer = setTimeout(() => {
+            if (cancelled) return;
+            // Phase 4 — sit and bark
+            mode = "bark";
+            setDog((d) => ({ variant: "sit_bark", facingRight: d.facingRight }));
+          }, STAND_MS);
+        }, TREAT_SHORT_MS);
+      }, TREAT_FULL_MS);
+    };
+
     // ---- Bootstrap ----------------------------------------------------
     (async () => {
+      draggingRef.current = false;
       const bounds = await refreshBounds();
       if (!bounds || cancelled) return;
-      const center = bounds.minX + (bounds.maxX - bounds.minX) / 2;
-      xRef.current = center;
-      moveTo(center);
+      const fallbackCenter = bounds.minX + (bounds.maxX - bounds.minX) / 2;
+      // startXRef is the drop landing-x handed off by onPointerUp; consume it
+      // once (clear below) so a later non-drop re-boot falls back to center.
+      const startX = clamp(
+        startXRef.current ?? fallbackCenter,
+        bounds.minX,
+        bounds.maxX,
+      );
+      startXRef.current = null;
+      xRef.current = startX;
+      moveTo(startX);
       console.info("[companion] bounds", bounds, TEST_WALK_ONLY ? "(TEST)" : "");
       if (TEST_WALK_ONLY) {
         void startWalk();
@@ -365,39 +457,120 @@ export function Companion() {
       }
     })();
 
-    listen<boolean>("main:visibility", (event) => {
+    listen<void>("companion:treat", () => {
       if (cancelled) return;
-      if (event.payload) enterBarkMode();
-      else exitBarkMode();
+      enterTreatMode();
     })
       .then((u) => {
-        unlistenVis = u;
+        unlistenTreat = u;
       })
-      .catch((e) => console.error("[companion] listen main:visibility failed", e));
+      .catch((e) => console.error("[companion] listen companion:treat failed", e));
+
+    // Poll whether the main window is actually presented to the user every
+    // 250 ms. We key off "active" (visible AND focused), not just "visible":
+    // a window that's merely on-screen but behind another app (the user
+    // clicked away) must still calm the dog. `is_main_active` returns false
+    // the moment the window loses key focus — except while our own folder
+    // picker is up — so she leaves bark mode no matter how the window is
+    // dismissed (X, companion, tray, app-switch, hide, …).
+    const visibilityPoll = setInterval(() => {
+      void invoke<boolean>("is_main_active").then((active) => {
+        if (cancelled) return;
+        if (active && mode === "autonomous") enterBarkMode();
+        else if (!active && (mode === "bark" || mode === "treat")) exitBarkMode();
+      });
+    }, 250);
 
     return () => {
       cancelled = true;
       clearTimers();
-      if (unlistenVis) unlistenVis();
+      clearInterval(visibilityPoll);
+      if (unlistenTreat) unlistenTreat();
     };
-  }, [dockPosition]);
+  }, [dockPosition, monitorName, placementVersion]);
 
   const extras = effectiveManifest.extras ?? {};
   const spec: SpriteFrameSpec =
     extras[dog.variant] ?? effectiveManifest.states[agentState];
 
-  const onClick = (): void => {
-    void invoke("toggle_main").catch((e: unknown) =>
-      console.error("[companion] toggle_main failed:", e),
+  const DRAG_THRESHOLD = 4;
+
+  const onPointerDown = (e: React.PointerEvent): void => {
+    if (e.button !== 0) return; // primary button only
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    pressRef.current = { screenX: e.screenX, screenY: e.screenY, moved: false };
+  };
+
+  const onPointerMove = (e: React.PointerEvent): void => {
+    const p = pressRef.current;
+    if (!p) return;
+    if (!p.moved) {
+      const dist = Math.hypot(e.screenX - p.screenX, e.screenY - p.screenY);
+      if (dist < DRAG_THRESHOLD) return;
+      p.moved = true;
+      draggingRef.current = true; // suspend the dog brain's movement
+      void invoke("companion_drag_begin").catch((err: unknown) =>
+        console.error("[companion] companion_drag_begin failed", err),
+      );
+    }
+    void invoke("companion_drag_to").catch((err: unknown) =>
+      console.error("[companion] companion_drag_to failed", err),
     );
+  };
+
+  const onPointerUp = (e: React.PointerEvent): void => {
+    const p = pressRef.current;
+    pressRef.current = null;
+    try {
+      (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch {
+      /* capture may already be released */
+    }
+    if (!p) return;
+    if (!p.moved) {
+      // A click (no meaningful movement) → toggle the main window.
+      void invoke("toggle_main").catch((err: unknown) =>
+        console.error("[companion] toggle_main failed:", err),
+      );
+      return;
+    }
+    // A drag → resolve the snap, apply it, persist, and resume roaming.
+    void (async () => {
+      try {
+        const drop = (await invoke("resolve_companion_drop")) as {
+          monitorName: string;
+          dockPosition: DockPosition;
+          x: number;
+          bounds: CompanionBounds;
+        };
+        // Normalize "" → null so it matches what readMonitorName() will later
+        // report; otherwise the async settings-changed event would re-set a
+        // different value and trigger a redundant second re-bootstrap.
+        const nextMonitor =
+          drop.monitorName.length > 0 ? drop.monitorName : null;
+        boundsRef.current = drop.bounds;
+        startXRef.current = drop.x;
+        await invoke("set_companion_pos", { x: drop.x, y: drop.bounds.y });
+        draggingRef.current = false;
+        saveCompanionPlacement(nextMonitor, drop.dockPosition);
+        // Apply locally AND bump the version in one batch so the brain re-boots
+        // exactly once (reading startXRef before it's cleared). The cross-window
+        // settings event that saveCompanionPlacement fires then re-sets these
+        // same values → no-op, no second re-bootstrap.
+        setMonitorName(nextMonitor);
+        setDockPosition(drop.dockPosition);
+        setPlacementVersion((v) => v + 1);
+      } catch (err) {
+        console.error("[companion] resolve_companion_drop failed", err);
+        draggingRef.current = false;
+      }
+    })();
   };
 
   const onContextMenu = (e: React.MouseEvent): void => {
     e.preventDefault();
-    void invoke("show_companion_context_menu", {
-      besideDock: dockPosition === "beside-dock",
-    }).catch((e: unknown) =>
-      console.error("[companion] show_companion_context_menu failed", e),
+    void invoke("show_companion_context_menu").catch((err: unknown) =>
+      console.error("[companion] show_companion_context_menu failed", err),
     );
   };
 
@@ -420,8 +593,12 @@ export function Companion() {
             height: "50%",
             cursor: "pointer",
             pointerEvents: "auto",
+            touchAction: "none",
           }}
-          onClick={onClick}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerCancel={onPointerUp}
           onContextMenu={onContextMenu}
           role="button"
           aria-label="Irma companion"

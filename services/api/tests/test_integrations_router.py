@@ -37,13 +37,26 @@ async def test_status_unlinked_when_nothing_configured() -> None:
         resp = await c.get("/api/v1/integrations/google/status")
     body = resp.json()
     assert resp.status_code == 200
-    assert body == {
-        "calendar_linked": False,
-        "resend_linked": False,
-        "user_email": None,
-        "llm_backend": "anthropic",
-        "llm_model": "claude-sonnet-4-6",
-    }
+    assert body["calendar_linked"] is False
+    assert body["resend_linked"] is False
+    assert body["user_email"] is None
+    assert body["llm_backend"] == "anthropic"
+    assert body["llm_model"] == "claude-sonnet-4-6"
+
+
+@pytest.mark.asyncio
+async def test_status_includes_reminders_fields() -> None:
+    app = _build_app(_settings(), llm=_FakeLLM())
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        resp = await c.get("/api/v1/integrations/google/status")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "reminders_linked" in data
+    assert data["reminders_linked"] is False
+    assert "reminders_last_sync_at" in data
+    assert data["reminders_last_sync_at"] is None
+    assert "reminders_last_sync_error" in data
 
 
 @pytest.mark.asyncio

@@ -20,7 +20,7 @@ from irma_api.store.errors import ConflictError, NotFoundError
 
 _COLUMNS = (
     "id, name, description, status, priority, "
-    "calendar_keywords, goals, target_date, created_at, updated_at"
+    "calendar_keywords, goals, target_date, created_at, updated_at, reminder_calendar_id"
 )
 
 
@@ -40,6 +40,7 @@ def _row_to_project(row: aiosqlite.Row) -> Project:
         target_date=(date.fromisoformat(row["target_date"]) if row["target_date"] else None),
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
+        reminder_calendar_id=row["reminder_calendar_id"],
     )
 
 
@@ -56,7 +57,7 @@ class ProjectRepo:
             await self._conn.execute(
                 f"""
                 INSERT INTO project ({_COLUMNS}, name_lower)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
                 """,
                 (
                     pid,
@@ -141,5 +142,17 @@ class ProjectRepo:
             raise ConflictError(
                 "cannot delete project with attached tasks; archive instead"
             ) from exc
+        if cur.rowcount == 0:
+            raise NotFoundError("project", project_id)
+
+    async def set_reminder_calendar_id(
+        self, project_id: str, calendar_id: str | None
+    ) -> None:
+        """Link or unlink a project to/from its EKCalendar.calendarIdentifier."""
+        cur = await self._conn.execute(
+            "UPDATE project SET reminder_calendar_id = ?, updated_at = ? WHERE id = ?",
+            (calendar_id, _now().isoformat(), project_id),
+        )
+        await self._conn.commit()
         if cur.rowcount == 0:
             raise NotFoundError("project", project_id)

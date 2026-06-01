@@ -60,10 +60,21 @@ class Settings(BaseSettings):
     # NoDecode → pydantic-settings hands us the raw env string (comma-separated
     # paths) instead of trying to JSON-decode the list.
     irma_repos: Annotated[list[Path], NoDecode] = Field(default_factory=list)
+    # Comma-separated Google Calendar IDs to skip entirely (e.g. a shared
+    # partner calendar you don't want surfaced in briefs or chat).
+    irma_calendar_exclude_ids: Annotated[list[str], NoDecode] = Field(default_factory=list)
     irma_codebase_agent_enabled: bool = False
     irma_refresh_minutes: int = 30
     irma_dock_clearance: float = 80.0
     irma_db_path: Path = Path("./irma.db")
+
+    # --- Apple Reminders -----------------------------------------------------
+    reminders_linked: bool = False
+    reminders_calendar_prefix: str = "Irma · "
+    reminders_sync_interval_seconds: int = 60
+    reminders_helper_path: Path = Path(
+        "tools/reminders-helper/bin/irma-reminders-helper"
+    )
 
     # --- HTTP ----------------------------------------------------------------
     irma_api_host: str = "127.0.0.1"
@@ -84,6 +95,13 @@ class Settings(BaseSettings):
         if isinstance(raw, str):
             paths = [p.strip() for p in raw.split(",") if p.strip()]
             return [Path(p) for p in paths]
+        return raw
+
+    @field_validator("irma_calendar_exclude_ids", mode="before")
+    @classmethod
+    def _split_calendar_exclude_ids(cls, raw: object) -> object:
+        if isinstance(raw, str):
+            return [v.strip() for v in raw.split(",") if v.strip()]
         return raw
 
 

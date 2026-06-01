@@ -5,10 +5,15 @@
 //! the dog's x/y inside that strip via `set_companion_pos`; Rust only handles
 //! initial placement and reanchoring on scale-factor changes.
 
+use std::sync::atomic::Ordering;
+
 use serde::Serialize;
 use tauri::{
-    App, AppHandle, Emitter, LogicalPosition, Manager, Monitor, WebviewWindow, WindowEvent,
+    App, AppHandle, Emitter, LogicalPosition, Manager, Monitor, PhysicalPosition, State,
+    WebviewWindow, WindowEvent,
 };
+
+use crate::DialogOpen;
 
 const MARGIN_X: f64 = 12.0;
 const DEFAULT_DOCK_CLEARANCE: f64 = 80.0;
@@ -24,6 +29,47 @@ const MAIN_VISIBILITY_EVENT: &str = "main:visibility";
 /// Vertical lift (logical px) above the screen's bottom edge when she's beside
 /// the Dock — sits her slightly off the floor rather than flush.
 const BESIDE_DOCK_LIFT: f64 = 28.0;
+
+/// Inputs for the pure drop→zone decision. All x values are logical px in the
+/// monitor's coordinate space. `dock_left`/`dock_right` are only meaningful when
+/// `is_primary` (a secondary monitor has no Dock).
+#[derive(Debug)]
+pub struct ZoneInput {
+    pub monitor_left: f64,
+    pub monitor_right: f64,
+    pub is_primary: bool,
+    pub dock_left: f64,
+    pub dock_right: f64,
+}
+
+/// Decide which zone a drop at `center_x` lands in. Pure (no window access) so
+/// it can be unit-tested. `tie_left` resolves the measure-zero exact-center case
+/// on a secondary monitor.
+pub fn decide_drop_zone(center_x: f64, z: &ZoneInput, tie_left: bool) -> &'static str {
+    if z.is_primary {
+        // `center_x == dock_left` or `== dock_right` intentionally falls through to "on-dock":
+        // the Dock edges already carry ±50 px padding, so an exact-boundary center is on-dock —
+        // a deliberate measure-zero choice.
+        if center_x < z.dock_left {
+            "left-of-dock"
+        } else if center_x > z.dock_right {
+            "right-of-dock"
+        } else {
+            "on-dock"
+        }
+    } else {
+        let mid = (z.monitor_left + z.monitor_right) / 2.0;
+        if center_x < mid {
+            "left-of-dock"
+        } else if center_x > mid {
+            "right-of-dock"
+        } else if tie_left {
+            "left-of-dock"
+        } else {
+            "right-of-dock"
+        }
+    }
+}
 
 fn env_f64(key: &str, default: f64) -> f64 {
     std::env::var(key)
@@ -189,51 +235,121 @@ fn target_monitor(window: &WebviewWindow) -> tauri::Result<Option<Monitor>> {
     cursor_monitor(window)
 }
 
-fn compute_bounds(
+/// Two monitors are "the same" if their names match (preferred) or, lacking
+/// names, their physical origins coincide.
+fn monitors_equal(a: &Monitor, b: &Monitor) -> bool {
+    match (a.name(), b.name()) {
+        (Some(na), Some(nb)) => na == nb,
+        _ => a.position() == b.position(),
+    }
+}
+
+fn is_primary_monitor(window: &WebviewWindow, monitor: &Monitor) -> tauri::Result<bool> {
+    match window.primary_monitor()? {
+        Some(primary) => Ok(monitors_equal(monitor, &primary)),
+        None => Ok(true), // no primary info → single-screen assumption
+    }
+}
+
+fn monitor_by_name(window: &WebviewWindow, name: &str) -> tauri::Result<Option<Monitor>> {
+    for m in window.available_monitors()? {
+        if m.name().map(|n| n.as_str()) == Some(name) {
+            return Ok(Some(m));
+        }
+    }
+    Ok(None)
+}
+
+/// Resolve the monitor the companion should use: a saved monitor by name wins,
+/// otherwise fall back to `target_monitor` (env → primary → cursor).
+fn resolve_monitor(
     window: &WebviewWindow,
-    beside_dock: bool,
-) -> tauri::Result<Option<CompanionBounds>> {
-    let Some(monitor) = target_monitor(window)? else {
-        return Ok(None);
-    };
+    monitor_name: Option<&str>,
+) -> tauri::Result<Option<Monitor>> {
+    if let Some(name) = monitor_name {
+        if let Some(m) = monitor_by_name(window, name)? {
+            return Ok(Some(m));
+        }
+        eprintln!("[irma] resolve_monitor: saved monitor {name:?} not found; falling back to primary");
+    }
+    target_monitor(window)
+}
+
+/// The padded Dock edges (logical x) on the primary monitor: the left strip ends
+/// at `.0` and the right strip begins at `.1`. The ±50 padding keeps the companion
+/// clear of the centred Dock.
+fn dock_zone_edges(origin_x: f64, area_width: f64, dock_w: f64) -> (f64, f64) {
+    let center = origin_x + area_width / 2.0;
+    (center - dock_w / 2.0 - 50.0, center + dock_w / 2.0 + 50.0)
+}
+
+fn compute_bounds_for(
+    window: &WebviewWindow,
+    monitor: &Monitor,
+    dock_position: &str,
+) -> tauri::Result<CompanionBounds> {
     let scale = monitor.scale_factor();
+    // NOTE: bounds are computed in the target monitor's logical px. `set_position`
+    // (via set_companion_pos) converts using the monitor the window currently sits
+    // on, so callers must move the window onto `monitor` before/around applying
+    // these bounds when monitors have different scale factors.
     let area = monitor.size().to_logical::<f64>(scale);
     let origin = monitor.position().to_logical::<f64>(scale);
     let win_size = window.outer_size()?.to_logical::<f64>(scale);
-    // Beside the Dock there's nothing below her, so replace the Dock clearance
-    // with a small lift so she sits just above the screen's bottom edge.
-    let clearance = if beside_dock { BESIDE_DOCK_LIFT } else { dock_clearance() };
+    // Left/right of dock have nothing below them, so use a small lift instead
+    // of the full Dock clearance.
+    let clearance = if dock_position == "on-dock" {
+        dock_clearance()
+    } else {
+        BESIDE_DOCK_LIFT
+    };
     let y_offset = dog_y_offset();
     let y = origin.y + area.height - win_size.height - clearance + y_offset;
 
-    // Horizontal walking strip.
     let monitor_left = origin.x;
     let monitor_right = origin.x + area.width;
-    let (strip_left, strip_right) = if beside_dock {
-        // Beside the Dock: roam the bottom-left, from the screen's left edge
-        // (x=0) up to where the centred Dock begins. macOS exposes no public
-        // API for the Dock's width, so use IRMA_DOCK_WIDTH as the estimated
-        // Dock footprint (default DEFAULT_DOCK_WIDTH).
-        let dock_w = dock_width().unwrap_or(DEFAULT_DOCK_WIDTH);
-        let dock_left = origin.x + area.width / 2.0 - dock_w / 2.0 - 50.0;
-        (monitor_left, dock_left)
-    } else {
-        // In front of the Dock: a centred strip (IRMA_DOCK_WIDTH wide), or the
-        // full monitor width when IRMA_DOCK_WIDTH=0.
-        match dock_width() {
-            Some(dw) => {
-                let center = origin.x + area.width / 2.0;
-                (center - dw / 2.0, center + dw / 2.0)
+    let is_primary = is_primary_monitor(window, monitor)?;
+
+    let (strip_left, strip_right) = if is_primary {
+        // Primary monitor hosts the Dock: zones are relative to the Dock footprint.
+        match dock_position {
+            "left-of-dock" => {
+                let (dock_left, _) =
+                    dock_zone_edges(origin.x, area.width, dock_width().unwrap_or(DEFAULT_DOCK_WIDTH));
+                (monitor_left, dock_left)
             }
-            None => (origin.x, origin.x + area.width),
+            "right-of-dock" => {
+                let (_, dock_right) =
+                    dock_zone_edges(origin.x, area.width, dock_width().unwrap_or(DEFAULT_DOCK_WIDTH));
+                (dock_right, monitor_right)
+            }
+            _ => match dock_width() {
+                Some(dw) => {
+                    let center = origin.x + area.width / 2.0;
+                    (center - dw / 2.0, center + dw / 2.0)
+                }
+                None => (monitor_left, monitor_right),
+            },
+        }
+    } else {
+        // Secondary monitor has no real Dock, but we keep the SAME centred
+        // dock-width gap between the left/right regions as the primary screen,
+        // so she doesn't roam through the middle. `on-dock` is never selected
+        // on a secondary monitor; treat it defensively as the left region.
+        let (dock_left, dock_right) =
+            dock_zone_edges(origin.x, area.width, dock_width().unwrap_or(DEFAULT_DOCK_WIDTH));
+        match dock_position {
+            "right-of-dock" => (dock_right, monitor_right),
+            _ => (monitor_left, dock_left),
         }
     };
     let strip_left = strip_left.max(monitor_left);
     let strip_right = strip_right.min(monitor_right);
+    let strip_right = strip_right.max(strip_left); // never invert the strip
     let min_x = strip_left;
     let max_x = (strip_right - win_size.width).max(strip_left);
 
-    Ok(Some(CompanionBounds {
+    Ok(CompanionBounds {
         monitor_width: area.width,
         monitor_height: area.height,
         sprite_width: win_size.width,
@@ -243,14 +359,15 @@ fn compute_bounds(
         max_x,
         dock_clearance: clearance,
         dog_y_offset: y_offset,
-    }))
+    })
 }
 
 fn place_companion(window: &WebviewWindow) -> tauri::Result<()> {
-    let Some(bounds) = compute_bounds(window, false)? else {
+    let Some(monitor) = target_monitor(window)? else {
         eprintln!("[irma] place_companion: no monitor available");
         return Ok(());
     };
+    let bounds = compute_bounds_for(window, &monitor, "left-of-dock")?;
     // Default anchor: a little in from the left edge of the primary monitor.
     // JS will move it elsewhere once it has bounds.
     let x = bounds.min_x + MARGIN_X;
@@ -290,6 +407,84 @@ pub struct CompanionBounds {
     pub dock_clearance: f64,
     /// Current IRMA_DOG_Y_OFFSET added to `y`.
     pub dog_y_offset: f64,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolvedDrop {
+    /// Monitor the window landed on (empty string if the monitor is unnamed).
+    pub monitor_name: String,
+    /// Resolved zone: "left-of-dock" | "on-dock" | "right-of-dock".
+    pub dock_position: String,
+    /// Landing x (logical px, window top-left), clamped into the zone strip.
+    pub x: f64,
+    pub bounds: CompanionBounds,
+}
+
+/// Resolve where the companion should snap to, based on its current (post-drag)
+/// window position. Reads the live window geometry so the result is correct even
+/// if the live drag drifted under mixed DPI.
+#[tauri::command]
+pub fn resolve_companion_drop(window: WebviewWindow) -> Result<ResolvedDrop, String> {
+    let pos = window.outer_position().map_err(|e| e.to_string())?;
+    let size = window.outer_size().map_err(|e| e.to_string())?;
+    let center_phys_x = pos.x as f64 + size.width as f64 / 2.0;
+    let center_phys_y = pos.y as f64 + size.height as f64 / 2.0;
+
+    // Monitor containing the window center; fall back to primary.
+    let monitors = window.available_monitors().map_err(|e| e.to_string())?;
+    let monitor = monitors
+        .into_iter()
+        .find(|m| {
+            let mp = m.position();
+            let ms = m.size();
+            let x0 = mp.x as f64;
+            let y0 = mp.y as f64;
+            center_phys_x >= x0
+                && center_phys_x < x0 + ms.width as f64
+                && center_phys_y >= y0
+                && center_phys_y < y0 + ms.height as f64
+        })
+        .or_else(|| window.primary_monitor().ok().flatten())
+        .ok_or_else(|| "no monitor available".to_string())?;
+
+    // NOTE: a cross-monitor drop to a different-DPI screen relies on macOS having
+    // applied the scale change by the time this runs; in practice the scale update
+    // lands in the same run-loop cycle as the window move, so reading the landed
+    // monitor's scale here is correct.
+    let scale = monitor.scale_factor();
+    let area = monitor.size().to_logical::<f64>(scale);
+    let origin = monitor.position().to_logical::<f64>(scale);
+    let win_size = size.to_logical::<f64>(scale);
+    let center_x = center_phys_x / scale;
+
+    let is_primary = is_primary_monitor(&window, &monitor).map_err(|e| e.to_string())?;
+    let (dock_left, dock_right) = if is_primary {
+        dock_zone_edges(origin.x, area.width, dock_width().unwrap_or(DEFAULT_DOCK_WIDTH))
+    } else {
+        (0.0, 0.0)
+    };
+    let z = ZoneInput {
+        monitor_left: origin.x,
+        monitor_right: origin.x + area.width,
+        is_primary,
+        dock_left,
+        dock_right,
+    };
+    // Deterministic tie-break for an exact-center secondary drop (measure-zero).
+    let tie_left = (pos.x & 1) == 0;
+    let zone = decide_drop_zone(center_x, &z, tie_left);
+
+    let bounds = compute_bounds_for(&window, &monitor, zone).map_err(|e| e.to_string())?;
+    let landing_x = (center_x - win_size.width / 2.0).clamp(bounds.min_x, bounds.max_x);
+    let monitor_name = monitor.name().cloned().unwrap_or_default();
+
+    Ok(ResolvedDrop {
+        monitor_name,
+        dock_position: zone.to_string(),
+        x: landing_x,
+        bounds,
+    })
 }
 
 fn emit_main_visibility(app: &AppHandle, visible: bool) {
@@ -332,13 +527,42 @@ pub fn toggle_main(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn is_main_visible(app: AppHandle) -> bool {
+    app.get_webview_window("main")
+        .and_then(|w| w.is_visible().ok())
+        .unwrap_or(false)
+}
+
+/// True while the main window is actually *presented to the user*: on-screen
+/// AND the key (focused) window. `is_visible()` alone stays true when the user
+/// switches to another app (the window is merely occluded, not hidden), which
+/// would otherwise leave the companion stuck barking. The `DialogOpen` guard
+/// keeps her "present" while our own native folder picker steals key focus, so
+/// browsing for a folder doesn't break her out of bark mode.
+#[tauri::command]
+pub fn is_main_active(app: AppHandle, dialog_open: State<'_, DialogOpen>) -> bool {
+    let Some(win) = app.get_webview_window("main") else {
+        return false;
+    };
+    if !win.is_visible().unwrap_or(false) {
+        return false;
+    }
+    if dialog_open.0.load(Ordering::Acquire) {
+        return true;
+    }
+    win.is_focused().unwrap_or(false)
+}
+
+#[tauri::command]
 pub fn get_companion_bounds(
     window: WebviewWindow,
-    beside_dock: bool,
+    monitor_name: Option<String>,
+    dock_position: String,
 ) -> Result<CompanionBounds, String> {
-    compute_bounds(&window, beside_dock)
+    let monitor = resolve_monitor(&window, monitor_name.as_deref())
         .map_err(|e| e.to_string())?
-        .ok_or_else(|| "no monitor available".to_string())
+        .ok_or_else(|| "no monitor available".to_string())?;
+    compute_bounds_for(&window, &monitor, &dock_position).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -348,27 +572,68 @@ pub fn set_companion_pos(window: WebviewWindow, x: f64, y: f64) -> Result<(), St
         .map_err(|e| e.to_string())
 }
 
-/// Show a native context menu on the companion window with placement options.
-/// `beside_dock` reflects the current setting so the active item gets a checkmark.
+/// Capture the physical offset between the window's top-left and the OS cursor at
+/// the start of a drag, so subsequent `companion_drag_to` calls can move the
+/// window to follow the real cursor (no JS pointer-coordinate feedback).
 #[tauri::command]
-pub fn show_companion_context_menu(app: AppHandle, beside_dock: bool) -> Result<(), String> {
-    crate::tray::show_companion_menu(&app, beside_dock).map_err(|e| e.to_string())
+pub fn companion_drag_begin(
+    window: WebviewWindow,
+    drag: State<'_, crate::CompanionDrag>,
+) -> Result<(), String> {
+    let outer = window.outer_position().map_err(|e| e.to_string())?;
+    let cursor = window.cursor_position().map_err(|e| e.to_string())?;
+    let offset = (outer.x as f64 - cursor.x, outer.y as f64 - cursor.y);
+    *drag.0.lock().map_err(|e| e.to_string())? = Some(offset);
+    Ok(())
+}
+
+/// Move the companion window to follow the live OS cursor, using the offset
+/// captured by `companion_drag_begin`. Reads the cursor from the OS each call so
+/// moving the window never perturbs the next event's reported coordinates (the
+/// old JS-screenXY approach fed back on itself and oscillated).
+#[tauri::command]
+pub fn companion_drag_to(
+    window: WebviewWindow,
+    drag: State<'_, crate::CompanionDrag>,
+) -> Result<(), String> {
+    let offset = *drag.0.lock().map_err(|e| e.to_string())?;
+    let Some((ox, oy)) = offset else {
+        return Ok(());
+    };
+    let cursor = window.cursor_position().map_err(|e| e.to_string())?;
+    let nx = (cursor.x + ox).round() as i32;
+    let ny = (cursor.y + oy).round() as i32;
+    window
+        .set_position(PhysicalPosition::new(nx, ny))
+        .map_err(|e| e.to_string())
+}
+
+/// Show a native context menu on the companion window with a reset action.
+#[tauri::command]
+pub fn show_companion_context_menu(app: AppHandle) -> Result<(), String> {
+    crate::tray::show_companion_menu(&app).map_err(|e| e.to_string())
 }
 
 /// Wire window-event listeners on both windows. Called once during setup.
 ///
-/// IMPORTANT: we deliberately do NOT re-anchor the companion on
-/// `WindowEvent::Moved` — JS drives the dog's position via `set_companion_pos`
-/// and reanchoring on every move would fight the walk animation. We do
-/// reanchor on `ScaleFactorChanged` because a scale change can shift the
-/// effective dock clearance.
+/// IMPORTANT: we deliberately do NOT re-anchor the companion from Rust on
+/// `WindowEvent::Moved` or `ScaleFactorChanged` — JS owns placement via
+/// `set_companion_pos`/drag, and forcing a re-anchor here fought the drag
+/// (it snapped her back to the primary monitor when crossing a different-DPI
+/// screen). On a scale change we just notify the frontend (`companion:rescale`)
+/// so it can re-derive bounds for her *saved* monitor/zone when not dragging.
 pub fn wire_windows(app: &mut App) -> tauri::Result<()> {
     if let Some(companion) = app.get_webview_window("companion") {
         place_companion(&companion)?;
         let companion_clone = companion.clone();
         companion.on_window_event(move |event| {
             if matches!(event, WindowEvent::ScaleFactorChanged { .. }) {
-                let _ = place_companion(&companion_clone);
+                // Do NOT force her back to the primary monitor here — that fought
+                // drag-to-place and made her flicker when dragged across a
+                // different-DPI screen. Let the frontend re-anchor to her saved
+                // monitor/zone (and skip while a drag is in progress).
+                eprintln!("[irma] companion ScaleFactorChanged → emit companion:rescale");
+                let _ = companion_clone.emit("companion:rescale", ());
             }
         });
     }
@@ -384,8 +649,9 @@ pub fn wire_windows(app: &mut App) -> tauri::Result<()> {
                     emit_main_visibility(&app_handle, false);
                 }
                 WindowEvent::Focused(false) => {
-                    let _ = main_clone.hide();
-                    emit_main_visibility(&app_handle, false);
+                    // Do not auto-hide on focus loss — native dialogs (folder picker,
+                    // file input) all steal focus and would collapse the window.
+                    // The window hides only via the sprite-click toggle or the tray.
                 }
                 _ => {}
             }
@@ -393,4 +659,53 @@ pub fn wire_windows(app: &mut App) -> tauri::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod zone_tests {
+    use super::{decide_drop_zone, ZoneInput};
+
+    fn primary(dock_left: f64, dock_right: f64) -> ZoneInput {
+        ZoneInput {
+            monitor_left: 0.0,
+            monitor_right: 1440.0,
+            is_primary: true,
+            dock_left,
+            dock_right,
+        }
+    }
+
+    fn secondary() -> ZoneInput {
+        ZoneInput {
+            monitor_left: 1440.0,
+            monitor_right: 2960.0,
+            is_primary: false,
+            dock_left: 0.0,  // unused on a secondary monitor (no Dock)
+            dock_right: 0.0, // unused on a secondary monitor (no Dock)
+        }
+    }
+
+    #[test]
+    fn primary_picks_left_on_dock_right() {
+        let z = primary(600.0, 840.0);
+        assert_eq!(decide_drop_zone(100.0, &z, true), "left-of-dock");
+        assert_eq!(decide_drop_zone(720.0, &z, true), "on-dock");
+        assert_eq!(decide_drop_zone(1000.0, &z, true), "right-of-dock");
+    }
+
+    #[test]
+    fn secondary_splits_at_center() {
+        let z = secondary();
+        assert_eq!(decide_drop_zone(1500.0, &z, true), "left-of-dock");
+        assert_eq!(decide_drop_zone(2900.0, &z, true), "right-of-dock");
+    }
+
+    #[test]
+    fn secondary_never_returns_on_dock() {
+        let z = secondary();
+        let mid = (z.monitor_left + z.monitor_right) / 2.0;
+        assert_eq!(decide_drop_zone(mid, &z, true), "left-of-dock");
+        assert_eq!(decide_drop_zone(mid, &z, false), "right-of-dock");
+        assert_ne!(decide_drop_zone(1500.0, &z, true), "on-dock");
+    }
 }

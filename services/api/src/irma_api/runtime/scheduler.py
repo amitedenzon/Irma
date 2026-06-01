@@ -1,4 +1,4 @@
-"""APScheduler wrapper. Periodic observer re-runs via AsyncIOScheduler."""
+"""APScheduler wrapper. Periodic observer refresh + optional reminders sync."""
 
 from __future__ import annotations
 
@@ -13,16 +13,19 @@ logger = structlog.get_logger(__name__)
 
 
 class Scheduler:
-    """Owns the AsyncIOScheduler instance for the process lifetime."""
-
     def __init__(
         self,
         refresh_minutes: int,
         on_tick: Callable[[], Awaitable[None]],
+        *,
+        reminders_interval_seconds: int | None = None,
+        on_reminders_tick: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         self._sched = AsyncIOScheduler()
         self._refresh_minutes = refresh_minutes
         self._on_tick = on_tick
+        self._reminders_interval = reminders_interval_seconds
+        self._on_reminders_tick = on_reminders_tick
 
     def start(self) -> None:
         self._sched.add_job(
@@ -33,8 +36,21 @@ class Scheduler:
             max_instances=1,
             coalesce=True,
         )
+        if self._reminders_interval and self._on_reminders_tick:
+            self._sched.add_job(
+                self._on_reminders_tick,
+                trigger=IntervalTrigger(seconds=self._reminders_interval),
+                id="irma-reminders-sync",
+                replace_existing=True,
+                max_instances=1,
+                coalesce=True,
+            )
         self._sched.start()
-        logger.info("scheduler.started", refresh_minutes=self._refresh_minutes)
+        logger.info(
+            "scheduler.started",
+            refresh_minutes=self._refresh_minutes,
+            reminders_seconds=self._reminders_interval,
+        )
 
     def add_daily_job(
         self,

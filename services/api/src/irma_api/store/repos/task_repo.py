@@ -20,7 +20,7 @@ from irma_api.store.errors import NotFoundError
 
 _COLUMNS = (
     "id, project_id, title, notes, status, due_date, scheduled_for, "
-    "estimated_minutes, created_at, updated_at, completed_at"
+    "estimated_minutes, created_at, updated_at, completed_at, reminder_uuid"
 )
 
 
@@ -41,6 +41,7 @@ def _row_to_task(row: aiosqlite.Row) -> Task:
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
         completed_at=(datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None),
+        reminder_uuid=row["reminder_uuid"],
     )
 
 
@@ -57,7 +58,7 @@ class TaskRepo:
             await self._conn.execute(
                 f"""
                 INSERT INTO task ({_COLUMNS})
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
                 """,
                 (
                     tid,
@@ -157,6 +158,27 @@ class TaskRepo:
 
     async def delete(self, task_id: str) -> None:
         cur = await self._conn.execute("DELETE FROM task WHERE id = ?", (task_id,))
+        await self._conn.commit()
+        if cur.rowcount == 0:
+            raise NotFoundError("task", task_id)
+
+    async def set_reminder_uuid(self, task_id: str, uuid: str | None) -> None:
+        """Link or unlink a task to/from its EKReminder.calendarItemIdentifier."""
+        cur = await self._conn.execute(
+            "UPDATE task SET reminder_uuid = ?, updated_at = ? WHERE id = ?",
+            (uuid, _now().isoformat(), task_id),
+        )
+        await self._conn.commit()
+        if cur.rowcount == 0:
+            raise NotFoundError("task", task_id)
+
+    async def set_project(self, task_id: str, new_project_id: str) -> None:
+        """Reattribute a task to a different project (used by the cross-calendar
+        move path in the Reminders sync planner)."""
+        cur = await self._conn.execute(
+            "UPDATE task SET project_id = ?, updated_at = ? WHERE id = ?",
+            (new_project_id, _now().isoformat(), task_id),
+        )
         await self._conn.commit()
         if cur.rowcount == 0:
             raise NotFoundError("task", task_id)

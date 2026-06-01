@@ -165,6 +165,28 @@ export async function sendChat(
   );
 }
 
+export interface IntegrationsStatus {
+  calendar_linked: boolean;
+  calendar_creds_set: boolean;
+  resend_linked: boolean;
+  reminders_linked: boolean;
+  reminders_last_sync_at: string | null;
+  reminders_last_sync_error: string | null;
+  user_email: string | null;
+  llm_backend: string | null;
+  llm_model: string | null;
+}
+
+export async function fetchIntegrationsStatus(): Promise<IntegrationsStatus> {
+  return jsonOrThrow(await fetch(url("/api/v1/integrations/google/status")));
+}
+
+export async function connectGoogleCalendar(): Promise<IntegrationsStatus> {
+  return jsonOrThrow(
+    await fetch(url("/api/v1/integrations/google/connect"), { method: "POST" }),
+  );
+}
+
 export interface LocalModel {
   name: string;
   display_name: string;

@@ -1,10 +1,10 @@
 //! Menu-bar tray icon — the only persistent app surface besides the sprite.
 //!
 //! Left-click on the icon toggles the main window; the menu provides
-//! Toggle Irma / Placement options / Settings / Quit.
+//! Toggle Irma / Reset Position / Settings / Quit.
 
 use tauri::{
-    menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
+    menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
     AppHandle, Emitter, Manager,
 };
@@ -14,26 +14,11 @@ use crate::windows;
 fn build_tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let toggle = MenuItem::with_id(app, "toggle", "Toggle Irma", true, None::<&str>)?;
     let sep1 = PredefinedMenuItem::separator(app)?;
-    let beside = CheckMenuItem::with_id(
-        app,
-        "companion_beside_dock",
-        "Beside the Dock",
-        true,
-        true,
-        None::<&str>,
-    )?;
-    let on_dock = CheckMenuItem::with_id(
-        app,
-        "companion_on_dock",
-        "On the Dock",
-        true,
-        false,
-        None::<&str>,
-    )?;
+    let reset = MenuItem::with_id(app, "reset_position", "Reset Position", true, None::<&str>)?;
     let sep2 = PredefinedMenuItem::separator(app)?;
     let settings = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    Menu::with_items(app, &[&toggle, &sep1, &beside, &on_dock, &sep2, &settings, &quit])
+    Menu::with_items(app, &[&toggle, &sep1, &reset, &sep2, &settings, &quit])
 }
 
 /// Called from the global tray event listener in lib.rs to show the tray menu.
@@ -45,25 +30,10 @@ pub fn popup_tray_menu(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-/// Show a native popup context menu on the companion window with placement options.
-pub fn show_companion_menu(app: &AppHandle, beside_dock: bool) -> tauri::Result<()> {
-    let beside = CheckMenuItem::with_id(
-        app,
-        "companion_beside_dock",
-        "Beside the Dock",
-        true,
-        beside_dock,
-        None::<&str>,
-    )?;
-    let on_dock = CheckMenuItem::with_id(
-        app,
-        "companion_on_dock",
-        "On the Dock",
-        true,
-        !beside_dock,
-        None::<&str>,
-    )?;
-    let menu = Menu::with_items(app, &[&beside, &on_dock])?;
+/// Show a native popup context menu on the companion window with a reset action.
+pub fn show_companion_menu(app: &AppHandle) -> tauri::Result<()> {
+    let reset = MenuItem::with_id(app, "reset_position", "Reset Position", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&reset])?;
     if let Some(window) = app.get_webview_window("companion") {
         let _ = window.popup_menu(&menu);
     }
@@ -90,11 +60,8 @@ pub fn init(app: &AppHandle) -> tauri::Result<()> {
                         eprintln!("[irma] toggle_main_internal failed: {err}");
                     }
                 }
-                "companion_beside_dock" => {
-                    let _ = app.emit("companion:placement", "beside-dock");
-                }
-                "companion_on_dock" => {
-                    let _ = app.emit("companion:placement", "on-dock");
+                "reset_position" => {
+                    let _ = app.emit("companion:reset-position", ());
                 }
                 "settings" => {
                     windows::show_main(app);

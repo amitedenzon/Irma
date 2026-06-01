@@ -12,6 +12,7 @@
     "core:window:allow-is-visible",
     "core:window:allow-close",
     "core:webview:allow-internal-toggle-devtools",
+    "core:event:allow-emit-to",
     "autostart:allow-enable",
     "autostart:allow-disable",
     "autostart:allow-is-enabled",

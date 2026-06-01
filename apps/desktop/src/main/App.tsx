@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { sendBriefEmail, listProjects } from "../lib/api";
+import { emitTo } from "@tauri-apps/api/event";
+import { listProjects } from "../lib/api";
 import { subscribeAgentState } from "../lib/sse";
 import type { AgentState, Project } from "../lib/types";
 import { ProjectsView } from "./projects/ProjectsView";
 import { ChatView } from "./chat/ChatView";
 import { SettingsView } from "./settings/SettingsView";
-import { BriefIcon, SettingsIcon } from "../lib/icons";
+import { ScheduleView } from "./schedule/ScheduleView";
+import { SettingsIcon } from "../lib/icons";
 
 const LOADING_SCREEN_KEY = "irma.settings.loadingScreen";
 const API_BASE = "http://127.0.0.1:8765";
@@ -53,18 +55,15 @@ function useApiReady() {
   return { ready, dots };
 }
 
-type Tab = "projects" | "chat" | "settings";
-
-type BriefSendState = "idle" | "sending" | "sent" | "error";
+type Tab = "projects" | "chat" | "schedule" | "settings";
 
 export function App() {
   const [tab, setTab] = useState<Tab>("projects");
   const [agentState, setAgentState] = useState<AgentState>("idle");
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectsError, setProjectsError] = useState<string | null>(null);
-  const [briefSendState, setBriefSendState] = useState<BriefSendState>("idle");
-  const [confirmOpen, setConfirmOpen] = useState(false);
   const { ready, dots } = useApiReady();
+  const [snacking, setSnacking] = useState(false);
 
   const loadProjects = useCallback(async () => {
     setProjectsError(null);
@@ -84,24 +83,6 @@ export function App() {
     const sub = subscribeAgentState((s) => setAgentState(s));
     return () => sub.close();
   }, []);
-
-  const sendBrief = useCallback(async () => {
-    setBriefSendState("sending");
-    try {
-      await sendBriefEmail();
-      setBriefSendState("sent");
-      setTimeout(() => setBriefSendState("idle"), 4000);
-    } catch (e) {
-      console.error("[dashboard] sendBriefEmail failed:", e);
-      setBriefSendState("error");
-      setTimeout(() => setBriefSendState("idle"), 4000);
-    }
-  }, []);
-
-  const confirmSend = useCallback(() => {
-    setConfirmOpen(false);
-    void sendBrief();
-  }, [sendBrief]);
 
   const closeWindow = () => {
     void invoke("toggle_main").catch((e: unknown) =>
@@ -140,9 +121,13 @@ export function App() {
         tab={tab}
         onTabChange={setTab}
         agentState={agentState}
-        onSendBrief={() => setConfirmOpen(true)}
-        briefSendState={briefSendState}
         onClose={closeWindow}
+        stateLabel={snacking ? "Snacking" : agentState}
+        onTreat={() => {
+          void emitTo("companion", "companion:treat");
+          setSnacking(true);
+          setTimeout(() => setSnacking(false), 2000);
+        }}
       />
 
       <main className="flex-1 min-h-0 overflow-hidden relative flex flex-col">
@@ -173,6 +158,11 @@ export function App() {
             tabVisible={tab === "chat"}
           />
         </div>
+        {tab === "schedule" && (
+          <div className="absolute inset-0 overflow-y-auto">
+            <ScheduleView />
+          </div>
+        )}
         {/* Settings fills the pane; inner tab bar is sticky, content scrolls */}
         {tab === "settings" && (
           <div className="absolute inset-0 flex flex-col">
@@ -181,84 +171,20 @@ export function App() {
         )}
       </main>
 
-      <ConfirmDialog
-        open={confirmOpen}
-        title="Send daily brief?"
-        message="I'll email today's brief — progress since your last one, plus deadlines and events for the next few days — to your inbox now."
-        confirmLabel="Send it"
-        cancelLabel="Not now"
-        onConfirm={confirmSend}
-        onCancel={() => setConfirmOpen(false)}
-      />
     </div>
   );
 }
 
-function ConfirmDialog({
-  open, title, message, confirmLabel, cancelLabel, onConfirm, onCancel,
-}: {
-  open: boolean;
-  title: string;
-  message: string;
-  confirmLabel: string;
-  cancelLabel: string;
-  onConfirm: () => void;
-  onCancel: () => void;
-}) {
-  if (!open) return null;
-  return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label={title}
-      onClick={onCancel}
-      className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ background: "rgba(0,0,0,0.45)" }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className="mx-4 w-full max-w-sm rounded-xl border p-5 shadow-xl"
-        style={{ background: "var(--color-surface)", borderColor: "var(--color-border)" }}
-      >
-        <h2 className="display text-[16px] font-semibold mb-2" style={{ color: "var(--color-ink)" }}>
-          {title}
-        </h2>
-        <p className="text-[13px] mb-5" style={{ color: "var(--color-ink-mute)" }}>
-          {message}
-        </p>
-        <div className="flex items-center justify-end gap-2">
-          <button
-            type="button"
-            onClick={onCancel}
-            className="px-3.5 py-1.5 text-[13px] font-medium rounded-md hover:bg-[var(--color-surface-2)]"
-            style={{ color: "var(--color-ink-mute)" }}
-          >
-            {cancelLabel}
-          </button>
-          <button
-            type="button"
-            onClick={onConfirm}
-            autoFocus
-            className="px-3.5 py-1.5 text-[13px] font-semibold rounded-md text-white"
-            style={{ background: "var(--color-red)" }}
-          >
-            {confirmLabel}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 function Header({
-  tab, onTabChange, agentState, onSendBrief, briefSendState, onClose,
+  tab, onTabChange, agentState, stateLabel, onClose, onTreat,
 }: {
   tab: Tab;
   onTabChange: (t: Tab) => void;
   agentState: AgentState;
-  onSendBrief: () => void;
-  briefSendState: BriefSendState;
+  stateLabel: string;
   onClose: () => void;
+  onTreat: () => void;
 }) {
   const stateColor = {
     idle: "var(--color-moss)",
@@ -266,13 +192,6 @@ function Header({
     thinking: "var(--color-red-hover)",
     alert: "var(--color-red)",
   }[agentState];
-
-  const briefLabel = {
-    idle: "Brief",
-    sending: "Sending…",
-    sent: "Sent ✓",
-    error: "Failed",
-  }[briefSendState];
 
   return (
     <header
@@ -294,8 +213,18 @@ function Header({
             Irma
           </h1>
           <span className="text-[11px]" style={{ color: "var(--color-ink-faint)", fontFamily: "var(--font-mono)" }}>
-            {agentState}
+            {stateLabel}
           </span>
+          <button
+            type="button"
+            onClick={onTreat}
+            aria-label="Give Irma a treat"
+            title="Give Irma a treat"
+            className="text-[14px] leading-none rounded hover:opacity-70 transition-opacity"
+            style={{ lineHeight: 1 }}
+          >
+            🧀
+          </button>
         </div>
         <button onClick={onClose} aria-label="Close"
                 className="px-2 py-1 text-[14px] leading-none rounded-md hover:bg-[var(--color-surface-2)]"
@@ -306,26 +235,8 @@ function Header({
       <nav className="flex items-center gap-1 -mb-px">
         <Tab id="projects" current={tab} onClick={onTabChange}>Projects</Tab>
         <Tab id="chat"     current={tab} onClick={onTabChange}>Chat</Tab>
+        <Tab id="schedule" current={tab} onClick={onTabChange}>Schedule</Tab>
         <div className="ml-auto flex items-center">
-          <button
-            type="button"
-            onClick={() => onSendBrief()}
-            disabled={briefSendState === "sending"}
-            aria-label={briefSendState === "idle" ? "Email today's brief" : briefLabel}
-            title={briefSendState === "idle" ? "Email today's brief" : briefLabel}
-            className="px-4 py-2 transition-colors flex items-center disabled:opacity-50"
-            style={{
-              color:
-                briefSendState === "sent"
-                  ? "var(--color-moss)"
-                  : briefSendState === "error"
-                    ? "var(--color-red)"
-                    : "var(--color-ink-mute)",
-              borderBottom: "2px solid transparent",
-            }}
-          >
-            <BriefIcon size={16} className={briefSendState === "sending" ? "animate-pulse" : undefined} />
-          </button>
           <Tab id="settings" current={tab} onClick={onTabChange}
                aria-label="Settings" title="Settings">
             <SettingsIcon size={16} />

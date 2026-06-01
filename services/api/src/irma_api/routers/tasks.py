@@ -8,6 +8,7 @@ from fastapi import APIRouter, Query, Request, Response, status
 from fastapi.responses import JSONResponse
 
 from irma_api.models.task import Task, TaskCreate, TaskStatus, TaskUpdate
+from irma_api.routers.integrations import _trigger_reminder_sync
 from irma_api.store.errors import ConflictError, NotFoundError
 from irma_api.store.repos.task_repo import TaskRepo
 from irma_api.store.sqlite import SignalStore
@@ -45,11 +46,13 @@ async def list_tasks(
 @router.post("", response_model=Task, status_code=status.HTTP_201_CREATED)
 async def create_task(request: Request, payload: TaskCreate) -> Task | JSONResponse:
     try:
-        return await _repo(request).create(payload)
+        result = await _repo(request).create(payload)
     except NotFoundError as exc:
         return _err(404, "not_found", str(exc))
     except ConflictError as exc:
         return _err(409, "conflict", str(exc))
+    _trigger_reminder_sync(request)
+    return result
 
 
 @router.get("/{task_id}", response_model=Task)
@@ -65,9 +68,11 @@ async def update_task(
     request: Request, task_id: str, patch: TaskUpdate
 ) -> Task | JSONResponse:
     try:
-        return await _repo(request).update(task_id, patch)
+        result = await _repo(request).update(task_id, patch)
     except NotFoundError as exc:
         return _err(404, "not_found", str(exc))
+    _trigger_reminder_sync(request)
+    return result
 
 
 @router.delete("/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -76,12 +81,15 @@ async def delete_task(request: Request, task_id: str) -> Response:
         await _repo(request).delete(task_id)
     except NotFoundError as exc:
         return _err(404, "not_found", str(exc))
+    _trigger_reminder_sync(request)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/{task_id}/complete", response_model=Task)
 async def complete_task(request: Request, task_id: str) -> Task | JSONResponse:
     try:
-        return await _repo(request).update(task_id, TaskUpdate(status=TaskStatus.DONE))
+        result = await _repo(request).update(task_id, TaskUpdate(status=TaskStatus.DONE))
     except NotFoundError as exc:
         return _err(404, "not_found", str(exc))
+    _trigger_reminder_sync(request)
+    return result
