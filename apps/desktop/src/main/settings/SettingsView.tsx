@@ -2,8 +2,17 @@ import { useEffect, useRef, useState } from "react";
 import { enable, disable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { invoke } from "@tauri-apps/api/core";
 import { exit } from "@tauri-apps/plugin-process";
-import { fetchLocalModels } from "../../lib/api";
-import type { LocalModel } from "../../lib/api";
+import {
+	fetchLocalModels,
+	getProfile,
+	patchProfile,
+	fetchIntegrationsStatus,
+	connectGoogleCalendar,
+} from "../../lib/api";
+import type { LocalModel, Profile, IntegrationsStatus } from "../../lib/api";
+import { GuideModal } from "./GuideModal";
+import type { Guide } from "./GuideModal";
+import { TimezoneSelect } from "../../lib/TimezoneSelect";
 import {
 	COMPANIONS,
 	THEMES,
@@ -11,7 +20,6 @@ import {
 	saveCompanionId,
 	saveDockPosition,
 	saveTheme,
-	savePawCursor,
 	type DockPosition,
 	type ThemeId,
 } from "../../lib/settings";
@@ -21,7 +29,7 @@ const API = "http://127.0.0.1:8765/api/v1";
 // ---------------------------------------------------------------------------
 // Sub-tab
 // ---------------------------------------------------------------------------
-type SettingsTab = "general" | "local" | "api";
+type SettingsTab = "general" | "personalization" | "local" | "api";
 
 // ---------------------------------------------------------------------------
 // API Keys metadata
@@ -32,7 +40,7 @@ interface KeyMeta {
 	hint: string;
 	secret: boolean;
 	placeholder: string;
-	guide: { title: string; steps: string[] };
+	guide: Guide;
 }
 
 const KEY_GROUPS: { title: string; description: string; keys: KeyMeta[] }[] = [
@@ -94,23 +102,6 @@ const KEY_GROUPS: { title: string; description: string; keys: KeyMeta[] }[] = [
 						"Click the pencil icon next to the OAuth client you just created.",
 						'The "Client secret" field is on that page — copy it.',
 						"Paste it here. It typically starts with GOCSPX-.",
-					],
-				},
-			},
-			{
-				key: "GOOGLE_OAUTH_REFRESH_TOKEN",
-				label: "Refresh Token",
-				hint: 'Run "irma-api auth google" once in the terminal to capture this',
-				secret: true,
-				placeholder: "1//0A…",
-				guide: {
-					title: "Capture the Google Refresh Token",
-					steps: [
-						"Make sure GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET are saved first.",
-						"Open a terminal and run: irma-api auth google",
-						"A browser window will open asking you to sign in to Google and grant calendar access.",
-						"After you approve, the token is saved automatically to your .env file.",
-						'You don\'t need to copy anything — come back here and the field will show "✓ set".',
 					],
 				},
 			},
@@ -194,14 +185,16 @@ export function SettingsView() {
 			<div
 				className="flex items-center gap-1 px-6 pt-4 border-b shrink-0"
 				style={{ borderColor: "var(--color-border)" }}>
-				{(["general", "local", "api"] as SettingsTab[]).map((t) => {
+				{(["general", "personalization", "local", "api"] as SettingsTab[]).map((t) => {
 					const active = activeTab === t;
 					const label =
 						t === "api"
 							? "API Keys"
 							: t === "local"
 								? "Local Models"
-								: "General";
+								: t === "personalization"
+									? "Personalization"
+									: "General";
 					return (
 						<button
 							key={t}
@@ -225,9 +218,28 @@ export function SettingsView() {
 			<div className="flex-1 overflow-y-auto flex flex-col items-center">
 				<div className="w-full max-w-lg px-6 py-5">
 					{activeTab === "general" && <GeneralTab />}
+					{activeTab === "personalization" && <PersonalizationTab />}
 					{activeTab === "local" && <LocalTab />}
 					{activeTab === "api" && <ApiTab />}
 				</div>
+			</div>
+
+			{/* Persistent footer — always visible regardless of active tab */}
+			<div
+				className="shrink-0 flex items-center justify-between gap-4 px-6 py-3 border-t"
+				style={{
+					borderColor: "var(--color-border)",
+					background: "var(--color-surface)",
+				}}>
+				<div className="min-w-0">
+					<p className="text-[12px] font-medium" style={{ color: "var(--color-ink-mute)" }}>
+						Apply changes
+					</p>
+					<p className="text-[11px]" style={{ color: "var(--color-ink-faint)" }}>
+						Restarts the backend to pick up new API keys or Ollama settings.
+					</p>
+				</div>
+				<RestartButton />
 			</div>
 		</div>
 	);
@@ -292,6 +304,380 @@ function RestartButton() {
 }
 
 // ---------------------------------------------------------------------------
+// Toggle switch helper — avoids copy-pasting the inline style block
+// ---------------------------------------------------------------------------
+function ToggleSwitch({
+	checked,
+	onChange,
+	disabled,
+}: {
+	checked: boolean;
+	onChange: (v: boolean) => void;
+	disabled?: boolean;
+}) {
+	return (
+		<button
+			type="button"
+			role="switch"
+			aria-checked={checked}
+			disabled={disabled}
+			onClick={() => onChange(!checked)}
+			className="shrink-0 disabled:opacity-40"
+			style={{
+				position: "relative",
+				width: 44,
+				height: 26,
+				borderRadius: 13,
+				background: checked ? "var(--color-red)" : "var(--color-surface-2)",
+				border: `1.5px solid ${checked ? "var(--color-red)" : "var(--color-border)"}`,
+				cursor: disabled ? "default" : "pointer",
+				transition: "background 0.15s ease, border-color 0.15s ease",
+				flexShrink: 0,
+			}}>
+			<span
+				style={{
+					position: "absolute",
+					top: 2,
+					left: checked ? 18 : 2,
+					width: 18,
+					height: 18,
+					borderRadius: "50%",
+					background: "white",
+					boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
+					transition: "left 0.15s ease",
+				}}
+			/>
+		</button>
+	);
+}
+
+// ---------------------------------------------------------------------------
+// Profile / Identity card (used inside GeneralTab)
+// ---------------------------------------------------------------------------
+function ProfileCard() {
+	const [profile, setProfile] = useState<Profile | null>(null);
+	const [draft, setDraft] = useState<Partial<Profile>>({});
+	const [saving, setSaving] = useState(false);
+	const [saved, setSaved] = useState(false);
+	const [saveError, setSaveError] = useState<string | null>(null);
+	const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	useEffect(() => {
+		getProfile()
+			.then((p) => {
+				setProfile(p);
+				setDraft({
+					owner_name: p.owner_name ?? "",
+					owner_role: p.owner_role ?? "",
+					persona_blurb: p.persona_blurb ?? "",
+					timezone: p.timezone,
+					owner_email: p.owner_email ?? "",
+					daily_brief_enabled: p.daily_brief_enabled,
+					brief_hour: p.brief_hour,
+				});
+			})
+			.catch(() => {/* backend may not be ready */});
+	}, []);
+
+	const field = <K extends keyof Profile>(k: K): Profile[K] | "" => {
+		if (k in draft) return (draft as Record<string, unknown>)[k as string] as Profile[K];
+		return profile ? profile[k] : "";
+	};
+
+	const set = (patch: Partial<Profile>) => setDraft((d) => ({ ...d, ...patch }));
+
+	const onSave = async () => {
+		setSaving(true);
+		setSaveError(null);
+		setSaved(false);
+		try {
+			const updated = await patchProfile({
+				owner_name: (draft.owner_name as string | undefined) ?? undefined,
+				owner_role: (draft.owner_role as string | undefined) ?? undefined,
+				persona_blurb: (draft.persona_blurb as string | undefined) ?? undefined,
+				timezone: (draft.timezone as string | undefined) ?? undefined,
+				owner_email: (draft.owner_email as string | undefined) ?? undefined,
+				daily_brief_enabled: draft.daily_brief_enabled,
+				brief_hour: draft.brief_hour,
+			});
+			setProfile(updated);
+			setSaved(true);
+			if (savedTimer.current) clearTimeout(savedTimer.current);
+			savedTimer.current = setTimeout(() => setSaved(false), 3000);
+		} catch (e) {
+			setSaveError(e instanceof Error ? e.message : "Save failed.");
+		} finally {
+			setSaving(false);
+		}
+	};
+
+	if (!profile) {
+		return (
+			<section className="card p-4">
+				<p className="text-[12px]" style={{ color: "var(--color-ink-faint)" }}>
+					Loading profile…
+				</p>
+			</section>
+		);
+	}
+
+	return (
+		<section className="card p-4 space-y-4">
+			<div>
+				<h3
+					className="display text-[11px] font-semibold uppercase tracking-wider mb-1"
+					style={{ color: "var(--color-ink-mute)" }}>
+					Identity
+				</h3>
+				<p className="text-[12px]" style={{ color: "var(--color-ink-faint)" }}>
+					How Irma knows you. Changes apply immediately — no restart needed.
+				</p>
+			</div>
+
+			{/* Name */}
+			<div className="space-y-1">
+				<label
+					className="block text-[11px] uppercase tracking-wider"
+					style={{ color: "var(--color-ink-mute)" }}>
+					Your Name
+				</label>
+				<input
+					type="text"
+					className="input w-full text-[13px]"
+					placeholder="Your name"
+					value={field("owner_name") as string}
+					onChange={(e) => set({ owner_name: e.target.value })}
+				/>
+			</div>
+
+			{/* Role */}
+			<div className="space-y-1">
+				<label
+					className="block text-[11px] uppercase tracking-wider"
+					style={{ color: "var(--color-ink-mute)" }}>
+					Your Role
+				</label>
+				<input
+					type="text"
+					className="input w-full text-[13px]"
+					placeholder="AI Researcher"
+					value={field("owner_role") as string}
+					onChange={(e) => set({ owner_role: e.target.value })}
+				/>
+			</div>
+
+			{/* Persona blurb */}
+			<div className="space-y-1">
+				<label
+					className="block text-[11px] uppercase tracking-wider"
+					style={{ color: "var(--color-ink-mute)" }}>
+					Persona Blurb
+				</label>
+				<textarea
+					className="input w-full text-[13px] resize-none"
+					rows={2}
+					placeholder="A brief note that shapes how Irma addresses you…"
+					value={field("persona_blurb") as string}
+					onChange={(e) => set({ persona_blurb: e.target.value })}
+				/>
+			</div>
+
+			{/* Timezone */}
+			<div className="space-y-1">
+				<label
+					className="block text-[11px] uppercase tracking-wider"
+					style={{ color: "var(--color-ink-mute)" }}>
+					Timezone
+				</label>
+				<TimezoneSelect
+					className="input w-full font-mono text-[12px]"
+					value={field("timezone") as string}
+					onChange={(tz) => set({ timezone: tz })}
+				/>
+			</div>
+
+			{/* Email */}
+			<div className="space-y-1">
+				<label
+					className="block text-[11px] uppercase tracking-wider"
+					style={{ color: "var(--color-ink-mute)" }}>
+					Your Email
+				</label>
+				<input
+					type="email"
+					className="input w-full text-[13px]"
+					placeholder="you@example.com"
+					value={field("owner_email") as string}
+					onChange={(e) => set({ owner_email: e.target.value })}
+				/>
+				<p className="text-[11px]" style={{ color: "var(--color-ink-faint)" }}>
+					Where Irma sends the daily brief. Hot-reloaded — no restart needed.
+				</p>
+			</div>
+
+			{/* Daily brief enabled */}
+			<div className="flex items-center justify-between gap-4">
+				<div className="min-w-0">
+					<p className="text-[13px] font-medium" style={{ color: "var(--color-ink)" }}>
+						Daily brief email
+					</p>
+					<p className="text-[12px] mt-0.5" style={{ color: "var(--color-ink-faint)" }}>
+						Send a scheduled brief to your email.
+					</p>
+				</div>
+				<ToggleSwitch
+					checked={(field("daily_brief_enabled") as boolean) ?? false}
+					onChange={(v) => set({ daily_brief_enabled: v })}
+				/>
+			</div>
+
+			{/* Brief hour */}
+			<div className="space-y-1">
+				<label
+					className="block text-[11px] uppercase tracking-wider"
+					style={{ color: "var(--color-ink-mute)" }}>
+					Brief Hour (0–23)
+				</label>
+				<input
+					type="number"
+					className="input w-24 text-[13px]"
+					min={0}
+					max={23}
+					value={field("brief_hour") as number}
+					onChange={(e) => {
+						const v = Math.max(0, Math.min(23, Number(e.target.value)));
+						set({ brief_hour: v });
+					}}
+				/>
+			</div>
+
+			{/* Save */}
+			<div className="flex items-center gap-3 pt-1">
+				<button
+					type="button"
+					className="btn-primary text-[12px] px-4 py-1.5 rounded-lg disabled:opacity-40"
+					disabled={saving}
+					onClick={() => void onSave()}>
+					{saving ? "Saving…" : "Save"}
+				</button>
+				{saved && (
+					<span className="text-[12px]" style={{ color: "var(--color-moss)" }}>
+						Saved. Applied immediately.
+					</span>
+				)}
+				{saveError && (
+					<span className="text-[12px]" style={{ color: "var(--color-red)" }}>
+						{saveError}
+					</span>
+				)}
+			</div>
+		</section>
+	);
+}
+
+// ---------------------------------------------------------------------------
+// Personalization tab — identity / profile
+// ---------------------------------------------------------------------------
+function PersonalizationTab() {
+	return (
+		<div className="space-y-4 w-full">
+			<ProfileCard />
+		</div>
+	);
+}
+
+// ---------------------------------------------------------------------------
+// Google Calendar connect card (used inside ApiTab)
+// ---------------------------------------------------------------------------
+function CalendarConnectCard({ calendarCredsSet }: { calendarCredsSet: boolean }) {
+	const [status, setStatus] = useState<IntegrationsStatus | null>(null);
+	const [connecting, setConnecting] = useState(false);
+	const [connectError, setConnectError] = useState<string | null>(null);
+
+	const fetchStatus = () => {
+		fetchIntegrationsStatus()
+			.then((s) => setStatus(s))
+			.catch(() => {});
+	};
+
+	useEffect(() => { fetchStatus(); }, []);
+
+	const handleConnect = async () => {
+		setConnecting(true);
+		setConnectError(null);
+		try {
+			const updated = await connectGoogleCalendar();
+			setStatus(updated);
+		} catch (e) {
+			setConnectError(e instanceof Error ? e.message : "Connection failed.");
+		} finally {
+			setConnecting(false);
+		}
+	};
+
+	const linked = status?.calendar_linked ?? false;
+	const credsReady = calendarCredsSet || (status?.calendar_creds_set ?? false);
+
+	return (
+		<section className="card p-4 space-y-3">
+			<div>
+				<h3
+					className="display text-[11px] font-semibold uppercase tracking-wider mb-0.5"
+					style={{ color: "var(--color-ink-mute)" }}>
+					Google Calendar — Authorization
+				</h3>
+				<p className="text-[12px]" style={{ color: "var(--color-ink-faint)" }}>
+					Authorize Irma to read your calendar. Save Client ID and Client Secret above first.
+				</p>
+			</div>
+
+			<div className="flex items-center justify-between">
+				<div className="flex items-center gap-2">
+					<span
+						className="w-2 h-2 rounded-full shrink-0"
+						style={{
+							background: linked ? "var(--color-moss)" : "var(--color-red)",
+							opacity: linked ? 1 : 0.7,
+						}}
+					/>
+					<span className="text-[12px]" style={{ color: "var(--color-ink-mute)" }}>
+						{status === null
+							? "Checking…"
+							: linked
+								? "Connected ✓"
+								: "Not connected"}
+					</span>
+				</div>
+				<button
+					type="button"
+					disabled={connecting || !credsReady}
+					onClick={() => void handleConnect()}
+					className="btn-primary text-[11px] px-3 py-1 rounded-lg disabled:opacity-40"
+					title={!credsReady ? "Save Client ID and Secret first" : undefined}>
+					{connecting
+						? "Opening browser…"
+						: linked
+							? "Re-connect"
+							: "Connect Google Calendar"}
+				</button>
+			</div>
+
+			{!credsReady && (
+				<p className="text-[11px]" style={{ color: "var(--color-ink-faint)" }}>
+					Save Client ID and Client Secret above before connecting.
+				</p>
+			)}
+
+			{connectError && (
+				<p className="text-[11px]" style={{ color: "var(--color-red)" }}>
+					{connectError}
+				</p>
+			)}
+		</section>
+	);
+}
+
+// ---------------------------------------------------------------------------
 // General tab
 // ---------------------------------------------------------------------------
 function GeneralTab() {
@@ -308,9 +694,6 @@ function GeneralTab() {
 	const [loadingScreen, setLoadingScreen] = useState<boolean>(
 		() => localStorage.getItem("irma.settings.loadingScreen") !== "false",
 	);
-	const [pawCursor, setPawCursor] = useState<boolean>(
-		() => loadSettings().pawCursor,
-	);
 
 	useEffect(() => {
 		isEnabled()
@@ -324,11 +707,6 @@ function GeneralTab() {
 			"irma.settings.loadingScreen",
 			checked ? "true" : "false",
 		);
-	};
-
-	const onPawCursorChange = (checked: boolean) => {
-		setPawCursor(checked);
-		savePawCursor(checked);
 	};
 
 	const onAutostartChange = async (checked: boolean) => {
@@ -585,77 +963,6 @@ function GeneralTab() {
 							}}
 						/>
 					</button>
-				</div>
-			</section>
-
-			{/* Paw cursor */}
-			<section className="card p-4">
-				<div className="flex items-center justify-between gap-4">
-					<div className="min-w-0">
-						<p
-							className="text-[13px] font-medium"
-							style={{ color: "var(--color-ink)" }}>
-							Paw cursor
-						</p>
-						<p
-							className="text-[12px] mt-0.5"
-							style={{ color: "var(--color-ink-faint)" }}>
-							Replace the mouse cursor with a dog paw. Open = default, closed = clicking.
-						</p>
-					</div>
-					<button
-						type="button"
-						role="switch"
-						aria-checked={pawCursor}
-						onClick={() => onPawCursorChange(!pawCursor)}
-						className="shrink-0"
-						style={{
-							position: "relative",
-							width: 44,
-							height: 26,
-							borderRadius: 13,
-							background: pawCursor
-								? "var(--color-red)"
-								: "var(--color-surface-2)",
-							border: `1.5px solid ${pawCursor ? "var(--color-red)" : "var(--color-border)"}`,
-							cursor: "pointer",
-							transition: "background 0.15s ease, border-color 0.15s ease",
-							flexShrink: 0,
-						}}>
-						<span
-							style={{
-								position: "absolute",
-								top: 2,
-								left: pawCursor ? 18 : 2,
-								width: 18,
-								height: 18,
-								borderRadius: "50%",
-								background: "white",
-								boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
-								transition: "left 0.15s ease",
-							}}
-						/>
-					</button>
-				</div>
-			</section>
-
-			{/* Restart backend */}
-			<section className="card p-4">
-				<div className="flex items-center justify-between gap-4">
-					<div className="min-w-0">
-						<p
-							className="text-[13px] font-medium"
-							style={{ color: "var(--color-ink)" }}>
-							Apply changes
-						</p>
-						<p
-							className="text-[12px] mt-0.5"
-							style={{ color: "var(--color-ink-faint)" }}>
-							Restarts the backend to pick up new API keys or
-							Ollama settings.
-						</p>
-					</div>
-					<RestartButton />
 				</div>
 			</section>
 
@@ -1058,68 +1365,6 @@ function LocalTab() {
 }
 
 // ---------------------------------------------------------------------------
-// Guide modal
-// ---------------------------------------------------------------------------
-function GuideModal({
-	guide,
-	onClose,
-}: {
-	guide: KeyMeta["guide"];
-	onClose: () => void;
-}) {
-	return (
-		<div
-			className="fixed inset-0 z-50 flex items-center justify-center"
-			style={{ background: "rgba(0,0,0,0.5)" }}
-			onClick={onClose}>
-			<div
-				className="mx-6 w-full max-w-sm rounded-xl border p-5 shadow-2xl"
-				style={{
-					background: "var(--color-surface)",
-					borderColor: "var(--color-border)",
-				}}
-				onClick={(e) => e.stopPropagation()}>
-				<div className="flex items-start justify-between mb-4 gap-3">
-					<h2
-						className="display text-[14px] font-semibold leading-snug"
-						style={{ color: "var(--color-ink)" }}>
-						{guide.title}
-					</h2>
-					<button
-						type="button"
-						onClick={onClose}
-						className="shrink-0 text-[16px] leading-none px-1 rounded hover:bg-[var(--color-surface-2)]"
-						style={{ color: "var(--color-ink-mute)" }}>
-						×
-					</button>
-				</div>
-
-				<ol className="space-y-2.5">
-					{guide.steps.map((step, i) => (
-						<li key={i} className="flex gap-3">
-							<span
-								className="shrink-0 w-5 h-5 rounded-full text-[10px] font-semibold flex items-center justify-center mt-0.5"
-								style={{
-									background:
-										"color-mix(in srgb, var(--color-red) 15%, transparent)",
-									color: "var(--color-red)",
-								}}>
-								{i + 1}
-							</span>
-							<p
-								className="text-[12px] leading-relaxed"
-								style={{ color: "var(--color-ink-mute)" }}>
-								{step}
-							</p>
-						</li>
-					))}
-				</ol>
-			</div>
-		</div>
-	);
-}
-
-// ---------------------------------------------------------------------------
 // API Keys tab
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
@@ -1263,9 +1508,7 @@ function ApiTab() {
 	const [saved, setSaved] = useState(false);
 	const [saveError, setSaveError] = useState<string | null>(null);
 	const [restartRequired, setRestartRequired] = useState(false);
-	const [activeGuide, setActiveGuide] = useState<KeyMeta["guide"] | null>(
-		null,
-	);
+	const [activeGuide, setActiveGuide] = useState<Guide | null>(null);
 	const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 	useEffect(() => {
@@ -1451,6 +1694,13 @@ function ApiTab() {
 					})}
 				</section>
 			))}
+
+			<CalendarConnectCard
+				calendarCredsSet={
+					(statuses["GOOGLE_OAUTH_CLIENT_ID"] ?? false) &&
+					(statuses["GOOGLE_OAUTH_CLIENT_SECRET"] ?? false)
+				}
+			/>
 
 			<RemindersCard />
 

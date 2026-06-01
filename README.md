@@ -6,10 +6,23 @@ Irma is a passive intelligence layer. She observes read-only data streams — yo
 
 She runs entirely on your machine. Synthesis can be powered by Claude (Anthropic) or by a local model via Ollama — toggle with one env var.
 
+Nothing is hardcoded to one person. Clone the repo, launch, and a **first-run setup wizard** makes Irma yours — your name, how she addresses you, your timezone, and your own calendar/AI/email connections.
+
 ## What you see
 
 - **Companion** — a borderless, transparent, always-on-top window anchored bottom-left of your work area. Just the sprite. macOS runs the app under `ActivationPolicy::Accessory`, so there's no Dock tile of its own; the dog *is* the presence. A menu-bar tray icon handles quit/settings.
 - **Dashboard** — opens on click. Renders Irma's standup brief: velocity narrative, blockers, conflicts, the next 7 days of salient events, her recommended next move, and a small chat panel for asking her things directly.
+
+## Make it yours
+
+Irma ships owner-agnostic — clone it and set it up as your own.
+
+- **First-run setup wizard.** On first launch a full-screen wizard walks you through it: who you are (name, what you work on, an optional note on the tone you want from her), your timezone, then connecting the integrations you want. Calendar and email are skippable and can be added later.
+- **In-app Google Calendar connect.** Paste your own Google OAuth client credentials and hit *Connect* — the OAuth flow runs in-app (no terminal commands). Each user brings their own calendar.
+- **Personalization, live.** A **Settings → Personalization** tab lets you change your name, role, persona blurb, timezone, daily-brief recipient email, and brief time at any point. These are stored in a local profile and **hot-reload** — Irma picks them up immediately, no restart. Her fixed identity (a calm dog chief-of-staff) stays; only *your* details and tone are configurable.
+- **Secrets stay in `.env`.** API keys (Anthropic / Google OAuth / Resend) live in your `.env` and can be set from the wizard or the Settings → API Keys tab; changing those uses the always-visible *Apply changes* restart control.
+
+Existing single-user installs are migrated automatically from `.env` on first boot, so the wizard is skipped if you're already set up.
 
 ## Quick start
 
@@ -41,7 +54,7 @@ npm install
 npm run tauri dev
 ```
 
-The sprite anchors itself beside the Dock; click to open the dashboard.
+The sprite anchors itself beside the Dock; click to open the dashboard. On first launch, the setup wizard walks you through making Irma yours (see [Make it yours](#make-it-yours)) — so the owner-specific values above don't need to be hand-edited in `.env`.
 
 ## Project layout
 
@@ -54,7 +67,8 @@ irma/
 ├── services/api/           # FastAPI (Python 3.12+, fully async)
 │   └── src/irma_api/
 │       ├── agents/         # observers (TimeAgent, CodebaseAgent), LeadAgent, LLM clients
-│       ├── routers/        # /signals, /standup, /state + /stream (SSE), /chat
+│       ├── routers/        # /signals, /state + /stream (SSE), /chat, /profile, /integrations
+│       │                   #   /profile is the hot-reloadable owner profile
 │       ├── runtime/        # AgentState bus, APScheduler wrapper
 │       └── store/          # aiosqlite + cached briefs
 ├── docs/

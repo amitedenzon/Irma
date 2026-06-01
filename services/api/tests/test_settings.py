@@ -54,7 +54,7 @@ def test_resend_from_email_override(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_daily_brief_defaults() -> None:
     s = Settings(_env_file=None)
     assert s.irma_daily_brief_enabled is True
-    assert s.irma_brief_timezone == "Asia/Jerusalem"
+    assert s.irma_brief_timezone == "UTC"
     assert s.irma_brief_hour == 8
     assert s.irma_brief_lookahead_days == 3
 

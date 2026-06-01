@@ -21,20 +21,24 @@ from irma_api.agents.time_agent import TimeAgent
 from irma_api.config import get_settings, secret_value_or_none
 from irma_api.logging import configure_logging
 from irma_api.routers.brief import router as brief_router
-from irma_api.routers.email import router as email_router
 from irma_api.routers.chat import router as chat_router
+from irma_api.routers.email import router as email_router
 from irma_api.routers.integrations import router as integrations_router
 from irma_api.routers.local_models import router as local_models_router
-from irma_api.routers.schedule import router as schedule_router
-from irma_api.routers.reminders import router as reminders_router
-from irma_api.routers.settings import router as settings_router
+from irma_api.routers.profile import router as profile_router
 from irma_api.routers.projects import router as projects_router
+from irma_api.routers.reminders import router as reminders_router
+from irma_api.routers.schedule import router as schedule_router
+from irma_api.routers.settings import router as settings_router
 from irma_api.routers.signals import router as signals_router
 from irma_api.routers.signals import run_refresh
 from irma_api.routers.state import router as state_router
 from irma_api.routers.tasks import router as tasks_router
+from irma_api.runtime.profile_cache import ProfileCache
 from irma_api.runtime.scheduler import Scheduler
 from irma_api.runtime.state import StateBus
+from irma_api.store.profile_seed import import_env_defaults
+from irma_api.store.repos.profile_repo import ProfileRepo
 from irma_api.store.sqlite import SignalStore
 from irma_api.tools.base import Tool, ToolRegistry
 from irma_api.tools.calendar import CreateCalendarEventTool, ReadCalendarTool
@@ -52,8 +56,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     store = SignalStore(settings.irma_db_path)
     await store.connect()
 
+    profile_repo = ProfileRepo(store.connection)
+    await import_env_defaults(profile_repo, settings)
+    profile_cache = ProfileCache(profile_repo)
+    await profile_cache.load()
+    app.state.profile_cache = profile_cache
+
     bus = StateBus()
-    observers: list[Observer] = [TimeAgent(settings)]
+    observers: list[Observer] = [TimeAgent(settings, profile_cache)]
     if settings.irma_codebase_agent_enabled:
         observers.append(CodebaseAgent(settings.irma_repos))
 
@@ -72,20 +82,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     tools: list[Tool] = []
     resend_key = secret_value_or_none(settings.resend_api_key)
     send_email_tool: ResendSendTool | None = None
-    if resend_key is not None and settings.irma_user_email:
-        send_email_tool = ResendSendTool(settings)
+    if resend_key is not None:
+        send_email_tool = ResendSendTool(settings, profile_cache)
         tools.append(send_email_tool)
     else:
         logger.info(
             "tools.send_email_disabled",
-            missing=[
-                key
-                for key, val in (
-                    ("RESEND_API_KEY", resend_key),
-                    ("IRMA_USER_EMAIL", settings.irma_user_email),
-                )
-                if not val
-            ],
+            missing=["RESEND_API_KEY"],
         )
     calendar_keys = {
         "GOOGLE_OAUTH_CLIENT_ID": secret_value_or_none(settings.google_oauth_client_id),
@@ -95,7 +98,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     calendar_missing = [k for k, v in calendar_keys.items() if v is None]
     read_calendar_tool: ReadCalendarTool | None = None
     if not calendar_missing:
-        read_calendar_tool = ReadCalendarTool(settings)
+        read_calendar_tool = ReadCalendarTool(settings, profile_cache)
         tools.append(read_calendar_tool)
         tools.append(CreateCalendarEventTool(settings))
     else:
@@ -136,7 +139,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         from irma_api.runtime.daily_job import DailyBriefJob
 
         daily_service = DailyBriefService(
-            settings=settings,
+            profile_cache=profile_cache,
             llm=llm,
             store=store,
             observers=observers,
@@ -144,7 +147,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             calendar=read_calendar_tool,
         )
         daily_brief_job = DailyBriefJob(
-            service=daily_service, sender=send_email_tool, settings=settings
+            service=daily_service,
+            sender=send_email_tool,
+            profile_cache=profile_cache,
         )
     else:
         logger.info(
@@ -209,15 +214,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     scheduler.start()
     app.state.scheduler = scheduler
 
-    if daily_brief_job is not None and settings.irma_daily_brief_enabled:
+    if daily_brief_job is not None:
         async def daily_tick() -> None:
             await daily_brief_job.run_once()
 
+        app.state.daily_tick = daily_tick
+        profile = profile_cache.current
         scheduler.add_daily_job(
             daily_tick,
-            hour=settings.irma_brief_hour,
-            timezone=settings.irma_brief_timezone,
+            hour=profile.brief_hour,
+            timezone=profile.timezone,
+            enabled=profile.daily_brief_enabled,
         )
+    else:
+        app.state.daily_tick = None
     logger.info(
         "app.ready",
         observers=[o.name for o in observers],
@@ -277,6 +287,7 @@ def create_app() -> FastAPI:
     app.include_router(settings_router, prefix="/api/v1")
     app.include_router(local_models_router, prefix="/api/v1")
     app.include_router(schedule_router, prefix="/api/v1")
+    app.include_router(profile_router, prefix="/api/v1")
 
     @app.get("/", include_in_schema=False)
     async def root() -> dict[str, str]:

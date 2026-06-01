@@ -13,32 +13,16 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from irma_api.agents.llm import ChatTurn, TextResult
+from irma_api.agents.persona import build_routine_prefix, render_routine_system_prompt
+from irma_api.runtime.profile_cache import current_profile
 from irma_api.runtime.state import AgentState
 
 logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/schedule", tags=["schedule"])
 
-# ---------------------------------------------------------------------------
-# Default prefix prepended to every routine prompt at runtime (cloud agents).
-# Not shown to the user in the UI — they only write the task-specific part.
-# ---------------------------------------------------------------------------
-PROMPT_PREFIX = """\
-You are Irma — Amit's calm, precise, slightly proactive personal assistant. \
-Your task is to prepare a scheduled email and save it as a Gmail draft for \
-delivery at 8:00 AM Israel time.
-
-Rules (always apply):
-- Run `date` in Bash first to get today's date.
-- Gmail draft: To: amit.edenzon@gmail.com.
-- Subject: [Irma] {ROUTINE_NAME} — {DD Month YYYY}  (replace with the routine's name and today's date).
-- Date formatting for calendar events:
-    Timed same-day:  dd/MM (Day), HH:mm-HH:mm → title
-    All-day single:  dd/MM (Day) → title
-    All-day multi:   dd/MM - dd/MM (Day-Day) → title
-    (Google all-day end-dates are exclusive — subtract 1 day when displaying.)
-- Voice: calm, terse, forward-looking. No filler. Plain text, no markdown.\
-"""
+# PROMPT_PREFIX is now built dynamically from the Profile at request time
+# via build_routine_prefix(profile).  See get_prefix() below.
 
 
 _MAX_TOOL_ITER = 20
@@ -52,7 +36,7 @@ _SEED: list[dict[str, Any]] = [
         "cron_human": "Every day",
         "enabled": True,
         "prompt": (
-            "Task: Amit's daily stand-up brief.\n\n"
+            "Task: your daily stand-up brief.\n\n"
             "DATA TO GATHER (3 tool calls total — do not call list_tasks per project):\n"
             "1. read_calendar for today + next 3 days (4 days total).\n"
             "2. list_projects — active only.\n"
@@ -70,7 +54,7 @@ _SEED: list[dict[str, Any]] = [
             "WATCH\n"
             "Conflicts, back-to-back blocks, tight transitions, or overdue tasks. Omit section entirely if none.\n\n"
             "RECOMMENDATION\n"
-            "One short actionable sentence — the single most useful thing Amit can do today.\n\n"
+            "One short actionable sentence — the single most useful thing the operator can do today.\n\n"
             "Tight and scannable. Lead with what matters most."
         ),
     }
@@ -112,8 +96,8 @@ def _save(request: Request, routines: list[dict[str, Any]]) -> None:
 
 
 @router.get("/prefix")
-async def get_prefix() -> dict[str, str]:
-    return {"prefix": PROMPT_PREFIX}
+async def get_prefix(request: Request) -> dict[str, str]:
+    return {"prefix": build_routine_prefix(current_profile(request.app.state))}
 
 
 @router.get("/routines")
@@ -191,15 +175,12 @@ async def run_routine(routine_id: str, request: Request) -> dict[str, Any]:
 
     from irma_api.tools.base import ToolError
 
+    profile = current_profile(request.app.state)
+
     date_str = today.strftime("%d %B %Y")
     day_str = today.strftime("%A, %d %B %Y")
     subject = f"[Irma] {routine['name']} — {date_str}"
-    system = (
-        f"You are Irma — Amit's calm, precise, slightly proactive personal assistant.\n"
-        f"Today is {day_str}.\n"
-        "Write the body of a brief email to Amit based on the task below. "
-        "Plain text only, no markdown. Calm, terse, actionable — no filler."
-    )
+    system = render_routine_system_prompt(profile, day_str)
 
     await bus.publish(AgentState.THINKING)
     try:

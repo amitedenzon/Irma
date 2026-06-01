@@ -24,6 +24,7 @@ from tenacity import (
 
 from irma_api.config import Settings
 from irma_api.models.signal import Signal
+from irma_api.runtime.profile_cache import ProfileCache
 
 logger = structlog.get_logger(__name__)
 
@@ -46,8 +47,9 @@ class TimeAgent:
 
     name = "calendar"
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, profile_cache: ProfileCache) -> None:
         self._settings = settings
+        self._profile_cache = profile_cache
         self.unlinked: bool = not self._has_credentials()
 
     def _has_credentials(self) -> bool:
@@ -123,7 +125,7 @@ class TimeAgent:
             calendar = await g.discover("calendar", "v3")
 
             cal_resp = cast(dict[str, Any], await g.as_user(calendar.calendarList.list(maxResults=250)))
-            exclude = set(self._settings.irma_calendar_exclude_ids)
+            exclude = set(self._profile_cache.current.calendar_exclude_ids)
             cal_ids = [c["id"] for c in cast(list[dict[str, Any]], cal_resp.get("items", [])) if c.get("id") and c["id"] not in exclude]
 
             seen: set[str] = set()

@@ -15,8 +15,8 @@ from zoneinfo import ZoneInfo
 import structlog
 
 from irma_api.agents.email_render import render_daily_email, render_daily_email_html
-from irma_api.config import Settings
 from irma_api.models.daily_brief import DailyBrief
+from irma_api.runtime.profile_cache import ProfileCache
 
 logger = structlog.get_logger(__name__)
 
@@ -30,14 +30,21 @@ class _Sender(Protocol):
 
 
 class DailyBriefJob:
-    def __init__(self, *, service: _Builder, sender: _Sender, settings: Settings) -> None:
+    def __init__(
+        self,
+        *,
+        service: _Builder,
+        sender: _Sender,
+        profile_cache: ProfileCache,
+    ) -> None:
         self._service = service
         self._sender = sender
-        self._tz = ZoneInfo(settings.irma_brief_timezone)
+        self._profile_cache = profile_cache
         self.last_sent_date: date | None = None
 
     def _today(self) -> date:
-        return datetime.now(self._tz).date()
+        tz = ZoneInfo(self._profile_cache.current.timezone)
+        return datetime.now(tz).date()
 
     async def run_once(self, *, force: bool = False) -> dict[str, object]:
         today = self._today()

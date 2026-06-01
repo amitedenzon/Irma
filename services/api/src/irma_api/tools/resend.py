@@ -3,7 +3,7 @@
 Why locked: the tool is invoked by the LLM during /chat. A prompt-injection
 payload riding in a calendar event description could otherwise convince the
 model to email arbitrary recipients. The To: header is set server-side from
-settings and the tool's args schema does not advertise a `to` field.
+the owner profile and the tool's args schema does not advertise a `to` field.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ from tenacity import (
 )
 
 from irma_api.config import Settings
+from irma_api.runtime.profile_cache import ProfileCache
 from irma_api.tools.base import Tool, ToolError, ToolSpec
 
 logger = structlog.get_logger(__name__)
@@ -72,11 +73,13 @@ class ResendSendTool:
         },
     )
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, profile_cache: ProfileCache) -> None:
         self._settings = settings
+        self._profile_cache = profile_cache
 
     async def call(self, args: dict[str, Any]) -> str:
-        if self._settings.irma_user_email is None:
+        recipient = self._profile_cache.current.owner_email
+        if recipient is None:
             raise ToolError(
                 "user_email_unset",
                 detail="set IRMA_USER_EMAIL before enabling send_email",
@@ -103,7 +106,7 @@ class ResendSendTool:
 
         payload: dict[str, Any] = {
             "from": self._settings.resend_from_email,
-            "to": [self._settings.irma_user_email],
+            "to": [recipient],
             "subject": subject,
             "text": body,
             "html": html_body,

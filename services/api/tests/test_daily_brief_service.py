@@ -10,7 +10,6 @@ import pytest_asyncio
 
 from irma_api.agents.daily_brief import DailyBriefService
 from irma_api.agents.llm import TextResult
-from irma_api.config import Settings
 from irma_api.models.project import ProjectCreate
 from irma_api.models.task import TaskCreate, TaskStatus  # noqa: F401  (TaskStatus used indirectly)
 from irma_api.runtime.state import StateBus
@@ -18,6 +17,7 @@ from irma_api.store.repos.project_repo import ProjectRepo
 from irma_api.store.repos.snapshot_repo import SnapshotRepo
 from irma_api.store.repos.task_repo import TaskRepo
 from irma_api.store.sqlite import SignalStore
+from tests.conftest import make_profile_cache
 
 
 class _FakeLLM:
@@ -57,9 +57,8 @@ async def test_build_writes_snapshot_and_parses_prose(store: SignalStore) -> Non
     )
 
     llm = _FakeLLM()
-    settings = Settings(_env_file=None, irma_db_path=Path("x"), irma_brief_lookahead_days=3)
     svc = DailyBriefService(
-        settings=settings,
+        profile_cache=make_profile_cache(timezone="UTC", brief_lookahead_days=3),
         llm=llm,
         store=store,
         observers=[],
@@ -96,10 +95,46 @@ async def test_build_retries_once_on_bad_json(store: SignalStore) -> None:
             return TextResult(text='{"narrative":"ok","recommendation":"go","conflicts":[]}')
 
     llm = _FlakyLLM()
-    settings = Settings(_env_file=None, irma_db_path=Path("x"))
     svc = DailyBriefService(
-        settings=settings, llm=llm, store=store, observers=[], bus=StateBus(), calendar=None
+        profile_cache=make_profile_cache(),
+        llm=llm,
+        store=store,
+        observers=[],
+        bus=StateBus(),
+        calendar=None,
     )
     brief = await svc.build()
     assert llm.calls == 2
     assert brief.narrative == "ok"
+
+
+@pytest.mark.asyncio
+async def test_owner_context_injected_in_system_prompt(store: SignalStore) -> None:
+    """build() injects owner_name/owner_role from the profile into the system prompt."""
+    captured_system: list[str] = []
+
+    class _CaptureLLM:
+        backend = "fake"
+        model = "fake-1"
+
+        async def complete(self, *, system, messages, tools=None, max_tokens=1500, session_id=None):
+            captured_system.append(system)
+            return TextResult(
+                text='{"narrative":"hi","recommendation":"go","conflicts":[]}'
+            )
+
+    cache = make_profile_cache(owner_name="Amit", owner_role="AI Researcher")
+    svc = DailyBriefService(
+        profile_cache=cache,
+        llm=_CaptureLLM(),
+        store=store,
+        observers=[],
+        bus=StateBus(),
+        calendar=None,
+    )
+    await svc.build()
+
+    assert len(captured_system) >= 1
+    full_system = captured_system[0]
+    assert "Amit" in full_system
+    assert "AI Researcher" in full_system

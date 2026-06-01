@@ -4,12 +4,14 @@ import { emitTo } from "@tauri-apps/api/event";
 import { Window as TauriWindow } from "@tauri-apps/api/window";
 import confetti from "canvas-confetti";
 import { listProjects } from "../lib/api";
+import { needsSetup } from "../lib/onboarding";
 import { subscribeAgentState } from "../lib/sse";
 import type { AgentState, Project } from "../lib/types";
 import { ProjectsView } from "./projects/ProjectsView";
 import { ChatView } from "./chat/ChatView";
 import { SettingsView } from "./settings/SettingsView";
 import { ScheduleView } from "./schedule/ScheduleView";
+import { OnboardingWizard } from "./onboarding/OnboardingWizard";
 import { SettingsIcon } from "../lib/icons";
 
 const LOADING_SCREEN_KEY = "irma.settings.loadingScreen";
@@ -65,6 +67,7 @@ export function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectsError, setProjectsError] = useState<string | null>(null);
   const { ready, dots } = useApiReady();
+  const [setupState, setSetupState] = useState<"checking" | "wizard" | "app">("checking");
   const [snacking, setSnacking] = useState(false);
 
   // Drag-treat state
@@ -76,6 +79,14 @@ export function App() {
   const overDogRef = useRef(false);
   const companionBoundsRef = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
   const cleanupDragRef = useRef<(() => void) | null>(null);
+
+  // Once the backend is ready, check whether first-run setup is needed.
+  useEffect(() => {
+    if (!ready) return;
+    needsSetup()
+      .then((needs) => setSetupState(needs ? "wizard" : "app"))
+      .catch(() => setSetupState("app"));
+  }, [ready]);
 
   const loadProjects = useCallback(async () => {
     setProjectsError(null);
@@ -199,7 +210,7 @@ export function App() {
     window.addEventListener("mouseup", onUp);
   };
 
-  if (!ready) {
+  if (!ready || setupState === "checking") {
     return (
       <div
         className="min-h-screen w-full flex flex-col items-center justify-center gap-4"
@@ -222,6 +233,10 @@ export function App() {
         </div>
       </div>
     );
+  }
+
+  if (setupState === "wizard") {
+    return <OnboardingWizard onDone={() => setSetupState("app")} />;
   }
 
   return (
