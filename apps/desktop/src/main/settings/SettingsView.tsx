@@ -423,7 +423,7 @@ function ProfileCard() {
 				<input
 					type="text"
 					className="input w-full text-[13px]"
-					placeholder="Amit"
+					placeholder="Your name"
 					value={field("owner_name") as string}
 					onChange={(e) => set({ owner_name: e.target.value })}
 				/>

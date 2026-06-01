@@ -49,7 +49,7 @@ export function IdentityStep({
 					id="identity-name"
 					type="text"
 					className="input"
-					placeholder="Amit"
+					placeholder="e.g. Alex"
 					value={draft.owner_name}
 					onChange={set("owner_name")}
 					autoFocus
@@ -121,7 +121,7 @@ export function IdentityStep({
 					id="identity-tz"
 					type="text"
 					className="input font-mono text-[12px]"
-					placeholder="Asia/Jerusalem"
+					placeholder="e.g. America/New_York"
 					value={draft.timezone}
 					onChange={set("timezone")}
 				/>
