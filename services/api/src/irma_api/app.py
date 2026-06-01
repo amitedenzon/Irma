@@ -214,15 +214,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     scheduler.start()
     app.state.scheduler = scheduler
 
-    if daily_brief_job is not None and settings.irma_daily_brief_enabled:
+    if daily_brief_job is not None:
         async def daily_tick() -> None:
             await daily_brief_job.run_once()
 
-        scheduler.add_daily_job(
-            daily_tick,
-            hour=settings.irma_brief_hour,
-            timezone=settings.irma_brief_timezone,
-        )
+        app.state.daily_tick = daily_tick
+        profile = profile_cache.current
+        if profile.daily_brief_enabled:
+            scheduler.add_daily_job(
+                daily_tick,
+                hour=profile.brief_hour,
+                timezone=profile.timezone,
+            )
+    else:
+        app.state.daily_tick = None
     logger.info(
         "app.ready",
         observers=[o.name for o in observers],

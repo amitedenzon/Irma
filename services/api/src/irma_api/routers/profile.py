@@ -6,10 +6,13 @@ from fastapi import APIRouter, Request
 
 from irma_api.models.profile import Profile, ProfileUpdate
 from irma_api.runtime.profile_cache import ProfileCache
+from irma_api.runtime.scheduler import Scheduler
 from irma_api.store.repos.profile_repo import ProfileRepo
 from irma_api.store.sqlite import SignalStore
 
 router = APIRouter(prefix="/profile", tags=["profile"])
+
+_SCHEDULE_FIELDS = frozenset({"brief_hour", "timezone", "daily_brief_enabled"})
 
 
 def _repo(request: Request) -> ProfileRepo:
@@ -30,4 +33,15 @@ async def update_profile(request: Request, body: ProfileUpdate) -> Profile:
     updated = await _repo(request).update(body)
     cache: ProfileCache = request.app.state.profile_cache
     cache.set(updated)
+
+    # Hot-reschedule the daily-brief job when scheduling-relevant fields changed.
+    if body.model_fields_set & _SCHEDULE_FIELDS:
+        scheduler: Scheduler | None = getattr(request.app.state, "scheduler", None)
+        if scheduler is not None:
+            scheduler.reschedule_daily_job(
+                hour=updated.brief_hour,
+                timezone=updated.timezone,
+                enabled=updated.daily_brief_enabled,
+            )
+
     return updated

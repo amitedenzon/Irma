@@ -21,6 +21,7 @@ class IntegrationsStatus(BaseModel):
     reminders_last_sync_at: datetime | None
     reminders_last_sync_error: str | None
     user_email: str | None
+    setup_complete: bool
     llm_backend: str | None
     llm_model: str | None
 
@@ -29,6 +30,12 @@ def _build_status(request: Request) -> IntegrationsStatus:
     settings: Settings = request.app.state.settings
     llm: LLMClient | None = getattr(request.app.state, "llm", None)
     sync_svc = getattr(request.app.state, "reminder_sync", None)
+
+    from irma_api.runtime.profile_cache import current_profile
+
+    profile = current_profile(request.app.state)
+    # owner_email from profile takes precedence over the legacy settings field.
+    owner_email: str | None = profile.owner_email or settings.irma_user_email
 
     calendar_linked = (
         secret_value_or_none(settings.google_oauth_refresh_token) is not None
@@ -39,7 +46,7 @@ def _build_status(request: Request) -> IntegrationsStatus:
     )
     resend_linked = (
         secret_value_or_none(settings.resend_api_key) is not None
-        and bool(settings.irma_user_email)
+        and bool(owner_email)
     )
     reminders_linked = settings.reminders_linked and sync_svc is not None
 
@@ -50,7 +57,8 @@ def _build_status(request: Request) -> IntegrationsStatus:
         reminders_linked=reminders_linked,
         reminders_last_sync_at=getattr(sync_svc, "last_sync_at", None),
         reminders_last_sync_error=getattr(sync_svc, "last_error", None),
-        user_email=settings.irma_user_email,
+        user_email=owner_email,
+        setup_complete=profile.setup_complete,
         llm_backend=llm.backend if llm else None,
         llm_model=llm.model if llm else None,
     )
