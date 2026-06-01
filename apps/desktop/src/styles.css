@@ -40,6 +40,32 @@ body,
   text-rendering: optimizeLegibility;
 }
 
+/* Paw cursor — white paws (for dark themes) */
+html.paw-cursor,
+html.paw-cursor * {
+  cursor: url('/cursors/paw-open.png') 10 2, auto !important;
+}
+
+html.paw-cursor:not(.paw-dark) *:active {
+  cursor: url('/cursors/paw-closed.png') 10 2, auto !important;
+}
+
+/* Paw cursor — dark paws (for light themes) */
+html.paw-cursor.paw-dark,
+html.paw-cursor.paw-dark * {
+  cursor: url('/cursors/paw-open-dark.png') 10 2, auto !important;
+}
+
+html.paw-cursor.paw-dark *:active {
+  cursor: url('/cursors/paw-closed-dark.png') 10 2, auto !important;
+}
+
+/* Cheese drag — overrides paw cursor */
+html.cheese-dragging,
+html.cheese-dragging * {
+  cursor: url('/cursors/cheese.png') 24 24, grabbing !important;
+}
+
 /* Companion window is fully transparent — sprite is the only visible thing. */
 body.companion {
   background: transparent;

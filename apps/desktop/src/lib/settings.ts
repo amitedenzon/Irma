@@ -110,12 +110,14 @@ export interface IrmaSettings {
   dockPosition: DockPosition;
   monitorName: string | null;
   themeId: ThemeId;
+  pawCursor: boolean;
 }
 
 const COMPANION_KEY = "irma.settings.companionId";
 const DOCK_KEY = "irma.settings.dockPosition";
 const MONITOR_KEY = "irma.settings.monitorName";
 const THEME_KEY = "irma.settings.themeId";
+const PAW_CURSOR_KEY = "irma.settings.pawCursor";
 
 /** Tauri event broadcast to every window whenever a setting changes. */
 const CHANGE_EVENT = "irma:settings-changed";
@@ -147,13 +149,41 @@ function readThemeId(): ThemeId {
   return THEMES.some((t) => t.id === raw) ? (raw as ThemeId) : DEFAULT_THEME_ID;
 }
 
+function readPawCursor(): boolean {
+  return localStorage.getItem(PAW_CURSOR_KEY) === "true";
+}
+
 export function loadSettings(): IrmaSettings {
   return {
     companionId: readCompanionId(),
     dockPosition: readDockPosition(),
     monitorName: readMonitorName(),
     themeId: readThemeId(),
+    pawCursor: readPawCursor(),
   };
+}
+
+export function savePawCursor(enabled: boolean): void {
+  localStorage.setItem(PAW_CURSOR_KEY, enabled ? "true" : "false");
+  applyPawCursor(enabled);
+  void emit(CHANGE_EVENT, loadSettings());
+}
+
+// Light themes use dark paws (contrast), dark themes use white paws
+const DARK_THEMES: readonly string[] = ["warm", "ocean", "forest", "rose"];
+
+function isDarkTheme(id: string): boolean {
+  return DARK_THEMES.includes(id);
+}
+
+export function applyPawCursor(enabled: boolean): void {
+  document.documentElement.classList.toggle("paw-cursor", enabled);
+  // Remove stale paw-clicking class if it got stuck from a previous session
+  document.documentElement.classList.remove("paw-clicking");
+}
+
+export function applyPawCursorTheme(themeId: string): void {
+  document.documentElement.classList.toggle("paw-dark", isDarkTheme(themeId));
 }
 
 /** Apply a theme's CSS variables to the document root immediately. */
@@ -180,6 +210,7 @@ export function applyTheme(id: ThemeId): void {
 export function saveTheme(id: ThemeId): void {
   localStorage.setItem(THEME_KEY, id);
   applyTheme(id);
+  applyPawCursorTheme(id);
   void emit(CHANGE_EVENT, loadSettings());
 }
 
