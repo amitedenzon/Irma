@@ -9,8 +9,6 @@ import {
   loadSettings,
   saveCompanionPlacement,
   subscribeSettings,
-  applyPawCursor,
-  applyPawCursorTheme,
   DEFAULT_DOCK_POSITION,
   type DockPosition,
 } from "../lib/settings";
@@ -201,8 +199,6 @@ export function Companion() {
       setCompanionId(s.companionId);
       setDockPosition(s.dockPosition);
       setMonitorName(s.monitorName);
-      applyPawCursor(s.pawCursor);
-      applyPawCursorTheme(s.themeId);
     });
     return unsub;
   }, []);
