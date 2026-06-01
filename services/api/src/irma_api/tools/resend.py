@@ -95,15 +95,19 @@ class ResendSendTool:
                 detail="both `subject` and `body` are required",
             )
 
+        from irma_api.agents.email_render import render_simple_html  # local import: avoids circular
+
+        html_body = str(args.get("html", "")).strip()
+        if not html_body:
+            html_body = render_simple_html(subject, body)
+
         payload: dict[str, Any] = {
             "from": self._settings.resend_from_email,
             "to": [self._settings.irma_user_email],
             "subject": subject,
             "text": body,
+            "html": html_body,
         }
-        html_body = str(args.get("html", "")).strip()
-        if html_body:
-            payload["html"] = html_body
         try:
             async for attempt in AsyncRetrying(
                 stop=stop_after_attempt(4),

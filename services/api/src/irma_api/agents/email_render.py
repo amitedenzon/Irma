@@ -248,6 +248,118 @@ def render_daily_email_html(brief: DailyBrief, today: date) -> str:
 </html>"""
 
 
+# ── Generic plain-text → HTML wrapper ──────────────────────────────────────
+
+def render_simple_html(subject: str, body: str) -> str:
+    """Wrap any plain-text email body in Irma's styled template.
+
+    Understands three patterns in the body text:
+    - Lines starting with ``  • `` or ``• `` → styled bullet rows
+    - Short ALL-CAPS lines (section labels) → Fira Code section dividers
+    - Everything else → paragraph text
+    Empty lines produce vertical spacing.
+    """
+    today_date = date.today().strftime("%d %b %Y")
+    inner = _plain_to_html(body)
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="supported-color-schemes" content="light">
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Fira+Code:wght@400;500;600&display=swap');
+    :root {{ color-scheme: light; }}
+  </style>
+</head>
+<body style="margin:0;padding:0;background:{_BG};font-family:{_SANS};">
+  <div style="max-width:600px;margin:0 auto;padding:32px 16px 24px;">
+    <div style="background:{_SURFACE};border:1px solid {_BORDER};border-radius:12px;overflow:hidden;">
+
+      <div style="padding:20px 32px 18px;background:{_BG};border-bottom:1px solid {_BORDER};">
+        <div style="font-family:{_MONO};font-size:11px;font-weight:600;color:{_RED};
+                    letter-spacing:0.06em;margin-bottom:6px;">Irma</div>
+        <div style="font-family:{_SANS};font-size:19px;font-weight:700;color:{_INK};
+                    letter-spacing:-0.01em;line-height:1.2;">{_e(subject)}</div>
+        <div style="font-family:{_MONO};font-size:11px;color:{_INK_MUTE};margin-top:4px;">
+          {today_date}</div>
+      </div>
+
+      <div style="padding:26px 32px;background:{_SURFACE};">
+        {inner}
+      </div>
+
+    </div>
+    <div style="text-align:center;padding:14px 0 0;font-family:{_MONO};
+                font-size:10px;color:{_INK_MUTE};letter-spacing:0.05em;">
+      Irma &mdash; your AI PMO
+    </div>
+  </div>
+</body>
+</html>"""
+
+
+def _plain_to_html(text: str) -> str:
+    """Convert plain-text email body to inner HTML for render_simple_html."""
+    chunks: list[str] = []
+    in_list = False
+
+    def close_list() -> None:
+        nonlocal in_list
+        if in_list:
+            chunks.append("</ul>")
+            in_list = False
+
+    for line in text.splitlines():
+        stripped = line.strip()
+
+        # Blank line → spacing
+        if not stripped:
+            close_list()
+            chunks.append(f'<div style="height:10px;"></div>')
+            continue
+
+        # Bullet line
+        if stripped.startswith("• ") or line.startswith("  • "):
+            text_part = stripped.lstrip("• ").strip()
+            if not in_list:
+                chunks.append(f'<ul style="list-style:none;margin:0;padding:0;">')
+                in_list = True
+            chunks.append(
+                f'<li style="display:flex;align-items:baseline;padding:5px 0;'
+                f'border-bottom:1px solid {_BORDER};">'
+                f'<span style="color:{_BORDER_STRONG};margin-right:10px;flex-shrink:0;">·</span>'
+                f'<span style="color:{_INK};font-size:14px;font-family:{_SANS};">'
+                f'{_e(text_part)}</span></li>'
+            )
+            continue
+
+        # Section header: short line in ALL CAPS (or ends with ":")
+        if (stripped == stripped.upper() and len(stripped) <= 60 and stripped.replace(" ", "").isalpha()) \
+                or (stripped.endswith(":") and len(stripped) <= 60 and not stripped.startswith(" ")):
+            close_list()
+            label = stripped.rstrip(":")
+            chunks.append(
+                f'<div style="font-family:{_MONO};font-size:11px;font-weight:600;'
+                f'color:{_INK_MUTE};letter-spacing:0.07em;padding-bottom:10px;'
+                f'margin-top:20px;margin-bottom:4px;border-bottom:1px solid {_BORDER};">'
+                f'{_e(label)}</div>'
+            )
+            continue
+
+        # Normal text line
+        close_list()
+        chunks.append(
+            f'<p style="margin:0 0 6px;color:{_INK};font-size:14px;'
+            f'line-height:1.7;font-family:{_SANS};">{_e(stripped)}</p>'
+        )
+
+    close_list()
+    return "\n".join(chunks)
+
+
 # ── Section building blocks ─────────────────────────────────────────────────
 
 def _section(title: str, content: str) -> str:
