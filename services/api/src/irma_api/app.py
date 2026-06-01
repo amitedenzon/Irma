@@ -21,14 +21,15 @@ from irma_api.agents.time_agent import TimeAgent
 from irma_api.config import get_settings, secret_value_or_none
 from irma_api.logging import configure_logging
 from irma_api.routers.brief import router as brief_router
-from irma_api.routers.email import router as email_router
 from irma_api.routers.chat import router as chat_router
+from irma_api.routers.email import router as email_router
 from irma_api.routers.integrations import router as integrations_router
 from irma_api.routers.local_models import router as local_models_router
-from irma_api.routers.schedule import router as schedule_router
-from irma_api.routers.reminders import router as reminders_router
-from irma_api.routers.settings import router as settings_router
+from irma_api.routers.profile import router as profile_router
 from irma_api.routers.projects import router as projects_router
+from irma_api.routers.reminders import router as reminders_router
+from irma_api.routers.schedule import router as schedule_router
+from irma_api.routers.settings import router as settings_router
 from irma_api.routers.signals import router as signals_router
 from irma_api.routers.signals import run_refresh
 from irma_api.routers.state import router as state_router
@@ -49,8 +50,18 @@ logger = structlog.get_logger(__name__)
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
 
+    from irma_api.runtime.profile_cache import ProfileCache
+    from irma_api.store.profile_seed import import_env_defaults
+    from irma_api.store.repos.profile_repo import ProfileRepo
+
     store = SignalStore(settings.irma_db_path)
     await store.connect()
+
+    profile_repo = ProfileRepo(store.connection)
+    await import_env_defaults(profile_repo, settings)
+    profile_cache = ProfileCache(profile_repo)
+    await profile_cache.load()
+    app.state.profile_cache = profile_cache
 
     bus = StateBus()
     observers: list[Observer] = [TimeAgent(settings)]
@@ -277,6 +288,7 @@ def create_app() -> FastAPI:
     app.include_router(settings_router, prefix="/api/v1")
     app.include_router(local_models_router, prefix="/api/v1")
     app.include_router(schedule_router, prefix="/api/v1")
+    app.include_router(profile_router, prefix="/api/v1")
 
     @app.get("/", include_in_schema=False)
     async def root() -> dict[str, str]:
