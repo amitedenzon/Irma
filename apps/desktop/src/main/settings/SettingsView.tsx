@@ -12,6 +12,7 @@ import {
 import type { LocalModel, Profile, IntegrationsStatus } from "../../lib/api";
 import { GuideModal } from "./GuideModal";
 import type { Guide } from "./GuideModal";
+import { TimezoneSelect } from "../../lib/TimezoneSelect";
 import {
 	COMPANIONS,
 	THEMES,
@@ -468,12 +469,10 @@ function ProfileCard() {
 					style={{ color: "var(--color-ink-mute)" }}>
 					Timezone
 				</label>
-				<input
-					type="text"
+				<TimezoneSelect
 					className="input w-full font-mono text-[12px]"
-					placeholder={Intl.DateTimeFormat().resolvedOptions().timeZone}
 					value={field("timezone") as string}
-					onChange={(e) => set({ timezone: e.target.value })}
+					onChange={(tz) => set({ timezone: tz })}
 				/>
 			</div>
 

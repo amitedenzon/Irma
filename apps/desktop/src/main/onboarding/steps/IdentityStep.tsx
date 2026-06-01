@@ -4,6 +4,8 @@
  * The wizard shell persists these on advance (write-on-advance strategy).
  */
 
+import { TimezoneSelect } from "../../../lib/TimezoneSelect";
+
 export interface IdentityDraft {
 	owner_name: string;
 	owner_role: string;
@@ -117,13 +119,11 @@ export function IdentityStep({
 					style={{ color: "var(--color-ink-mute)" }}>
 					Timezone
 				</label>
-				<input
+				<TimezoneSelect
 					id="identity-tz"
-					type="text"
 					className="input font-mono text-[12px]"
-					placeholder="e.g. America/New_York"
 					value={draft.timezone}
-					onChange={set("timezone")}
+					onChange={(tz) => onChange({ ...draft, timezone: tz })}
 				/>
 				<p className="text-[11px]" style={{ color: "var(--color-ink-faint)" }}>
 					Anchors the daily brief and calendar signals.
