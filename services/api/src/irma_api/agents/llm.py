@@ -294,6 +294,53 @@ class OllamaLLM:
 
 
 
+async def ensure_ollama_running(
+    base_url: str,
+    *,
+    startup_timeout: float = 40.0,
+) -> "asyncio.subprocess.Process | None":
+    """Ensure the Ollama server is reachable, starting it if not.
+
+    Returns the ``asyncio.Process`` we spawned (caller should ``terminate()``
+    on shutdown), or ``None`` if Ollama was already running.
+    Raises ``RuntimeError`` if it doesn't become ready within *startup_timeout*.
+    """
+    import asyncio
+
+    url = base_url.rstrip("/")
+
+    async def _reachable() -> bool:
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(2.0)) as c:
+                r = await c.get(f"{url}/api/tags")
+                return r.status_code < 500
+        except (httpx.ConnectError, httpx.TimeoutException):
+            return False
+
+    if await _reachable():
+        logger.info("ollama.already_running", url=url)
+        return None
+
+    logger.info("ollama.starting", url=url)
+    proc = await asyncio.create_subprocess_exec(
+        "ollama",
+        "serve",
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+
+    loop = asyncio.get_event_loop()
+    deadline = loop.time() + startup_timeout
+    while loop.time() < deadline:
+        await asyncio.sleep(1.5)
+        if await _reachable():
+            logger.info("ollama.ready", pid=proc.pid)
+            return proc
+
+    proc.terminate()
+    raise RuntimeError(f"ollama serve did not become ready within {startup_timeout}s")
+
+
 def build_llm_registry(settings: Settings) -> tuple[dict[str, LLMClient], str | None]:
     """Build every backend that can stand up on current config.
 

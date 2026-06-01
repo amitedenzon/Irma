@@ -108,9 +108,21 @@ class ReadCalendarTool:
             raise ToolError("calendar_http_error", detail=str(exc)) from exc
 
         if not events:
-            return f"No events in the next {days} day(s)."
-        lines = [f"Calendar events for the next {days} day(s):"]
-        lines.extend(self._format_event(e) for e in events if self._has_start(e))
+            header = "TODAY'S CALENDAR" if days == 1 else f"CALENDAR (NEXT {days} DAYS)"
+            return f"{header}\n  (no events)"
+
+        # Group by calendar name, preserving chronological order within each group.
+        groups: dict[str, list[dict[str, Any]]] = {}
+        for cal_name, event in events:
+            if not self._has_start(event):
+                continue
+            groups.setdefault(cal_name, []).append(event)
+
+        header = "TODAY'S CALENDAR" if days == 1 else f"CALENDAR (NEXT {days} DAYS)"
+        lines = [header]
+        for cal_name, cal_events in groups.items():
+            lines.append(f"\n{cal_name}:")
+            lines.extend(f"  • {self._format_event(e)}" for e in cal_events)
         return "\n".join(lines)
 
     # --- internals -----------------------------------------------------------
@@ -150,17 +162,22 @@ class ReadCalendarTool:
         user: UserCreds,
         time_min: str,
         time_max: str,
-    ) -> list[dict[str, Any]]:
+    ) -> list[tuple[str, dict[str, Any]]]:
+        """Return (calendar_name, event) pairs sorted chronologically."""
         async with Aiogoogle(user_creds=user, client_creds=client) as g:
             calendar = await g.discover("calendar", "v3")
 
             cal_resp = cast(dict[str, Any], await g.as_user(calendar.calendarList.list(maxResults=250)))
             exclude = set(self._settings.irma_calendar_exclude_ids)
-            cal_ids = [c["id"] for c in cast(list[dict[str, Any]], cal_resp.get("items", [])) if c.get("id") and c["id"] not in exclude]
+            cal_entries: list[tuple[str, str]] = [
+                (c["id"], str(c.get("summary") or c["id"]))
+                for c in cast(list[dict[str, Any]], cal_resp.get("items", []))
+                if c.get("id") and c["id"] not in exclude
+            ]
 
             seen: set[str] = set()
-            all_events: list[dict[str, Any]] = []
-            for cal_id in cal_ids:
+            all_events: list[tuple[str, dict[str, Any]]] = []
+            for cal_id, cal_name in cal_entries:
                 resp = cast(dict[str, Any], await g.as_user(calendar.events.list(
                     calendarId=cal_id,
                     timeMin=time_min,
@@ -174,9 +191,13 @@ class ReadCalendarTool:
                     if eid and eid in seen:
                         continue
                     seen.add(eid)
-                    all_events.append(e)
+                    all_events.append((cal_name, e))
 
-        all_events.sort(key=lambda e: (e.get("start") or {}).get("dateTime") or (e.get("start") or {}).get("date") or "")
+        all_events.sort(
+            key=lambda pair: (pair[1].get("start") or {}).get("dateTime")
+            or (pair[1].get("start") or {}).get("date")
+            or ""
+        )
         return all_events[:_MAX_EVENTS]
 
     @staticmethod

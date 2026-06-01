@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 
 import structlog
 
-from irma_api.agents.email_render import render_daily_email
+from irma_api.agents.email_render import render_daily_email, render_daily_email_html
 from irma_api.config import Settings
 from irma_api.models.daily_brief import DailyBrief
 
@@ -47,7 +47,8 @@ class DailyBriefJob:
 
         brief = await self._service.build()
         subject, body = render_daily_email(brief, today)
-        result = await self._sender.call({"subject": subject, "body": body})
+        html = render_daily_email_html(brief, today)
+        result = await self._sender.call({"subject": subject, "body": body, "html": html})
         self.last_sent_date = today
         logger.info("daily_brief.sent", date=today.isoformat(), result=result)
         return {"sent": True, "result": result}

@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from irma_api.agents.base import LeadAgentProtocol, Observer
 from irma_api.agents.codebase_agent import CodebaseAgent
-from irma_api.agents.llm import LLMClient, OllamaLLM, build_llm_registry
+from irma_api.agents.llm import LLMClient, OllamaLLM, build_llm_registry, ensure_ollama_running
 from irma_api.agents.time_agent import TimeAgent
 from irma_api.config import get_settings, secret_value_or_none
 from irma_api.logging import configure_logging
@@ -56,6 +56,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     observers: list[Observer] = [TimeAgent(settings)]
     if settings.irma_codebase_agent_enabled:
         observers.append(CodebaseAgent(settings.irma_repos))
+
+    ollama_proc = None
+    if settings.irma_llm_backend == "ollama":
+        try:
+            ollama_proc = await ensure_ollama_running(settings.ollama_base_url)
+        except RuntimeError as exc:
+            logger.warning("app.ollama_start_failed", error=str(exc))
 
     llm_registry, default_backend = build_llm_registry(settings)
     llm: LLMClient | None = (
@@ -228,6 +235,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         for client in llm_registry.values():
             if isinstance(client, OllamaLLM):
                 await client.aclose()
+        if ollama_proc is not None:
+            ollama_proc.terminate()
+            logger.info("app.ollama_stopped", pid=ollama_proc.pid)
         await store.close()
         logger.info("app.shutdown")
 

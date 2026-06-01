@@ -148,7 +148,10 @@ class DailyBriefService:
             )
             for t in all_tasks
             if t.status in _OPEN_STATUSES
-            and (t.due_date == today or t.scheduled_for == today)
+            and (
+                (t.due_date is not None and t.due_date <= today)
+                or t.scheduled_for == today
+            )
         ]
 
         lookahead: list[LookaheadItem] = []
@@ -212,9 +215,7 @@ class DailyBriefService:
         if self._calendar is None:
             return None
         try:
-            text = await self._calendar.call(
-                {"days": self._settings.irma_brief_lookahead_days}
-            )
+            text = await self._calendar.call({"days": 1})
             return str(text)
         except ToolError as exc:
             logger.info("daily_brief.calendar_skipped", code=exc.code)
@@ -229,7 +230,7 @@ class DailyBriefService:
         lookahead: list[LookaheadItem],
         calendar_text: str | None,
     ) -> tuple[str, str, list[str]]:
-        system = load_prompt("irma_persona")
+        system = load_prompt("daily_brief_system")
         user = self._compose(today, progress, today_focus, lookahead, calendar_text)
         messages = [ChatTurn(role="user", content=user)]
         outcome = await self._llm.complete(
@@ -265,7 +266,10 @@ class DailyBriefService:
     ) -> str:
         lines: list[str] = [
             f"TODAY: {today.isoformat()}",
-            "You are writing the operator's morning brief email.",
+            "",
+            "NOTE: The email template already renders all lists (progress, focus tasks,",
+            "lookahead deadlines, calendar). Only write the prose layer — do NOT list",
+            "individual events, tasks, or meetings in the narrative.",
             "",
             "PROGRESS SINCE LAST BRIEF (per project):",
         ]
@@ -275,9 +279,13 @@ class DailyBriefService:
                 f"{p.added_since} added — {p.open_now} open / {p.done_now} done"
             )
         lines.append("")
-        lines.append("TODAY'S FOCUS:")
+        lines.append("TODAY'S FOCUS (overdue + due today):")
         if today_focus:
-            lines.extend(f"  • {f.title}" for f in today_focus)
+            lines.extend(
+                f"  • {f.title}"
+                + (f" (due {f.due_date})" if f.due_date else "")
+                for f in today_focus
+            )
         else:
             lines.append("  (none)")
         lines.append("")
@@ -287,13 +295,6 @@ class DailyBriefService:
         else:
             lines.append("  (none)")
         lines.append("")
-        lines.append("CALENDAR (next few days):")
+        lines.append("TODAY'S CALENDAR (shown for conflict detection only):")
         lines.append(calendar_text or "  (calendar unavailable)")
-        lines.append("")
-        lines.append(
-            "Reply with ONLY a JSON object (no markdown fence): "
-            '{"narrative": <2-3 warm sentences in Irma\'s voice summarising the day>, '
-            '"recommendation": <one concrete suggestion>, '
-            '"conflicts": [<zero or more short strings on clashes/overload>]}'
-        )
         return "\n".join(lines)

@@ -95,12 +95,15 @@ class ResendSendTool:
                 detail="both `subject` and `body` are required",
             )
 
-        payload = {
+        payload: dict[str, Any] = {
             "from": self._settings.resend_from_email,
             "to": [self._settings.irma_user_email],
             "subject": subject,
             "text": body,
         }
+        html_body = str(args.get("html", "")).strip()
+        if html_body:
+            payload["html"] = html_body
         try:
             async for attempt in AsyncRetrying(
                 stop=stop_after_attempt(4),
