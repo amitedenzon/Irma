@@ -298,7 +298,7 @@ export function CalendarStep({
 					{connectError && (
 						<span
 							className="text-[12px]"
-							style={{ color: "var(--color-ink-faint)" }}>
+							style={{ color: "var(--color-red)" }}>
 							{connectError}
 						</span>
 					)}
