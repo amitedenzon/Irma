@@ -7,6 +7,8 @@
 
 The maintainer is an AI Researcher / Backend Engineer (deep learning, generative AI, inference-time optimization). **Skip tutorials, junior commentary, and basic explanations.** Ship production-grade, strictly-typed, async code. No placeholder bodies (`# implement here`) — write the real implementation or explicitly scope it to a deferred phase.
 
+**HARD RULE — no paid Anthropic API.** The maintainer will **never** set `ANTHROPIC_API_KEY` or use the metered Anthropic API. All LLM work uses one of: (1) **local models** (Ollama, the default for backend synthesis like the daily brief), or (2) the **regular Claude subscription** via Claude Code / cowork and `/schedule` routines. Do **not** propose adding an Anthropic API key, do **not** wire backend code paths that depend on `ANTHROPIC_API_KEY`, and treat the Ollama backend as the only synthesis option for the FastAPI service. (Resend and Google OAuth keys are fine — they are not Anthropic.)
+
 ## 1. What Irma Is
 
 Irma is a **local, desktop-native AI PMO (Project Management Office) assistant** embodied as a character that lives beside the macOS Dock. She is a *passive intelligence layer*: she observes read-only data streams (calendar, local git repos), synthesizes them into a daily standup brief, and surfaces conflicts/blockers. Clicking the character opens her UI.
@@ -30,7 +32,7 @@ She has a persona — calm, precise, slightly proactive. The synthesis LLM speak
 | Desktop shell | **Tauri v2** (Rust). Two windows: `companion` + `main`. Accessory activation policy. Tray icon. |
 | Frontend | React + Vite + TypeScript + Tailwind CSS |
 | Backend | **FastAPI** (Python 3.12+), fully async, modular routers |
-| Synthesis LLM | **Claude** via official `anthropic` async SDK, Messages API. Model from `ANTHROPIC_MODEL` env (verify current string at docs.claude.com). |
+| Synthesis LLM | **Local model via Ollama** (`IRMA_LLM_BACKEND=ollama`, e.g. `qwen2.5:7b`). The `anthropic` SDK path exists for clonability but the maintainer never uses it — see the HARD RULE in §0. Opus-quality output, when wanted, comes from the Claude **subscription** (cowork / `/schedule`), not the API. |
 | Calendar | Google Calendar **REST API** via `aiogoogle` (async) + OAuth2. *(Not MCP — see §7.)* |
 | Storage | SQLite via `aiosqlite`/SQLModel (signals + briefs). ChromaDB deferred to Phase 4. |
 | Config | `pydantic-settings`, `.env` (+ committed `.env.example`). **Never hardcode secrets.** |

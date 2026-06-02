@@ -80,6 +80,85 @@ async def test_build_writes_snapshot_and_parses_prose(store: SignalStore) -> Non
 
 
 @pytest.mark.asyncio
+async def test_build_for_date_targets_that_delivery_day(store: SignalStore) -> None:
+    """build(for_date=X) scopes focus/lookahead to X, not today — so a brief
+    generated tonight describes tomorrow morning."""
+    prepo = ProjectRepo(store.connection)
+    trepo = TaskRepo(store.connection)
+    proj = await prepo.create(
+        ProjectCreate(name="Alpha", goals=["g"], calendar_keywords=[], priority=1)
+    )
+    today = datetime.now(UTC).date()
+    target = today + timedelta(days=1)
+    await trepo.create(TaskCreate(project_id=proj.id, title="due-on-target", due_date=target))
+    await trepo.create(
+        TaskCreate(project_id=proj.id, title="due-after-target", due_date=target + timedelta(days=1))
+    )
+
+    svc = DailyBriefService(
+        profile_cache=make_profile_cache(timezone="UTC", brief_lookahead_days=3),
+        llm=_FakeLLM(),
+        store=store,
+        observers=[],
+        bus=StateBus(),
+        calendar=None,
+    )
+    brief = await svc.build(for_date=target)
+
+    # Due exactly on the delivery day → today's focus (due_date <= for_date).
+    assert any(f.title == "due-on-target" for f in brief.today_focus)
+    # Due the day after → lookahead, not focus.
+    assert any(it.title == "due-after-target" for it in brief.lookahead_tasks)
+    assert all(f.title != "due-after-target" for f in brief.today_focus)
+    # The snapshot is written under the delivery date, not today.
+    assert await SnapshotRepo(store.connection).get(target) is not None
+
+
+@pytest.mark.asyncio
+async def test_prepare_skips_llm_and_snapshot_and_fingerprint_tracks_state(
+    store: SignalStore,
+) -> None:
+    prepo = ProjectRepo(store.connection)
+    trepo = TaskRepo(store.connection)
+    proj = await prepo.create(
+        ProjectCreate(name="Alpha", goals=["g"], calendar_keywords=[], priority=1)
+    )
+    today = datetime.now(UTC).date()
+
+    class _CountingLLM:
+        backend = "fake"
+        model = "fake-1"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def complete(self, *, system, messages, tools=None, max_tokens=1500, session_id=None):
+            self.calls += 1
+            return TextResult(text='{"narrative":"x","recommendation":"y","conflicts":[]}')
+
+    llm = _CountingLLM()
+    svc = DailyBriefService(
+        profile_cache=make_profile_cache(timezone="UTC", brief_lookahead_days=3),
+        llm=llm,
+        store=store,
+        observers=[],
+        bus=StateBus(),
+        calendar=None,
+    )
+
+    fp1, _ = await svc.prepare(today)
+    assert llm.calls == 0  # no synthesis during prepare
+    assert await SnapshotRepo(store.connection).get(today) is None  # no write during prepare
+
+    fp2, _ = await svc.prepare(today)
+    assert fp2 == fp1  # identical state → stable fingerprint
+
+    await trepo.create(TaskCreate(project_id=proj.id, title="new", due_date=today))
+    fp3, _ = await svc.prepare(today)
+    assert fp3 != fp1  # state changed → fingerprint changes
+
+
+@pytest.mark.asyncio
 async def test_build_retries_once_on_bad_json(store: SignalStore) -> None:
     class _FlakyLLM:
         backend = "fake"

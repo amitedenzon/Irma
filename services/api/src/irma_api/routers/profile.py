@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import structlog
 from fastapi import APIRouter, Request
 
 from irma_api.models.profile import Profile, ProfileUpdate
+from irma_api.runtime.brief_queue import ScheduledBriefQueue
 from irma_api.runtime.profile_cache import ProfileCache
-from irma_api.runtime.scheduler import Scheduler
 from irma_api.store.repos.profile_repo import ProfileRepo
 from irma_api.store.sqlite import SignalStore
 
@@ -37,25 +39,22 @@ async def update_profile(request: Request, body: ProfileUpdate) -> Profile:
     cache: ProfileCache = request.app.state.profile_cache
     cache.set(updated)
 
-    # Hot-reschedule the daily-brief job when scheduling-relevant fields changed.
-    # Wrapped in try/except: reschedule is a side-effect — if APScheduler raises,
-    # the DB write has already committed and the caller gets the updated profile.
-    # Diverging scheduler state is logged and will self-heal on next restart.
+    # Re-evaluate the queued morning brief when a scheduling field changed: a
+    # new brief hour reschedules the parked email, disabling cancels it, and
+    # re-enabling queues a fresh one. Fire-and-forget so the PATCH stays fast
+    # (ensure_queued renders + calls Resend); the queue's own lock serializes it
+    # against the refresh tick.
     if body.model_fields_set & _SCHEDULE_FIELDS:
-        scheduler: Scheduler | None = getattr(request.app.state, "scheduler", None)
-        if scheduler is not None:
-            try:
-                scheduler.reschedule_daily_job(
-                    hour=updated.brief_hour,
-                    timezone=updated.timezone,
-                    enabled=updated.daily_brief_enabled,
-                )
-            except Exception:
-                logger.exception(
-                    "profile.reschedule_failed",
-                    brief_hour=updated.brief_hour,
-                    timezone=updated.timezone,
-                    enabled=updated.daily_brief_enabled,
-                )
+        brief_queue: ScheduledBriefQueue | None = getattr(
+            request.app.state, "brief_queue", None
+        )
+        if brief_queue is not None:
+            async def _requeue() -> None:
+                try:
+                    await brief_queue.ensure_queued()
+                except Exception:
+                    logger.exception("profile.requeue_failed")
+
+            asyncio.create_task(_requeue())  # noqa: RUF006 — fire-and-forget
 
     return updated

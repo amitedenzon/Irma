@@ -6,8 +6,10 @@ delta used by the brief and unit-tested independently.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Final
 from zoneinfo import ZoneInfo
@@ -38,6 +40,24 @@ logger = structlog.get_logger(__name__)
 
 _FENCE_RE: Final[re.Pattern[str]] = re.compile(r"^```[a-zA-Z]*\s*|\s*```\s*$")
 _OPEN_STATUSES: Final = [TaskStatus.TODO, TaskStatus.DOING, TaskStatus.BLOCKED]
+
+
+@dataclass(frozen=True)
+class BriefInputs:
+    """Everything needed to render a brief, collected without calling the LLM.
+
+    Produced by :meth:`DailyBriefService.prepare` and consumed by
+    :meth:`DailyBriefService.render`. The split lets the daily-brief queue
+    fingerprint the inputs and skip re-synthesis when nothing changed.
+    """
+
+    profile: Profile
+    today_focus: list[FocusItem]
+    lookahead: list[LookaheadItem]
+    calendar_text: str | None
+    progress: list[ProjectProgress]
+    baseline: DailySnapshot | None
+    completed_task_ids: list[str]
 
 
 def compute_progress(
@@ -121,7 +141,24 @@ class DailyBriefService:
     def _today(self) -> date:
         return datetime.now(ZoneInfo(self._profile_cache.current.timezone)).date()
 
-    async def build(self) -> DailyBrief:
+    async def build(self, for_date: date | None = None) -> DailyBrief:
+        """Collect + synthesize a brief for ``for_date`` (default: today).
+
+        The on-demand "Brief" button calls this with no argument. The scheduled
+        queue passes the delivery morning so a brief generated tonight describes
+        tomorrow.
+        """
+        target = for_date or self._today()
+        _, inputs = await self.prepare(target)
+        return await self.render(inputs, target)
+
+    async def prepare(self, for_date: date) -> tuple[str, BriefInputs]:
+        """Collect brief inputs for ``for_date`` without calling the LLM.
+
+        Returns ``(fingerprint, inputs)``. The fingerprint covers exactly the
+        data the email renders (progress, focus, lookahead, calendar) so an
+        unchanged fingerprint means a previously-queued email is still current.
+        """
         from irma_api.routers.signals import run_refresh  # local: avoid circular import
 
         try:
@@ -129,9 +166,8 @@ class DailyBriefService:
         except Exception as exc:  # observers must never block the brief
             logger.warning("daily_brief.refresh_failed", error=str(exc))
 
-        today = self._today()
         profile = self._profile_cache.current
-        window_end = today + timedelta(days=profile.brief_lookahead_days)
+        window_end = for_date + timedelta(days=profile.brief_lookahead_days)
 
         prepo = ProjectRepo(self._store.connection)
         trepo = TaskRepo(self._store.connection)
@@ -152,8 +188,8 @@ class DailyBriefService:
             for t in all_tasks
             if t.status in _OPEN_STATUSES
             and (
-                (t.due_date is not None and t.due_date <= today)
-                or t.scheduled_for == today
+                (t.due_date is not None and t.due_date <= for_date)
+                or t.scheduled_for == for_date
             )
         ]
 
@@ -161,7 +197,7 @@ class DailyBriefService:
         for t in all_tasks:
             if t.status not in _OPEN_STATUSES:
                 continue
-            if t.due_date is not None and today < t.due_date <= window_end:
+            if t.due_date is not None and for_date < t.due_date <= window_end:
                 lookahead.append(
                     LookaheadItem(
                         title=t.title,
@@ -170,7 +206,7 @@ class DailyBriefService:
                         project_name=project_names.get(t.project_id),
                     )
                 )
-            elif t.scheduled_for is not None and today < t.scheduled_for <= window_end:
+            elif t.scheduled_for is not None and for_date < t.scheduled_for <= window_end:
                 lookahead.append(
                     LookaheadItem(
                         title=t.title,
@@ -181,26 +217,40 @@ class DailyBriefService:
                 )
         lookahead.sort(key=lambda it: it.when)
 
-        calendar_text = await self._read_calendar()
+        calendar_text = await self._read_calendar(for_date)
 
-        baseline = await SnapshotRepo(self._store.connection).latest_before(today)
+        baseline = await SnapshotRepo(self._store.connection).latest_before(for_date)
         progress = compute_progress(projects, all_tasks, baseline=baseline)
 
-        narrative, recommendation, conflicts = await self._synthesize(
+        inputs = BriefInputs(
             profile=profile,
-            today=today,
-            progress=progress,
             today_focus=today_focus,
             lookahead=lookahead,
             calendar_text=calendar_text,
+            progress=progress,
+            baseline=baseline,
+            completed_task_ids=[t.id for t in all_tasks if t.status == TaskStatus.DONE],
+        )
+        return self._fingerprint(inputs, for_date), inputs
+
+    async def render(self, inputs: BriefInputs, for_date: date) -> DailyBrief:
+        """Synthesize the prose layer + persist the snapshot for ``for_date``."""
+        narrative, recommendation, conflicts = await self._synthesize(
+            profile=inputs.profile,
+            today=for_date,
+            progress=inputs.progress,
+            today_focus=inputs.today_focus,
+            lookahead=inputs.lookahead,
+            calendar_text=inputs.calendar_text,
         )
 
         await SnapshotRepo(self._store.connection).upsert(
-            today,
+            for_date,
             per_project_counts={
-                p.project_id: {"open": p.open_now, "done": p.done_now} for p in progress
+                p.project_id: {"open": p.open_now, "done": p.done_now}
+                for p in inputs.progress
             },
-            completed_task_ids=[t.id for t in all_tasks if t.status == TaskStatus.DONE],
+            completed_task_ids=inputs.completed_task_ids,
         )
 
         return DailyBrief(
@@ -208,18 +258,36 @@ class DailyBriefService:
             narrative=narrative,
             recommendation=recommendation,
             conflicts=conflicts,
-            progress=progress,
-            today_focus=today_focus,
-            lookahead_tasks=lookahead,
-            calendar_text=calendar_text,
-            has_baseline=baseline is not None,
+            progress=inputs.progress,
+            today_focus=inputs.today_focus,
+            lookahead_tasks=inputs.lookahead,
+            calendar_text=inputs.calendar_text,
+            has_baseline=inputs.baseline is not None,
         )
 
-    async def _read_calendar(self) -> str | None:
+    @staticmethod
+    def _fingerprint(inputs: BriefInputs, for_date: date) -> str:
+        payload = {
+            "for_date": for_date.isoformat(),
+            "progress": [
+                [p.project_id, p.completed_since, p.added_since, p.open_now, p.done_now]
+                for p in inputs.progress
+            ],
+            "today_focus": [[f.title, f.due_date, f.project_name] for f in inputs.today_focus],
+            "lookahead": [
+                [it.title, it.when, it.kind, it.project_name] for it in inputs.lookahead
+            ],
+            "calendar_text": inputs.calendar_text or "",
+            "has_baseline": inputs.baseline is not None,
+        }
+        raw = json.dumps(payload, sort_keys=True, ensure_ascii=False)
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    async def _read_calendar(self, for_date: date) -> str | None:
         if self._calendar is None:
             return None
         try:
-            text = await self._calendar.call({"days": 1})
+            text = await self._calendar.call({"days": 1, "start_date": for_date.isoformat()})
             return str(text)
         except ToolError as exc:
             logger.info("daily_brief.calendar_skipped", code=exc.code)

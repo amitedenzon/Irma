@@ -6,6 +6,7 @@ the APScheduler — they all share the same event loop as the request handlers.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from importlib import import_module
@@ -133,9 +134,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.lead_agent = lead_agent
     app.state.send_email_tool = send_email_tool
 
+    # Brief synthesis uses the configured local LLM (Ollama). The maintainer
+    # never uses the paid Anthropic API — see the HARD RULE in CLAUDE.md §0.
     daily_brief_job = None
+    brief_queue = None
     if llm is not None and send_email_tool is not None:
         from irma_api.agents.daily_brief import DailyBriefService
+        from irma_api.runtime.brief_queue import BriefQueueStateStore, ScheduledBriefQueue
         from irma_api.runtime.daily_job import DailyBriefJob
 
         daily_service = DailyBriefService(
@@ -151,6 +156,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             sender=send_email_tool,
             profile_cache=profile_cache,
         )
+        brief_queue = ScheduledBriefQueue(
+            service=daily_service,
+            sender=send_email_tool,
+            state_store=BriefQueueStateStore(settings.irma_db_path.parent / "brief_queue.json"),
+            profile_cache=profile_cache,
+        )
     else:
         logger.info(
             "app.daily_brief_disabled",
@@ -158,6 +169,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             has_email=send_email_tool is not None,
         )
     app.state.daily_brief_job = daily_brief_job
+    app.state.brief_queue = brief_queue
 
     # --- Apple Reminders bridge + sync factory ---
     reminder_bridge = None
@@ -197,6 +209,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     async def tick() -> None:
         await run_refresh(store=store, observers=observers, bus=bus)
+        # Keep the next morning's pretty brief parked at Resend, refreshed to the
+        # latest awake state. Server-side delivery means it still lands at the
+        # brief hour with the Mac asleep. Deduped internally, so this is cheap
+        # when nothing changed.
+        if brief_queue is not None:
+            try:
+                await brief_queue.ensure_queued()
+            except Exception:
+                logger.exception("brief_queue.tick_failed")
 
     async def reminders_tick() -> None:
         svc = app.state.reminder_sync
@@ -214,20 +235,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     scheduler.start()
     app.state.scheduler = scheduler
 
-    if daily_brief_job is not None:
-        async def daily_tick() -> None:
-            await daily_brief_job.run_once()
+    # Queue the first brief right after boot (fire-and-forget so a slow Opus
+    # render never blocks app readiness; the refresh tick is the steady-state
+    # driver). Keep a reference so the task isn't GC'd mid-flight.
+    if brief_queue is not None:
+        async def _initial_queue() -> None:
+            try:
+                await brief_queue.ensure_queued()
+            except Exception:
+                logger.exception("brief_queue.startup_failed")
 
-        app.state.daily_tick = daily_tick
-        profile = profile_cache.current
-        scheduler.add_daily_job(
-            daily_tick,
-            hour=profile.brief_hour,
-            timezone=profile.timezone,
-            enabled=profile.daily_brief_enabled,
-        )
-    else:
-        app.state.daily_tick = None
+        app.state.brief_startup_task = asyncio.create_task(_initial_queue())
     logger.info(
         "app.ready",
         observers=[o.name for o in observers],

@@ -126,6 +126,31 @@ async def test_days_clamps_to_max() -> None:
 
 
 @pytest.mark.asyncio
+async def test_start_date_anchors_window_to_that_local_day() -> None:
+    """An internal start_date arg pins the window to that calendar day in the
+    profile timezone (used by the daily-brief queue to render tomorrow's brief)."""
+    tool = ReadCalendarTool(_settings(), make_profile_cache(timezone="Asia/Jerusalem"))
+    captured: dict[str, Any] = {}
+
+    async def fake_fetch(
+        _self: Any, _client: Any, _user: Any, time_min: str, time_max: str
+    ) -> list[tuple[str, dict[str, Any]]]:
+        captured["min"] = time_min
+        captured["max"] = time_max
+        return []
+
+    with patch.object(ReadCalendarTool, "_fetch_events", new=fake_fetch):
+        await tool.call({"days": 1, "start_date": "2026-06-02"})
+
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    tz = ZoneInfo("Asia/Jerusalem")
+    assert datetime.fromisoformat(captured["min"]) == datetime(2026, 6, 2, tzinfo=tz)
+    assert datetime.fromisoformat(captured["max"]) == datetime(2026, 6, 3, tzinfo=tz)
+
+
+@pytest.mark.asyncio
 async def test_exclude_ids_read_from_profile_cache() -> None:
     """calendar_exclude_ids from the profile are passed to _fetch_events."""
     cache = make_profile_cache(calendar_exclude_ids=["cal-skip@group.v.calendar.google.com"])

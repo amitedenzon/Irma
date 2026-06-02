@@ -4,7 +4,7 @@
     "name": "Daily Brief",
     "cron": "30 4 * * *",
     "cron_human": "Every day",
-    "enabled": true,
+    "enabled": false,
     "prompt": "Task: Amit's daily stand-up brief.\n\nDATA TO GATHER (3 tool calls total \u2014 do not call list_tasks per project):\n1. read_calendar for today + next 3 days (4 days total).\n2. list_projects \u2014 active only.\n3. list_tasks with no filters \u2014 returns all tasks across all projects.\n\nCOMPOSE THE BRIEF with these sections, headings in ALL CAPS:\n\nTODAY'S SCHEDULE\nAll of today's events in standard date format. If empty, say so.\n\nNEXT 3 DAYS\nEvents for tomorrow through day+3, grouped by day. Omit days with nothing.\n\nPROGRESS DELTA\nWhat moved since yesterday: tasks completed today or yesterday (check completed_at), tasks newly in-progress or blocked. If nothing changed, say so briefly.\n\nOPEN & UPCOMING\nTasks in-progress or due within 3 days, grouped by project name. Skip done/archived.\n\nWATCH\nConflicts, back-to-back blocks, tight transitions, or overdue tasks. Omit section entirely if none.\n\nRECOMMENDATION\nOne short actionable sentence \u2014 the single most useful thing Amit can do today.\n\nTight and scannable. Lead with what matters most."
   },
   {

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import NamedTuple
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import pytest_asyncio
@@ -118,17 +119,20 @@ async def test_patch_cache_set_not_reload(app_client: _AppClient) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Reschedule hook tests
+# Requeue hook tests — a scheduling-field change re-evaluates the brief queue
 # ---------------------------------------------------------------------------
 
 
 @pytest_asyncio.fixture
-async def sched_app_client(tmp_path: Path) -> AsyncIterator[tuple[AsyncClient, FastAPI, MagicMock]]:
-    """App fixture with a MagicMock scheduler attached to app.state."""
-    mock_scheduler = MagicMock()
+async def queue_app_client(
+    tmp_path: Path,
+) -> AsyncIterator[tuple[AsyncClient, FastAPI, MagicMock]]:
+    """App fixture with a mock ScheduledBriefQueue attached to app.state."""
+    mock_queue = MagicMock()
+    mock_queue.ensure_queued = AsyncMock(return_value={"queued": True})
 
     app = FastAPI()
-    store = SignalStore(tmp_path / "irma_sched.db")
+    store = SignalStore(tmp_path / "irma_q.db")
     await store.connect()
     app.state.store = store
 
@@ -136,88 +140,54 @@ async def sched_app_client(tmp_path: Path) -> AsyncIterator[tuple[AsyncClient, F
     cache = ProfileCache(repo)
     await cache.load()
     app.state.profile_cache = cache
-    app.state.scheduler = mock_scheduler
+    app.state.brief_queue = mock_queue
 
     app.include_router(profile_router, prefix="/api/v1")
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://t") as c:
-        yield c, app, mock_scheduler
+        yield c, app, mock_queue
     await store.close()
 
 
 @pytest.mark.asyncio
-async def test_patch_brief_hour_triggers_reschedule(
-    sched_app_client: tuple[AsyncClient, FastAPI, MagicMock],
+async def test_patch_brief_hour_triggers_requeue(
+    queue_app_client: tuple[AsyncClient, FastAPI, MagicMock],
 ) -> None:
-    """Patching brief_hour must call reschedule_daily_job with the new values."""
-    client, _app, mock_sched = sched_app_client
-
+    client, _app, mock_queue = queue_app_client
     r = await client.patch("/api/v1/profile", json={"brief_hour": 9})
     assert r.status_code == 200
-
-    mock_sched.reschedule_daily_job.assert_called_once()
-    call_kwargs = mock_sched.reschedule_daily_job.call_args.kwargs
-    assert call_kwargs["hour"] == 9
+    await asyncio.sleep(0.05)  # let the fire-and-forget requeue task run
+    mock_queue.ensure_queued.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_patch_timezone_triggers_reschedule(
-    sched_app_client: tuple[AsyncClient, FastAPI, MagicMock],
+async def test_patch_timezone_triggers_requeue(
+    queue_app_client: tuple[AsyncClient, FastAPI, MagicMock],
 ) -> None:
-    """Patching timezone must call reschedule_daily_job."""
-    client, _app, mock_sched = sched_app_client
-
+    client, _app, mock_queue = queue_app_client
     r = await client.patch("/api/v1/profile", json={"timezone": "Asia/Jerusalem"})
     assert r.status_code == 200
-
-    mock_sched.reschedule_daily_job.assert_called_once()
-    call_kwargs = mock_sched.reschedule_daily_job.call_args.kwargs
-    assert call_kwargs["timezone"] == "Asia/Jerusalem"
+    await asyncio.sleep(0.05)
+    mock_queue.ensure_queued.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_patch_daily_brief_enabled_triggers_reschedule(
-    sched_app_client: tuple[AsyncClient, FastAPI, MagicMock],
+async def test_patch_daily_brief_enabled_triggers_requeue(
+    queue_app_client: tuple[AsyncClient, FastAPI, MagicMock],
 ) -> None:
-    """Patching daily_brief_enabled must call reschedule_daily_job."""
-    client, _app, mock_sched = sched_app_client
-
+    client, _app, mock_queue = queue_app_client
     r = await client.patch("/api/v1/profile", json={"daily_brief_enabled": False})
     assert r.status_code == 200
-
-    mock_sched.reschedule_daily_job.assert_called_once()
-    call_kwargs = mock_sched.reschedule_daily_job.call_args.kwargs
-    assert call_kwargs["enabled"] is False
+    await asyncio.sleep(0.05)
+    mock_queue.ensure_queued.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_patch_unrelated_field_does_not_reschedule(
-    sched_app_client: tuple[AsyncClient, FastAPI, MagicMock],
+async def test_patch_unrelated_field_does_not_requeue(
+    queue_app_client: tuple[AsyncClient, FastAPI, MagicMock],
 ) -> None:
-    """Patching an unrelated field (e.g. owner_name) must NOT call reschedule."""
-    client, _app, mock_sched = sched_app_client
-
+    client, _app, mock_queue = queue_app_client
     r = await client.patch("/api/v1/profile", json={"owner_name": "Amit"})
     assert r.status_code == 200
-
-    mock_sched.reschedule_daily_job.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_patch_reschedule_passes_new_values(
-    sched_app_client: tuple[AsyncClient, FastAPI, MagicMock],
-) -> None:
-    """reschedule_daily_job receives ALL three scheduling fields from the updated profile."""
-    client, _app, mock_sched = sched_app_client
-
-    r = await client.patch(
-        "/api/v1/profile",
-        json={"brief_hour": 7, "timezone": "America/New_York", "daily_brief_enabled": True},
-    )
-    assert r.status_code == 200
-
-    mock_sched.reschedule_daily_job.assert_called_once_with(
-        hour=7,
-        timezone="America/New_York",
-        enabled=True,
-    )
+    await asyncio.sleep(0.05)
+    mock_queue.ensure_queued.assert_not_awaited()

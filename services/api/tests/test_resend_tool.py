@@ -156,6 +156,54 @@ async def test_429_then_success_retries(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 @pytest.mark.asyncio
+async def test_schedule_email_includes_scheduled_at_and_returns_id() -> None:
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"id": "msg_sched_1"})
+
+    when = datetime(2026, 6, 2, 5, 0, tzinfo=UTC)
+    async with respx.mock() as rmock:
+        rmock.post("https://api.resend.com/emails").mock(side_effect=handler)
+        email_id = await _tool().schedule_email(
+            subject="Brief", body="text body", html="<p>html body</p>", scheduled_at=when
+        )
+
+    assert email_id == "msg_sched_1"
+    assert captured["body"]["scheduled_at"] == when.isoformat()
+    assert captured["body"]["to"] == ["amit@example.com"]
+    assert captured["body"]["html"] == "<p>html body</p>"
+    assert captured["body"]["text"] == "text body"
+
+
+@pytest.mark.asyncio
+async def test_cancel_email_posts_to_cancel_endpoint() -> None:
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["auth"] = request.headers.get("authorization")
+        return httpx.Response(200, json={"id": "msg_x", "object": "email"})
+
+    async with respx.mock() as rmock:
+        rmock.post("https://api.resend.com/emails/msg_x/cancel").mock(side_effect=handler)
+        await _tool().cancel_email("msg_x")
+
+    assert captured["auth"] == "Bearer re_test_key"
+
+
+@pytest.mark.asyncio
+async def test_cancel_email_raises_on_failure() -> None:
+    async with respx.mock() as rmock:
+        rmock.post("https://api.resend.com/emails/gone/cancel").mock(
+            return_value=httpx.Response(404, json={"message": "not found"})
+        )
+        with pytest.raises(ToolError) as exc_info:
+            await _tool().cancel_email("gone")
+    assert exc_info.value.code == "resend_cancel_failed"
+
+
+@pytest.mark.asyncio
 async def test_hot_reload_recipient_from_profile_cache() -> None:
     """Changing the profile email in the cache is reflected on the next send."""
     cache = make_profile_cache(profile=_profile(owner_email="first@example.com"))

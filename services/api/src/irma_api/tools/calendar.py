@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, cast
+from zoneinfo import ZoneInfo
 
 import structlog
 from aiogoogle import Aiogoogle  # type: ignore[attr-defined]
@@ -85,9 +86,21 @@ class ReadCalendarTool:
         days = max(1, min(_MAX_DAYS, days))
 
         client, user = self._build_creds()
-        now = datetime.now(UTC)
-        time_min = now.isoformat()
-        time_max = (now + timedelta(days=days)).isoformat()
+        # `start_date` (internal — not in the LLM-facing schema) anchors the
+        # window to a specific calendar day in the profile timezone, so the
+        # daily-brief queue can render *tomorrow's* brief tonight. Without it we
+        # read forward from now (the usual on-demand "next N days" behaviour).
+        start_raw = args.get("start_date")
+        if start_raw:
+            tz = ZoneInfo(self._profile_cache.current.timezone)
+            d = date.fromisoformat(str(start_raw))
+            start_local = datetime(d.year, d.month, d.day, tzinfo=tz)
+            time_min = start_local.isoformat()
+            time_max = (start_local + timedelta(days=days)).isoformat()
+        else:
+            now = datetime.now(UTC)
+            time_min = now.isoformat()
+            time_max = (now + timedelta(days=days)).isoformat()
 
         try:
             async for attempt in AsyncRetrying(
