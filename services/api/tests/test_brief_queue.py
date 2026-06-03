@@ -63,9 +63,10 @@ class _FakeService:
 
 
 class _FakeSender:
-    def __init__(self) -> None:
+    def __init__(self, cancel_error: Exception | None = None) -> None:
         self.scheduled: list[dict] = []
         self.cancelled: list[str] = []
+        self._cancel_error = cancel_error
         self._n = 0
 
     async def schedule_email(self, *, subject, body, html, scheduled_at) -> str:
@@ -76,6 +77,8 @@ class _FakeSender:
         return f"email_{self._n}"
 
     async def cancel_email(self, email_id: str) -> None:
+        if self._cancel_error is not None:
+            raise self._cancel_error
         self.cancelled.append(email_id)
 
 
@@ -171,6 +174,24 @@ async def test_brief_hour_change_reschedules_even_if_content_unchanged() -> None
     assert result["queued"] is True
     assert sender.cancelled == ["old_id"]
     assert store.state.scheduled_at == _TARGET_ISO
+
+
+@pytest.mark.asyncio
+async def test_cancel_failure_keeps_existing_and_skips_replacement() -> None:
+    # If the parked email can't be cancelled, do NOT schedule a replacement —
+    # otherwise both fire at 8am. Keep the existing one (possibly stale) intact.
+    svc = _FakeService(fingerprint="new")
+    sender = _FakeSender(cancel_error=RuntimeError("cancel rejected"))
+    prev = QueuedBrief(
+        target_date=date(2026, 6, 2), fingerprint="old", email_id="old_id", scheduled_at=_TARGET_ISO
+    )
+    store = _FakeStore(prev)
+    result = await _queue(svc, sender, store).ensure_queued()
+
+    assert result["queued"] is False
+    assert result["reason"] == "cancel_failed"
+    assert sender.scheduled == []  # no duplicate scheduled
+    assert store.state is prev  # state untouched — the old email still owns 8am
 
 
 @pytest.mark.asyncio

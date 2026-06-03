@@ -22,10 +22,41 @@ pub struct BackendProcess(pub Mutex<Option<std::process::Child>>);
 #[derive(Default)]
 pub struct CompanionDrag(pub Mutex<Option<(f64, f64)>>);
 
+/// Kill any process currently listening on `port`.
+///
+/// The backend is launched as `uv run uvicorn …`; on exit we kill the `uv`
+/// wrapper, but the `uvicorn` child it spawned can be orphaned and keep holding
+/// the port — so the next launch's fresh `uvicorn` fails to bind and the stale
+/// (old-code) process keeps serving. Clearing the port before spawning (and on
+/// exit) guarantees each launch runs the current backend source. macOS-only:
+/// absolute tool paths because a GUI bundle's PATH is stripped.
+fn kill_port_listeners(port: u16) {
+    let Ok(out) = std::process::Command::new("/usr/sbin/lsof")
+        .args(["-ti", &format!("tcp:{port}")])
+        .output()
+    else {
+        return;
+    };
+    let pids = String::from_utf8_lossy(&out.stdout);
+    let mut killed = false;
+    for pid in pids.split_whitespace() {
+        let _ = std::process::Command::new("/bin/kill").args(["-9", pid]).status();
+        killed = true;
+    }
+    if killed {
+        // Let the OS release the listening socket before the fresh bind.
+        std::thread::sleep(std::time::Duration::from_millis(300));
+    }
+}
+
 /// Spawn `uv run uvicorn irma_api.app:create_app --factory --port 8765` from
 /// the services/api directory. Stdout/stderr are appended to ~/Library/Logs/Irma/api.log.
 fn spawn_backend() -> Option<std::process::Child> {
     let home = std::env::var("HOME").unwrap_or_default();
+
+    // Clear any orphaned backend still holding the port so this launch activates
+    // the current code rather than a stale process surviving from a prior run.
+    kill_port_listeners(8765);
 
     let api_dir = std::env::var("IRMA_API_DIR")
         .unwrap_or_else(|_| format!("{home}/Documents/Code/Irma/services/api"));
@@ -216,6 +247,9 @@ pub fn run() {
                     }
                 }
             }
+            // child.kill() only reaps the `uv` wrapper; clear the port to also
+            // take down the orphaned `uvicorn` grandchild it spawned.
+            kill_port_listeners(8765);
         }
     });
 }

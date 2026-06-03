@@ -178,13 +178,19 @@ class ScheduledBriefQueue:
 
             # Replace only within the same delivery day: a prev email for an
             # earlier date has already fired and can't (shouldn't) be cancelled.
+            # If the cancel fails we must NOT schedule a replacement — otherwise
+            # both the stale and the fresh copy fire at the brief hour. Keep the
+            # existing one and bail; the next tick retries the cancel.
             if prev is not None and prev.target_date == for_date:
                 try:
                     await self._sender.cancel_email(prev.email_id)
-                except Exception as exc:  # already sent / network — log and proceed
+                except Exception as exc:
                     logger.warning(
-                        "brief_queue.cancel_failed", email_id=prev.email_id, error=str(exc)
+                        "brief_queue.cancel_failed_kept_existing",
+                        email_id=prev.email_id,
+                        error=str(exc),
                     )
+                    return {"queued": False, "reason": "cancel_failed"}
 
             email_id = await self._sender.schedule_email(
                 subject=subject, body=text, html=html, scheduled_at=target_dt
