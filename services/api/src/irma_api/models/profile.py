@@ -22,6 +22,7 @@ class Profile(BaseModel):
     calendar_exclude_ids: list[str] = Field(default_factory=list)
     daily_brief_enabled: bool = True
     brief_hour: int = Field(default=8, ge=0, le=23)
+    brief_minute: int = Field(default=0, ge=0, le=59)
     brief_lookahead_days: int = Field(default=3, ge=1, le=14)
     setup_complete: bool = False
     updated_at: datetime
@@ -40,6 +41,7 @@ class ProfileUpdate(BaseModel):
     calendar_exclude_ids: list[str] | None = None
     daily_brief_enabled: bool | None = None
     brief_hour: int | None = Field(default=None, ge=0, le=23)
+    brief_minute: int | None = Field(default=None, ge=0, le=59)
     brief_lookahead_days: int | None = Field(default=None, ge=1, le=14)
     setup_complete: bool | None = None
 

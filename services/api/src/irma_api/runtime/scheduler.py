@@ -15,8 +15,8 @@ logger = structlog.get_logger(__name__)
 DAILY_BRIEF_JOB_ID = "irma-daily-brief"
 
 
-def _make_cron_trigger(*, hour: int, timezone: str) -> CronTrigger:
-    return CronTrigger(hour=hour, minute=0, timezone=timezone)
+def _make_cron_trigger(*, hour: int, minute: int = 0, timezone: str) -> CronTrigger:
+    return CronTrigger(hour=hour, minute=minute, timezone=timezone)
 
 
 class Scheduler:
@@ -65,50 +65,36 @@ class Scheduler:
         callback: Callable[[], Awaitable[object]],
         *,
         hour: int,
+        minute: int = 0,
         timezone: str,
         enabled: bool = True,
     ) -> None:
-        """Register the once-a-day brief send at `hour`:00 in `timezone`.
-
-        Always stores *callback* so a later ``reschedule_daily_job(enabled=True)``
-        can re-add the job even if it started disabled.
-
-        When ``enabled=False`` the callback is stored but no APScheduler job is
-        added — safe to call before or after :meth:`start`.
-
-        Strict policy: the job only fires if the process is running at the
-        trigger time — there is no catch-up for a missed morning.
-        """
+        """Register the once-a-day brief send at `hour`:`minute` in `timezone`."""
         self._daily_callback = callback
         if not enabled:
             logger.info(
-                "scheduler.daily_job_skipped_disabled", hour=hour, timezone=timezone
+                "scheduler.daily_job_skipped_disabled", hour=hour, minute=minute, timezone=timezone
             )
             return
         self._sched.add_job(
             callback,
-            trigger=_make_cron_trigger(hour=hour, timezone=timezone),
+            trigger=_make_cron_trigger(hour=hour, minute=minute, timezone=timezone),
             id=DAILY_BRIEF_JOB_ID,
             replace_existing=True,
             max_instances=1,
             coalesce=True,
         )
-        logger.info("scheduler.daily_job_added", hour=hour, timezone=timezone)
+        logger.info("scheduler.daily_job_added", hour=hour, minute=minute, timezone=timezone)
 
     def reschedule_daily_job(
         self,
         *,
         hour: int,
+        minute: int = 0,
         timezone: str,
         enabled: bool,
     ) -> None:
-        """Hot-update the daily brief trigger without restarting the process.
-
-        - ``enabled=False``: removes the job if it exists (no-op if absent).
-        - ``enabled=True``: reschedules the existing job's trigger; if the job
-          was previously removed, re-adds it using the callback stored during
-          the last :meth:`add_daily_job` call.
-        """
+        """Hot-update the daily brief trigger without restarting the process."""
         job = self._sched.get_job(DAILY_BRIEF_JOB_ID)
         if not enabled:
             if job is not None:
@@ -116,14 +102,14 @@ class Scheduler:
                     self._sched.remove_job(DAILY_BRIEF_JOB_ID)
                     logger.info("scheduler.daily_job_removed")
                 except JobLookupError:
-                    pass  # already gone — safe to ignore
+                    pass
             return
 
-        trigger = _make_cron_trigger(hour=hour, timezone=timezone)
+        trigger = _make_cron_trigger(hour=hour, minute=minute, timezone=timezone)
         if job is not None:
             self._sched.reschedule_job(DAILY_BRIEF_JOB_ID, trigger=trigger)
             logger.info(
-                "scheduler.daily_job_rescheduled", hour=hour, timezone=timezone
+                "scheduler.daily_job_rescheduled", hour=hour, minute=minute, timezone=timezone
             )
         else:
             if self._daily_callback is None:
@@ -141,7 +127,7 @@ class Scheduler:
                 coalesce=True,
             )
             logger.info(
-                "scheduler.daily_job_readded", hour=hour, timezone=timezone
+                "scheduler.daily_job_readded", hour=hour, minute=minute, timezone=timezone
             )
 
     def shutdown(self) -> None:

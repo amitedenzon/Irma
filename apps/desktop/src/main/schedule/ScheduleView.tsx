@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { IRMA_API_BASE } from "../../lib/api";
 
 const DAILY_BRIEF_ID = "trig_0128d6voBA1V4YoHYqhtK1fE";
+const LOCKED_IDS = new Set([DAILY_BRIEF_ID]);
 
 // ---------------------------------------------------------------------------
 // Types
@@ -35,31 +36,50 @@ const ordinal = (n: number) => {
 };
 
 type Freq = "daily" | "weekly" | "monthly";
-interface Schedule { freq: Freq; weekdays: number[]; monthDay: number }
+interface Schedule { freq: Freq; weekdays: number[]; monthDay: number; hour: number; minute: number }
 
-function buildCron({ freq, weekdays, monthDay }: Schedule): string {
-  if (freq === "daily") return "30 4 * * *";
+function buildCron({ freq, weekdays, monthDay, hour, minute }: Schedule): string {
+  const mm = String(minute).padStart(2, "0");
+  const hh = String(hour);
+  if (freq === "daily") return `${mm} ${hh} * * *`;
   if (freq === "weekly") {
     const days = weekdays.length ? weekdays.slice().sort((a, b) => a - b).join(",") : "1";
-    return `30 4 * * ${days}`;
+    return `${mm} ${hh} * * ${days}`;
   }
-  return `30 4 ${monthDay} * *`;
+  return `${mm} ${hh} ${monthDay} * *`;
 }
 
-function buildHuman({ freq, weekdays, monthDay }: Schedule): string {
-  if (freq === "daily") return "Every day";
+function buildHuman({ freq, weekdays, monthDay, hour, minute }: Schedule): string {
+  const t = `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+  if (freq === "daily") return `Every day at ${t}`;
   if (freq === "weekly") {
-    if (!weekdays.length) return "Every week";
+    if (!weekdays.length) return `Every week at ${t}`;
     const order = [1, 2, 3, 4, 5, 6, 0];
     const names = weekdays
       .slice()
       .sort((a, b) => order.indexOf(a) - order.indexOf(b))
       .map((n) => WEEKDAYS.find((d) => d.n === n)!.label);
-    return names.length === 1
+    const dayStr = names.length === 1
       ? `Every ${names[0]}`
       : `Every ${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+    return `${dayStr} at ${t}`;
   }
-  return `Monthly on the ${ordinal(monthDay)}`;
+  return `Monthly on the ${ordinal(monthDay)} at ${t}`;
+}
+
+function parseCron(cron: string): Pick<Schedule, "hour" | "minute" | "freq" | "weekdays" | "monthDay"> {
+  const parts = cron.trim().split(/\s+/);
+  const minute = parseInt(parts[0] ?? "0", 10);
+  const hour   = parseInt(parts[1] ?? "8", 10);
+  const dom    = parts[2] ?? "*";
+  const dow    = parts[4] ?? "*";
+  if (dom !== "*") {
+    return { freq: "monthly", monthDay: parseInt(dom, 10), weekdays: [], hour, minute };
+  }
+  if (dow !== "*") {
+    return { freq: "weekly", weekdays: dow.split(",").map(Number), monthDay: 1, hour, minute };
+  }
+  return { freq: "daily", weekdays: [], monthDay: 1, hour, minute };
 }
 
 // ---------------------------------------------------------------------------
@@ -76,16 +96,19 @@ function RoutineForm({
   onSaved: (r: Routine) => void;
   onCancel: () => void;
 }) {
+  const parsed = initial?.cron ? parseCron(initial.cron) : null;
   const [name, setName] = useState(initial?.name ?? "");
   const [prompt, setPrompt] = useState(initial?.prompt ?? "");
-  const [freq, setFreq] = useState<Freq>("daily");
-  const [weekdays, setWeekdays] = useState<number[]>([1]);
-  const [monthDay, setMonthDay] = useState(1);
+  const [freq, setFreq] = useState<Freq>(parsed?.freq ?? "daily");
+  const [weekdays, setWeekdays] = useState<number[]>(parsed?.weekdays ?? [1]);
+  const [monthDay, setMonthDay] = useState(parsed?.monthDay ?? 1);
+  const [hour, setHour] = useState(parsed?.hour ?? 8);
+  const [minute, setMinute] = useState(parsed?.minute ?? 0);
   const [showPrefix, setShowPrefix] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const schedule: Schedule = { freq, weekdays, monthDay };
+  const schedule: Schedule = { freq, weekdays, monthDay, hour, minute };
 
   const toggleDay = (n: number) =>
     setWeekdays((prev) =>
@@ -185,8 +208,24 @@ function RoutineForm({
           </div>
         )}
 
+        {/* Time picker */}
+        <div className="flex items-center gap-2 mt-3">
+          <span className="text-[12px]" style={{ color: "var(--color-ink-mute)" }}>at</span>
+          <input
+            type="number" min={0} max={23} value={hour}
+            onChange={(e) => setHour(Math.min(23, Math.max(0, Number(e.target.value))))}
+            className="input w-16 text-center"
+          />
+          <span className="text-[12px]" style={{ color: "var(--color-ink-mute)" }}>:</span>
+          <input
+            type="number" min={0} max={59} value={String(minute).padStart(2, "0")}
+            onChange={(e) => setMinute(Math.min(59, Math.max(0, Number(e.target.value))))}
+            className="input w-16 text-center"
+          />
+        </div>
+
         <p className="mt-2 text-[11px]" style={{ color: "var(--color-ink-faint)", fontFamily: "var(--font-mono)" }}>
-          {buildHuman(schedule)} · draft created 30 min before send
+          {buildHuman(schedule)}
         </p>
       </div>
 
@@ -299,7 +338,7 @@ export function ScheduleView() {
       </div>
 
       <p className="text-[11px]" style={{ color: "var(--color-ink-faint)" }}>
-        * All scheduled mails are sent at 08:00 (Israel time)
+        Each routine runs at its configured time. 🔒 routines are managed internally.
       </p>
 
       {adding && (
@@ -327,7 +366,7 @@ export function ScheduleView() {
                 </p>
               </div>
               <div className="flex items-center gap-1.5 shrink-0">
-                {r.id === DAILY_BRIEF_ID ? (
+                {LOCKED_IDS.has(r.id) ? (
                   <span
                     title="Managed internally — prompt is not user-editable"
                     className="text-[13px] px-1"
@@ -374,7 +413,7 @@ export function ScheduleView() {
               </div>
             </div>
 
-            {expanded === r.id && r.id !== DAILY_BRIEF_ID && (
+            {expanded === r.id && !LOCKED_IDS.has(r.id) && (
               <div style={{ borderTop: "1px solid var(--color-border)" }} className="px-4 pb-4 pt-3">
                 <pre className="text-[11px] whitespace-pre-wrap break-words leading-relaxed"
                      style={{

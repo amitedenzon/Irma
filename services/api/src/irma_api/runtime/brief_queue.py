@@ -32,14 +32,14 @@ from irma_api.runtime.profile_cache import ProfileCache
 logger = structlog.get_logger(__name__)
 
 
-def next_brief_time(now: datetime, *, hour: int, timezone: str) -> datetime:
-    """Return the next ``hour``:00 in ``timezone`` strictly after ``now``.
+def next_brief_time(now: datetime, *, hour: int, minute: int = 0, timezone: str) -> datetime:
+    """Return the next ``hour``:``minute`` in ``timezone`` strictly after ``now``.
 
     ``now`` may be in any timezone; it is converted into ``timezone`` first.
     """
     tz = ZoneInfo(timezone)
     local = now.astimezone(tz)
-    candidate = local.replace(hour=hour, minute=0, second=0, microsecond=0)
+    candidate = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
     if candidate <= local:
         candidate += timedelta(days=1)
     return candidate
@@ -157,7 +157,8 @@ class ScheduledBriefQueue:
                 return {"queued": False, "reason": "disabled"}
 
             target_dt = next_brief_time(
-                self._now(), hour=profile.brief_hour, timezone=profile.timezone
+                self._now(), hour=profile.brief_hour, minute=profile.brief_minute,
+                timezone=profile.timezone,
             )
             for_date = target_dt.date()
             target_iso = target_dt.isoformat()

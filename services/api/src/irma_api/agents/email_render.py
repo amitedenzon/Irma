@@ -11,12 +11,14 @@ from __future__ import annotations
 import html as _html
 from datetime import date
 
+from irma_api.models.brief import Brief
 from irma_api.models.daily_brief import DailyBrief
 
 _DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
 # ── Irma palette (mirrors apps/desktop/src/styles.css) ─────────────────────
-_BG            = "#f5ece0"   # warm beige page background
+_PAGE_BG       = "#ffffff"   # outer page background (white so card stands out)
+_BG            = "#f5ece0"   # warm beige — card header strip
 _SURFACE       = "#fdfaf4"   # paper-white card
 _SURFACE2      = "#efe5d4"   # slightly darker beige (callout bg)
 _BORDER        = "#e0d0b3"   # tan divider / card border
@@ -212,7 +214,7 @@ def render_daily_email_html(brief: DailyBrief, today: date) -> str:
     :root {{ color-scheme: light; }}
   </style>
 </head>
-<body style="margin:0;padding:0;background:{_BG};font-family:{_SANS};">
+<body style="margin:0;padding:0;background:{_PAGE_BG};font-family:{_SANS};">
   <div style="max-width:600px;margin:0 auto;padding:32px 16px 24px;">
 
     <!-- Card -->
@@ -274,7 +276,7 @@ def render_simple_html(subject: str, body: str) -> str:
     :root {{ color-scheme: light; }}
   </style>
 </head>
-<body style="margin:0;padding:0;background:{_BG};font-family:{_SANS};">
+<body style="margin:0;padding:0;background:{_PAGE_BG};font-family:{_SANS};">
   <div style="max-width:600px;margin:0 auto;padding:32px 16px 24px;">
     <div style="background:{_SURFACE};border:1px solid {_BORDER};border-radius:12px;overflow:hidden;">
 
@@ -399,6 +401,168 @@ def _task_row(label_html: str, badge: str) -> str:
         f'{label_html}{badge}</span>'
         f'</li>'
     )
+
+
+def _week_range_label(week_start: date) -> str:
+    """Mon DD MMM – Sun DD MMM YYYY"""
+    week_end = week_start + __import__("datetime").timedelta(days=6)
+    if week_start.month == week_end.month:
+        return f"{week_start.strftime('%d')}–{week_end.strftime('%d %b %Y')}"
+    return f"{week_start.strftime('%d %b')} – {week_end.strftime('%d %b %Y')}"
+
+
+# ── Weekly plain-text + HTML ────────────────────────────────────────────────
+
+def render_weekly_email(brief: Brief, week_start: date) -> tuple[str, str]:
+    subject = f"Irma · Week in Review — {_week_range_label(week_start)}"
+    lines: list[str] = []
+
+    if brief.narrative:
+        lines += [brief.narrative, ""]
+
+    if brief.project_status:
+        lines.append("Project status")
+        for p in brief.project_status:
+            note = f" — {p.note}" if p.note else ""
+            days = f", {p.days_to_target}d to target" if p.days_to_target is not None else ""
+            lines.append(
+                f"  • {p.project_name}: {p.open_tasks} open / {p.done_tasks} done{days}{note}"
+            )
+        lines.append("")
+
+    if brief.focus:
+        lines.append("What was on the board")
+        for f in brief.focus:
+            proj = f" [{f.project_name}]" if f.project_name else ""
+            lines.append(f"  • {f.title}{proj}")
+        lines.append("")
+
+    if brief.conflicts:
+        lines.append("Heads-up")
+        for c in brief.conflicts:
+            lines.append(f"  • {c}")
+        lines.append("")
+
+    if brief.recommendation:
+        lines.append(brief.recommendation)
+
+    return subject, "\n".join(lines).rstrip() + "\n"
+
+
+def render_weekly_email_html(brief: Brief, week_start: date) -> str:
+    range_label = _week_range_label(week_start)
+    sections: list[str] = []
+
+    if brief.narrative:
+        sections.append(
+            f'<p style="margin:0;color:{_INK};font-size:15px;line-height:1.8;font-family:{_SANS};">'
+            f'{_e(brief.narrative)}</p>'
+        )
+
+    if brief.project_status:
+        rows: list[str] = []
+        for p in brief.project_status:
+            days_str = (
+                f'&ensp;<span style="color:{_INK_MUTE};font-size:11px;font-family:{_MONO};">'
+                f'{p.days_to_target}d to target</span>'
+                if p.days_to_target is not None else ""
+            )
+            counts = (
+                f'<span style="color:{_INK_MUTE};font-size:12px;font-family:{_MONO};">'
+                f'{p.open_tasks} open / {p.done_tasks} done</span>{days_str}'
+            )
+            rows.append(
+                f'<tr>'
+                f'<td style="padding:8px 0;border-bottom:1px solid {_BORDER};'
+                f'color:{_INK};font-size:14px;font-weight:600;font-family:{_SANS};">'
+                f'{_e(p.project_name)}</td>'
+                f'<td style="padding:8px 0 8px 16px;border-bottom:1px solid {_BORDER};'
+                f'text-align:right;white-space:nowrap;">{counts}</td>'
+                f'</tr>'
+            )
+        inner = f'<table style="width:100%;border-collapse:collapse;">{"".join(rows)}</table>'
+        sections.append(_section("Project status", inner))
+
+    if brief.focus:
+        items = [
+            _task_row(
+                _e(f.title) + (
+                    f'<span style="color:{_INK_MUTE};font-size:12px;margin-left:6px;">'
+                    f'[{_e(f.project_name)}]</span>' if f.project_name else ""
+                ),
+                "",
+            )
+            for f in brief.focus
+        ]
+        inner = f'<ul style="list-style:none;margin:0;padding:0;">{"".join(items)}</ul>'
+        sections.append(_section("What was on the board", inner))
+
+    if brief.conflicts:
+        items = [
+            f'<li style="display:flex;align-items:baseline;padding:6px 0;">'
+            f'<span style="color:{_RED};margin-right:10px;flex-shrink:0;">·</span>'
+            f'<span style="color:{_RED};font-size:14px;font-family:{_SANS};">{_e(c)}</span>'
+            f'</li>'
+            for c in brief.conflicts
+        ]
+        inner = f'<ul style="list-style:none;margin:0;padding:0;">{"".join(items)}</ul>'
+        sections.append(_section("Heads-up", inner))
+
+    if brief.recommendation:
+        sections.append(
+            f'<div style="margin-top:8px;padding:14px 18px;background:{_SURFACE2};'
+            f'border-left:3px solid {_RED};border-radius:0 6px 6px 0;'
+            f'color:{_INK};font-size:14px;line-height:1.7;font-family:{_SANS};">'
+            f'{_e(brief.recommendation)}</div>'
+        )
+
+    body_html = "\n".join(sections)
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="supported-color-schemes" content="light">
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Fira+Code:wght@400;500;600&display=swap');
+    :root {{ color-scheme: light; }}
+  </style>
+</head>
+<body style="margin:0;padding:0;background:{_PAGE_BG};font-family:{_SANS};">
+  <div style="max-width:600px;margin:0 auto;padding:32px 16px 24px;">
+
+    <div style="background:{_SURFACE};border:1px solid {_BORDER};border-radius:12px;overflow:hidden;">
+
+      <div style="padding:24px 32px 20px;background:{_BG};border-bottom:1px solid {_BORDER};">
+        <div style="font-family:{_MONO};font-size:11px;font-weight:600;
+                    color:{_RED};letter-spacing:0.06em;margin-bottom:8px;">
+          Irma
+        </div>
+        <div style="font-family:{_SANS};font-size:22px;font-weight:700;
+                    color:{_INK};letter-spacing:-0.02em;line-height:1.1;">
+          Week in Review
+        </div>
+        <div style="font-family:{_MONO};font-size:12px;color:{_INK_MUTE};margin-top:6px;">
+          {_e(range_label)}
+        </div>
+      </div>
+
+      <div style="padding:28px 32px;background:{_SURFACE};">
+        {body_html}
+      </div>
+
+    </div>
+
+    <div style="text-align:center;padding:16px 0 0;
+                font-family:{_MONO};font-size:10px;color:{_INK_MUTE};letter-spacing:0.05em;">
+      Irma &mdash; your AI PMO
+    </div>
+
+  </div>
+</body>
+</html>"""
 
 
 def _render_calendar_section(calendar_text: str) -> str:

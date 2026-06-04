@@ -16,7 +16,7 @@ from irma_api.models.profile import Profile, ProfileUpdate
 
 _COLUMNS = (
     "id, owner_name, owner_role, owner_email, timezone, persona_blurb, "
-    "calendar_exclude_ids, daily_brief_enabled, brief_hour, "
+    "calendar_exclude_ids, daily_brief_enabled, brief_hour, brief_minute, "
     "brief_lookahead_days, setup_complete, updated_at"
 )
 
@@ -38,6 +38,7 @@ def _row_to_profile(row: aiosqlite.Row) -> Profile:
         calendar_exclude_ids=json.loads(row["calendar_exclude_ids"]),
         daily_brief_enabled=bool(row["daily_brief_enabled"]),
         brief_hour=row["brief_hour"],
+        brief_minute=row["brief_minute"],
         brief_lookahead_days=row["brief_lookahead_days"],
         setup_complete=bool(row["setup_complete"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
@@ -55,7 +56,7 @@ class ProfileRepo:
         await self._conn.execute(
             f"""
             INSERT OR IGNORE INTO profile ({_COLUMNS})
-            VALUES (1, 'there', '', NULL, 'UTC', '', '[]', 1, 8, 3, 0, ?)
+            VALUES (1, 'there', '', NULL, 'UTC', '', '[]', 1, 8, 0, 3, 0, ?)
             """,
             (_DEFAULT_UPDATED_AT,),
         )

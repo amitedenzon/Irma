@@ -17,7 +17,7 @@ logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/profile", tags=["profile"])
 
-_SCHEDULE_FIELDS = frozenset({"brief_hour", "timezone", "daily_brief_enabled"})
+_SCHEDULE_FIELDS = frozenset({"brief_hour", "brief_minute", "timezone", "daily_brief_enabled"})
 
 
 def _repo(request: Request) -> ProfileRepo:
@@ -39,11 +39,6 @@ async def update_profile(request: Request, body: ProfileUpdate) -> Profile:
     cache: ProfileCache = request.app.state.profile_cache
     cache.set(updated)
 
-    # Re-evaluate the queued morning brief when a scheduling field changed: a
-    # new brief hour reschedules the parked email, disabling cancels it, and
-    # re-enabling queues a fresh one. Fire-and-forget so the PATCH stays fast
-    # (ensure_queued renders + calls Resend); the queue's own lock serializes it
-    # against the refresh tick.
     if body.model_fields_set & _SCHEDULE_FIELDS:
         brief_queue: ScheduledBriefQueue | None = getattr(
             request.app.state, "brief_queue", None

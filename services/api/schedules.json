@@ -5,7 +5,7 @@
     "cron": "30 4 * * *",
     "cron_human": "Every day",
     "enabled": false,
-    "prompt": "Task: Amit's daily stand-up brief.\n\nDATA TO GATHER (3 tool calls total \u2014 do not call list_tasks per project):\n1. read_calendar for today + next 3 days (4 days total).\n2. list_projects \u2014 active only.\n3. list_tasks with no filters \u2014 returns all tasks across all projects.\n\nCOMPOSE THE BRIEF with these sections, headings in ALL CAPS:\n\nTODAY'S SCHEDULE\nAll of today's events in standard date format. If empty, say so.\n\nNEXT 3 DAYS\nEvents for tomorrow through day+3, grouped by day. Omit days with nothing.\n\nPROGRESS DELTA\nWhat moved since yesterday: tasks completed today or yesterday (check completed_at), tasks newly in-progress or blocked. If nothing changed, say so briefly.\n\nOPEN & UPCOMING\nTasks in-progress or due within 3 days, grouped by project name. Skip done/archived.\n\nWATCH\nConflicts, back-to-back blocks, tight transitions, or overdue tasks. Omit section entirely if none.\n\nRECOMMENDATION\nOne short actionable sentence \u2014 the single most useful thing Amit can do today.\n\nTight and scannable. Lead with what matters most."
+    "prompt": "Task: your daily stand-up brief.\n\nDATA TO GATHER (3 tool calls total \u2014 do not call list_tasks per project):\n1. read_calendar for today + next 3 days (4 days total).\n2. list_projects \u2014 active only.\n3. list_tasks with no filters \u2014 returns all tasks across all projects.\n\nCOMPOSE THE BRIEF with these sections, headings in ALL CAPS:\n\nTODAY'S SCHEDULE\nAll of today's events in standard date format. If empty, say so.\n\nNEXT 3 DAYS\nEvents for tomorrow through day+3, grouped by day. Omit days with nothing.\n\nPROGRESS DELTA\nWhat moved since yesterday: tasks completed today or yesterday (check completed_at), tasks newly in-progress or blocked. If nothing changed, say so briefly.\n\nOPEN & UPCOMING\nTasks currently in-progress or due within 3 days, grouped by project. Skip done/archived.\n\nWATCH\nConflicts, back-to-back blocks, tight transitions, or overdue tasks. Omit section entirely if none.\n\nRECOMMENDATION\nOne short actionable sentence \u2014 the single most useful thing the operator can do today.\n\nTight and scannable. Lead with what matters most."
   },
   {
     "id": "b2d2ae23-56d7-4817-9103-43bed0ee2d75",
@@ -14,5 +14,13 @@
     "cron_human": "Monthly on the 2nd",
     "prompt": "Task: Amit's monthly financial check-in.\n\n1. Paycheck: remind him to verify this month's salary arrived.\n2. Invest: prompt to allocate this month's investment budget.\n3. Retro: prompt him to use Spender's app in order to look back at this month's spendings.\n\nKeep it a nudge, not a lecture.",
     "enabled": true
+  },
+  {
+    "id": "trig_weekly_review_sat_2000",
+    "name": "Weekly Review",
+    "cron": "0 20 * * 6",
+    "cron_human": "Every Saturday at 20:00",
+    "enabled": true,
+    "prompt": "This is a Saturday evening weekly retrospective.\n\nReflect on the week that just ended. Be honest and specific \u2014 not generic.\n\nFocus on:\n- How productive was this week overall? Did meaningful work actually get done?\n- Task completion rate: what got done vs what was planned or overdue?\n- Time and schedule management: were heavy blocks well placed? Any conflicts or wasted transitions?\n- Project momentum: which projects moved, which stalled, which need attention next week?\n- One clear recommendation for next week based on what you observed.\n\nTone: calm, honest, direct. Like a trusted advisor reviewing the week with you."
   }
 ]

@@ -27,6 +27,7 @@ router = APIRouter(prefix="/schedule", tags=["schedule"])
 
 _MAX_TOOL_ITER = 20
 _DAILY_BRIEF_ROUTINE_ID = "trig_0128d6voBA1V4YoHYqhtK1fE"
+_WEEKLY_REVIEW_ROUTINE_ID = "trig_weekly_review_sat_2000"
 
 _SEED: list[dict[str, Any]] = [
     {
@@ -57,7 +58,25 @@ _SEED: list[dict[str, Any]] = [
             "One short actionable sentence — the single most useful thing the operator can do today.\n\n"
             "Tight and scannable. Lead with what matters most."
         ),
-    }
+    },
+    {
+        "id": "trig_weekly_review_sat_2000",
+        "name": "Weekly Review",
+        "cron": "0 20 * * 6",
+        "cron_human": "Every Saturday at 20:00",
+        "enabled": True,
+        "prompt": (
+            "This is a Saturday evening weekly retrospective.\n\n"
+            "Reflect on the week that just ended. Be honest and specific — not generic.\n\n"
+            "Focus on:\n"
+            "- How productive was this week overall? Did meaningful work actually get done?\n"
+            "- Task completion rate: what got done vs what was planned or overdue?\n"
+            "- Time and schedule management: were heavy blocks well placed? Any conflicts or wasted transitions?\n"
+            "- Project momentum: which projects moved, which stalled, which need attention next week?\n"
+            "- One clear recommendation for next week based on what you observed.\n\n"
+            "Tone: calm, honest, direct. Like a trusted advisor reviewing the week with you."
+        ),
+    },
 ]
 
 
@@ -88,6 +107,25 @@ def _load(request: Request) -> list[dict[str, Any]]:
         p.write_text(json.dumps(_SEED, indent=2))
         return list(_SEED)
     data: list[dict[str, Any]] = json.loads(p.read_text())
+    # Backfill missing seed entries; also sync prompt/cron_human for managed
+    # routines whose seed content changed (identified by id).
+    _MANAGED_IDS = {_DAILY_BRIEF_ROUTINE_ID, _WEEKLY_REVIEW_ROUTINE_ID}
+    existing_ids = {r["id"] for r in data}
+    changed = False
+    for seed_entry in _SEED:
+        if seed_entry["id"] not in existing_ids:
+            data.append(seed_entry)
+            changed = True
+        elif seed_entry["id"] in _MANAGED_IDS:
+            # Sync mutable display fields that may have changed in the seed.
+            for r in data:
+                if r["id"] == seed_entry["id"]:
+                    for field in ("prompt", "cron_human"):
+                        if r.get(field) != seed_entry.get(field):
+                            r[field] = seed_entry[field]
+                            changed = True
+    if changed:
+        _path(request).write_text(json.dumps(data, indent=2))
     return data
 
 
@@ -160,6 +198,36 @@ async def run_routine(routine_id: str, request: Request) -> dict[str, Any]:
         await bus.publish(AgentState.IDLE)
         if not result.get("sent"):
             raise HTTPException(status_code=502, detail=str(result.get("reason", "not sent")))
+        logger.info("schedule.run_routine.done", routine_id=routine_id, name=routine["name"])
+        return {"sent": True}
+
+    # --- Weekly review: synthesize week-horizon Brief + send pretty HTML.
+    if routine_id == _WEEKLY_REVIEW_ROUTINE_ID:
+        lead_agent = getattr(request.app.state, "lead_agent", None)
+        send_tool = getattr(request.app.state, "send_email_tool", None)
+        if lead_agent is None or send_tool is None:
+            raise HTTPException(status_code=503, detail="Lead agent or email not configured")
+        from datetime import timedelta
+
+        from irma_api.agents.email_render import render_weekly_email, render_weekly_email_html
+        from irma_api.tools.base import ToolError
+
+        await bus.publish(AgentState.THINKING)
+        try:
+            guidance = routine.get("prompt", "").strip() or None
+            brief = await lead_agent.synthesize("week", guidance=guidance)
+            week_start = today - timedelta(days=today.weekday())
+            subject, text = render_weekly_email(brief, week_start)
+            html = render_weekly_email_html(brief, week_start)
+            await send_tool.call({"subject": subject, "body": text, "html": html})
+        except ToolError as exc:
+            await bus.publish(AgentState.ALERT)
+            raise HTTPException(status_code=502, detail=f"{exc.code}: {exc.detail}") from exc
+        except Exception as exc:
+            await bus.publish(AgentState.ALERT)
+            logger.exception("schedule.run_routine.weekly_review_failed", routine_id=routine_id)
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        await bus.publish(AgentState.IDLE)
         logger.info("schedule.run_routine.done", routine_id=routine_id, name=routine["name"])
         return {"sent": True}
 
