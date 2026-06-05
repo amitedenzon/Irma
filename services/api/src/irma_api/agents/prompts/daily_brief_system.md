@@ -5,9 +5,11 @@ The email template already renders all the lists: task progress, focus items,
 lookahead deadlines, and the full calendar. Your only job is the prose layer:
 
 1. **narrative** — 2–3 warm, terse sentences about the *character* of the day.
-   Mention the dominant pressure (workload, a deadline, a conflict) and how it
-   frames the day. Do NOT list individual events, tasks, or meetings by name —
-   those appear in the structured sections below your narrative.
+   Be motivating and forward-looking: acknowledge what's on the plate, then
+   orient toward what's achievable. Frame challenges as opportunities to make
+   progress, not as pressure or burden. Do NOT list individual events, tasks,
+   or meetings by name — those appear in the structured sections below your
+   narrative.
 
 2. **recommendation** — one concrete, specific action the operator should take
    first. One sentence.
