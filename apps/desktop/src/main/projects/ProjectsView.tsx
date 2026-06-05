@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   DndContext,
   closestCenter,
@@ -182,29 +182,58 @@ export function ProjectsView({
 
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
         <SortableContext items={visible.map((p) => p.id)} strategy={rectSortingStrategy}>
-          <div className="flex gap-3 items-start">
-            {[visible.filter((_, i) => i % 2 === 0), visible.filter((_, i) => i % 2 !== 0)].map(
-              (col, ci) => (
-                <div key={ci} className="flex-1 flex flex-col gap-3">
-                  {col.map((p) => (
-                    <SortableCard
-                      key={p.id}
-                      project={p}
-                      onChanged={(updated) =>
-                        onProjectsChanged((cur) => cur.map((c) => (c.id === updated.id ? updated : c)))
-                      }
-                      onDeleted={(id) => {
-                        onProjectsChanged((cur) => cur.filter((c) => c.id !== id));
-                        void onReload();
-                      }}
-                    />
-                  ))}
-                </div>
-              ),
-            )}
-          </div>
+          <ProjectGrid visible={visible} onProjectsChanged={onProjectsChanged} onReload={onReload} />
         </SortableContext>
       </DndContext>
+    </div>
+  );
+}
+
+function ProjectGrid({
+  visible,
+  onProjectsChanged,
+  onReload,
+}: {
+  visible: Project[];
+  onProjectsChanged: (next: Project[] | ((cur: Project[]) => Project[])) => void;
+  onReload: () => void | Promise<void>;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [ncols, setNcols] = useState(2);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => {
+      setNcols(entry.contentRect.width >= 720 ? 3 : 2);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const cols = Array.from({ length: ncols }, (_, ci) =>
+    visible.filter((_, i) => i % ncols === ci),
+  );
+
+  return (
+    <div ref={containerRef} className="flex gap-3 items-start">
+      {cols.map((col, ci) => (
+        <div key={ci} className="flex-1 flex flex-col gap-3">
+          {col.map((p) => (
+            <SortableCard
+              key={p.id}
+              project={p}
+              onChanged={(updated) =>
+                onProjectsChanged((cur) => cur.map((c) => (c.id === updated.id ? updated : c)))
+              }
+              onDeleted={(id) => {
+                onProjectsChanged((cur) => cur.filter((c) => c.id !== id));
+                void onReload();
+              }}
+            />
+          ))}
+        </div>
+      ))}
     </div>
   );
 }

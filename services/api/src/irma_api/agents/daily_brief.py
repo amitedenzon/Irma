@@ -114,7 +114,7 @@ def _parse_prose(text: str) -> tuple[str, str, list[str]]:
     return (
         str(data["narrative"]),
         str(data["recommendation"]),
-        [str(c) for c in data.get("conflicts", [])],
+        [str(c) for c in data.get("conflicts", []) if str(c).strip()],
     )
 
 
@@ -193,9 +193,12 @@ class DailyBriefService:
             )
         ]
 
+        today_focus_ids = {f.task_id for f in today_focus}
         lookahead: list[LookaheadItem] = []
         for t in all_tasks:
             if t.status not in _OPEN_STATUSES:
+                continue
+            if t.id in today_focus_ids:
                 continue
             if t.due_date is not None and for_date < t.due_date <= window_end:
                 lookahead.append(
