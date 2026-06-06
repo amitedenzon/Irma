@@ -65,13 +65,20 @@ def render_daily_email(brief: DailyBrief, today: date) -> tuple[str, str]:
             lines.append("Progress since your last brief")
             for p in brief.progress:
                 lines.append(
-                    f"  • {p.project_name}: {p.completed_since} done, "
-                    f"{p.added_since} added — {p.open_now} open / {p.done_now} done"
+                    f"  • {p.project_name}: {p.completed_since} done · "
+                    f"{p.added_since} new · {p.open_now} open"
                 )
         else:
             lines.append("Project status (first brief — no prior baseline yet)")
             for p in brief.progress:
-                lines.append(f"  • {p.project_name}: {p.open_now} open / {p.done_now} done")
+                lines.append(f"  • {p.project_name}: {p.open_now} open")
+        lines.append("")
+
+    if brief.doing_tasks:
+        lines.append("In progress")
+        for f in brief.doing_tasks:
+            proj = f" [{f.project_name}]" if f.project_name else ""
+            lines.append(f"  • {f.title}{proj}")
         lines.append("")
 
     if brief.today_focus or brief.lookahead_tasks:
@@ -127,15 +134,14 @@ def render_daily_email_html(brief: DailyBrief, today: date) -> str:
             if brief.has_baseline:
                 delta = (
                     f'<span style="color:{_INK_MUTE};font-size:12px;font-family:{_MONO};">'
-                    f'{p.completed_since} done &nbsp;·&nbsp; {p.added_since} added'
+                    f'{p.completed_since} done &nbsp;·&nbsp; {p.added_since} new'
+                    f' &nbsp;·&nbsp; {p.open_now} open'
                     f'</span>'
-                    f'&ensp;<span style="color:{_INK_MUTE};font-size:12px;font-family:{_MONO};">'
-                    f'{p.open_now} open / {p.done_now} done</span>'
                 )
             else:
                 delta = (
                     f'<span style="color:{_INK_MUTE};font-size:12px;font-family:{_MONO};">'
-                    f'{p.open_now} open / {p.done_now} done</span>'
+                    f'{p.open_now} open</span>'
                 )
             rows.append(
                 f'<tr>'
@@ -148,6 +154,24 @@ def render_daily_email_html(brief: DailyBrief, today: date) -> str:
             )
         inner = f'<table style="width:100%;border-collapse:collapse;">{"".join(rows)}</table>'
         sections.append(_section(title, inner))
+
+    # ── In progress ──
+    if brief.doing_tasks:
+        items: list[str] = []
+        for f in brief.doing_tasks:
+            proj = (
+                f'<span style="color:{_INK_MUTE};font-size:12px;margin-left:6px;">'
+                f'[{_e(f.project_name)}]</span>'
+                if f.project_name else ""
+            )
+            badge = (
+                f'<span style="display:inline-block;margin-left:8px;padding:1px 7px;'
+                f'background:rgba(42,31,23,0.07);color:{_INK_MUTE};font-size:11px;'
+                f'font-weight:600;border-radius:4px;font-family:{_MONO};">doing</span>'
+            )
+            items.append(_task_row(_e(f.title) + proj, badge))
+        inner_doing = f'<ul style="list-style:none;margin:0;padding:0;">{"".join(items)}</ul>'
+        sections.append(_section("In progress", inner_doing))
 
     # ── Focus & upcoming (today's focus + lookahead merged) ──
     all_task_items: list[str] = []

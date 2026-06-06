@@ -52,6 +52,7 @@ class BriefInputs:
     """
 
     profile: Profile
+    doing_tasks: list[FocusItem]
     today_focus: list[FocusItem]
     lookahead: list[LookaheadItem]
     calendar_text: str | None
@@ -194,6 +195,21 @@ class DailyBriefService:
         ]
 
         today_focus_ids = {f.task_id for f in today_focus}
+
+        doing_tasks = [
+            FocusItem(
+                kind=FocusKind.TASK,
+                title=t.title,
+                project_id=t.project_id,
+                project_name=project_names.get(t.project_id),
+                task_id=t.id,
+                due_date=t.due_date.isoformat() if t.due_date else None,
+                scheduled_for=t.scheduled_for.isoformat() if t.scheduled_for else None,
+            )
+            for t in all_tasks
+            if t.status == TaskStatus.DOING and t.id not in today_focus_ids
+        ]
+
         lookahead: list[LookaheadItem] = []
         for t in all_tasks:
             if t.status not in _OPEN_STATUSES:
@@ -227,6 +243,7 @@ class DailyBriefService:
 
         inputs = BriefInputs(
             profile=profile,
+            doing_tasks=doing_tasks,
             today_focus=today_focus,
             lookahead=lookahead,
             calendar_text=calendar_text,
@@ -242,6 +259,7 @@ class DailyBriefService:
             profile=inputs.profile,
             today=for_date,
             progress=inputs.progress,
+            doing_tasks=inputs.doing_tasks,
             today_focus=inputs.today_focus,
             lookahead=inputs.lookahead,
             calendar_text=inputs.calendar_text,
@@ -262,6 +280,7 @@ class DailyBriefService:
             recommendation=recommendation,
             conflicts=conflicts,
             progress=inputs.progress,
+            doing_tasks=inputs.doing_tasks,
             today_focus=inputs.today_focus,
             lookahead_tasks=inputs.lookahead,
             calendar_text=inputs.calendar_text,
@@ -276,6 +295,7 @@ class DailyBriefService:
                 [p.project_id, p.completed_since, p.added_since, p.open_now, p.done_now]
                 for p in inputs.progress
             ],
+            "doing_tasks": [[f.title, f.project_name] for f in inputs.doing_tasks],
             "today_focus": [[f.title, f.due_date, f.project_name] for f in inputs.today_focus],
             "lookahead": [
                 [it.title, it.when, it.kind, it.project_name] for it in inputs.lookahead
@@ -302,6 +322,7 @@ class DailyBriefService:
         profile: Profile,
         today: date,
         progress: list[ProjectProgress],
+        doing_tasks: list[FocusItem],
         today_focus: list[FocusItem],
         lookahead: list[LookaheadItem],
         calendar_text: str | None,
@@ -309,7 +330,7 @@ class DailyBriefService:
         base_system = load_prompt("daily_brief_system")
         owner_ctx = build_owner_context(profile)
         system = f"{base_system}\n\n{owner_ctx}"
-        user = self._compose(profile, today, progress, today_focus, lookahead, calendar_text)
+        user = self._compose(profile, today, progress, doing_tasks, today_focus, lookahead, calendar_text)
         messages = [ChatTurn(role="user", content=user)]
         outcome = await self._llm.complete(
             system=system, messages=messages, max_tokens=self._max_tokens
@@ -339,6 +360,7 @@ class DailyBriefService:
         profile: Profile,
         today: date,
         progress: list[ProjectProgress],
+        doing_tasks: list[FocusItem],
         today_focus: list[FocusItem],
         lookahead: list[LookaheadItem],
         calendar_text: str | None,
@@ -355,8 +377,14 @@ class DailyBriefService:
         for p in progress:
             lines.append(
                 f"  • {p.project_name}: {p.completed_since} completed, "
-                f"{p.added_since} added — {p.open_now} open / {p.done_now} done"
+                f"{p.added_since} new — {p.open_now} open"
             )
+        lines.append("")
+        lines.append("IN PROGRESS (actively being worked on):")
+        if doing_tasks:
+            lines.extend(f"  • {f.title}" + (f" [{f.project_name}]" if f.project_name else "") for f in doing_tasks)
+        else:
+            lines.append("  (none)")
         lines.append("")
         lines.append("TODAY'S FOCUS (overdue + due today):")
         if today_focus:
