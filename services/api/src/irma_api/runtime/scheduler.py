@@ -130,6 +130,30 @@ class Scheduler:
                 "scheduler.daily_job_readded", hour=hour, minute=minute, timezone=timezone
             )
 
+    def add_cron_job(
+        self,
+        callback: Callable[[], Awaitable[object]],
+        *,
+        cron: str,
+        timezone: str,
+        job_id: str,
+        enabled: bool = True,
+    ) -> None:
+        """Register an arbitrary cron job by 5-field cron expression."""
+        if not enabled:
+            logger.info("scheduler.cron_job_skipped_disabled", job_id=job_id, cron=cron)
+            return
+        trigger = CronTrigger.from_crontab(cron, timezone=timezone)
+        self._sched.add_job(
+            callback,
+            trigger=trigger,
+            id=job_id,
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        logger.info("scheduler.cron_job_added", job_id=job_id, cron=cron, timezone=timezone)
+
     def shutdown(self) -> None:
         if self._sched.running:
             self._sched.shutdown(wait=False)

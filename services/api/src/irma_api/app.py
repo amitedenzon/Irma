@@ -171,6 +171,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.daily_brief_job = daily_brief_job
     app.state.brief_queue = brief_queue
 
+    weekly_review_job = None
+    if lead_agent is not None and send_email_tool is not None:
+        from irma_api.runtime.weekly_job import WeeklyReviewJob
+
+        weekly_review_job = WeeklyReviewJob(
+            lead_agent=lead_agent,
+            sender=send_email_tool,
+            profile_cache=profile_cache,
+        )
+    app.state.weekly_review_job = weekly_review_job
+
     # --- Apple Reminders bridge + sync factory ---
     reminder_bridge = None
     reminder_sync_factory = None
@@ -234,6 +245,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     scheduler.start()
     app.state.scheduler = scheduler
+
+    if weekly_review_job is not None:
+        scheduler.add_cron_job(
+            weekly_review_job.run_once,
+            cron="0 20 * * 6",
+            timezone=profile_cache.current.timezone,
+            job_id="irma-weekly-review",
+        )
 
     # Queue the first brief right after boot (fire-and-forget so a slow Opus
     # render never blocks app readiness; the refresh tick is the steady-state
