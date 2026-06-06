@@ -10,8 +10,8 @@
   {
     "id": "b2d2ae23-56d7-4817-9103-43bed0ee2d75",
     "name": "Financial Check-In",
-    "cron": "30 4 2 * *",
-    "cron_human": "Monthly on the 2nd",
+    "cron": "30 12 2 * *",
+    "cron_human": "Monthly on the 2nd at 12:30",
     "prompt": "Task: Amit's monthly financial check-in.\n\n1. Paycheck: remind him to verify this month's salary arrived.\n2. Invest: prompt to allocate this month's investment budget.\n3. Retro: prompt him to use Spender's app in order to look back at this month's spendings.\n\nKeep it a nudge, not a lecture.",
     "enabled": true
   },

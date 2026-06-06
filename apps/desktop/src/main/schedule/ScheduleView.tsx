@@ -90,11 +90,13 @@ function RoutineForm({
   prefix,
   onSaved,
   onCancel,
+  onDeleted,
 }: {
   initial?: Routine;
   prefix: string;
   onSaved: (r: Routine) => void;
   onCancel: () => void;
+  onDeleted?: (id: string) => void;
 }) {
   const parsed = initial?.cron ? parseCron(initial.cron) : null;
   const [name, setName] = useState(initial?.name ?? "");
@@ -107,6 +109,23 @@ function RoutineForm({
   const [showPrefix, setShowPrefix] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  const deleteRoutine = async () => {
+    if (!initial) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`${IRMA_API_BASE}/api/v1/schedule/routines/${initial.id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      onDeleted?.(initial.id);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+      setConfirmDelete(false);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const schedule: Schedule = { freq, weekdays, monthDay, hour, minute };
 
@@ -265,11 +284,37 @@ function RoutineForm({
 
       {error && <p className="text-[12px]" style={{ color: "var(--color-red)" }}>{error}</p>}
 
-      <div className="flex justify-end gap-2">
-        <button type="button" onClick={onCancel} className="btn-ghost">cancel</button>
-        <button type="submit" disabled={busy || !name.trim() || !prompt.trim()} className="btn-red">
-          {busy ? "saving…" : initial ? "save" : "create"}
-        </button>
+      <div className="flex items-center justify-between gap-2">
+        {initial && onDeleted ? (
+          confirmDelete ? (
+            <div className="flex items-center gap-2">
+              <span className="text-[12px]" style={{ color: "var(--color-ink-mute)" }}>Delete this routine?</span>
+              <button type="button" onClick={() => void deleteRoutine()} disabled={busy}
+                      className="text-[12px] px-2.5 py-1 rounded-md font-medium"
+                      style={{ color: "#fff", background: "var(--color-red)" }}>
+                {busy ? "Deleting…" : "Yes, delete"}
+              </button>
+              <button type="button" onClick={() => setConfirmDelete(false)} disabled={busy}
+                      className="text-[12px]" style={{ color: "var(--color-ink-mute)" }}>
+                cancel
+              </button>
+            </div>
+          ) : (
+            <button type="button" onClick={() => setConfirmDelete(true)}
+                    className="text-[12px] px-2.5 py-1 rounded-md"
+                    style={{ color: "var(--color-red)" }}>
+              Delete
+            </button>
+          )
+        ) : (
+          <span />
+        )}
+        <div className="flex gap-2">
+          <button type="button" onClick={onCancel} className="btn-ghost">cancel</button>
+          <button type="submit" disabled={busy || !name.trim() || !prompt.trim()} className="btn-red">
+            {busy ? "saving…" : initial ? "save" : "create"}
+          </button>
+        </div>
       </div>
     </form>
   );
@@ -352,7 +397,8 @@ export function ScheduleView() {
       {routines.map((r) =>
         editing?.id === r.id ? (
           <RoutineForm key={r.id} initial={r} prefix={prefix}
-                       onSaved={onSaved} onCancel={() => setEditing(null)} />
+                       onSaved={onSaved} onCancel={() => setEditing(null)}
+                       onDeleted={(id) => { setRoutines((prev) => prev.filter((x) => x.id !== id)); setEditing(null); }} />
         ) : (
           <div key={r.id} className="rounded-xl border"
                style={{ background: "var(--color-surface)", borderColor: "var(--color-border)" }}>
