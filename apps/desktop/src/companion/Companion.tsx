@@ -139,6 +139,7 @@ export function Companion() {
   const boundsRef = useRef<CompanionBounds | null>(null);
   const xRef = useRef<number>(0);
   const draggingRef = useRef<boolean>(false);
+  const [cheeseDropTarget, setCheeseDropTarget] = useState(false);
   const startXRef = useRef<number | null>(null);
   const pressRef = useRef<{
     screenX: number;
@@ -461,10 +462,18 @@ export function Companion() {
       if (cancelled) return;
       enterTreatMode();
     })
-      .then((u) => {
-        unlistenTreat = u;
-      })
+      .then((u) => { unlistenTreat = u; })
       .catch((e) => console.error("[companion] listen companion:treat failed", e));
+
+    // Cheese drag-and-drop: glow when user is dragging cheese toward us
+    listen<void>("cheese:drag-start", () => {
+      if (cancelled) return;
+      setCheeseDropTarget(true);
+    }).catch((e) => console.warn("[companion] listen cheese:drag-start failed", e));
+    listen<void>("cheese:drag-end", () => {
+      if (cancelled) return;
+      setCheeseDropTarget(false);
+    }).catch((e) => console.warn("[companion] listen cheese:drag-end failed", e));
 
     // Poll whether the main window is actually presented to the user every
     // 250 ms. We key off "active" (visible AND focused), not just "visible":
@@ -576,7 +585,14 @@ export function Companion() {
 
   return (
     <div style={WRAPPER_STYLE}>
-      <div style={{ position: "relative", pointerEvents: "none" }}>
+      <div style={{
+        position: "relative",
+        pointerEvents: "none",
+        filter: cheeseDropTarget
+          ? "drop-shadow(0 0 12px gold) drop-shadow(0 0 6px orange)"
+          : "none",
+        transition: "filter 0.2s ease",
+      }}>
         <Sprite
           spec={spec}
           manifest={effectiveManifest}

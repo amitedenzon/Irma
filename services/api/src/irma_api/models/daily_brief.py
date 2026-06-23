@@ -38,6 +38,7 @@ class DailyBrief(BaseModel):
     recommendation: str = ""
     conflicts: list[str] = Field(default_factory=list)
     progress: list[ProjectProgress] = Field(default_factory=list)
+    doing_tasks: list[FocusItem] = Field(default_factory=list)
     today_focus: list[FocusItem] = Field(default_factory=list)
     lookahead_tasks: list[LookaheadItem] = Field(default_factory=list)
     calendar_text: str | None = None

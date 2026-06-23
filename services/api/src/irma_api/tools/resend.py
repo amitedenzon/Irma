@@ -3,11 +3,12 @@
 Why locked: the tool is invoked by the LLM during /chat. A prompt-injection
 payload riding in a calendar event description could otherwise convince the
 model to email arbitrary recipients. The To: header is set server-side from
-settings and the tool's args schema does not advertise a `to` field.
+the owner profile and the tool's args schema does not advertise a `to` field.
 """
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -21,6 +22,7 @@ from tenacity import (
 )
 
 from irma_api.config import Settings
+from irma_api.runtime.profile_cache import ProfileCache
 from irma_api.tools.base import Tool, ToolError, ToolSpec
 
 logger = structlog.get_logger(__name__)
@@ -72,11 +74,18 @@ class ResendSendTool:
         },
     )
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, profile_cache: ProfileCache) -> None:
         self._settings = settings
+        self._profile_cache = profile_cache
 
-    async def call(self, args: dict[str, Any]) -> str:
-        if self._settings.irma_user_email is None:
+    def _recipient(self) -> str:
+        """Resolve the locked recipient and assert Resend is configured.
+
+        Order matters: a missing recipient reports ``user_email_unset`` even
+        when the key is also absent (mirrors the tool's documented behaviour).
+        """
+        recipient = self._profile_cache.current.owner_email
+        if recipient is None:
             raise ToolError(
                 "user_email_unset",
                 detail="set IRMA_USER_EMAIL before enabling send_email",
@@ -86,6 +95,10 @@ class ResendSendTool:
                 "resend_unlinked",
                 detail="set RESEND_API_KEY in .env",
             )
+        return recipient
+
+    async def call(self, args: dict[str, Any]) -> str:
+        recipient = self._recipient()
 
         subject = str(args.get("subject", "")).strip()
         body = str(args.get("body", ""))
@@ -95,15 +108,65 @@ class ResendSendTool:
                 detail="both `subject` and `body` are required",
             )
 
+        from irma_api.agents.email_render import render_simple_html  # local import: avoids circular
+
+        html_body = str(args.get("html", "")).strip()
+        if not html_body:
+            html_body = render_simple_html(subject, body)
+
         payload: dict[str, Any] = {
             "from": self._settings.resend_from_email,
-            "to": [self._settings.irma_user_email],
+            "to": [recipient],
             "subject": subject,
             "text": body,
+            "html": html_body,
         }
-        html_body = str(args.get("html", "")).strip()
-        if html_body:
-            payload["html"] = html_body
+        response = await self._send(payload)
+        return f"sent (message id {response.get('id', '?')})"
+
+    async def schedule_email(
+        self, *, subject: str, body: str, html: str, scheduled_at: datetime
+    ) -> str:
+        """Queue an email for future delivery via Resend's ``scheduled_at``.
+
+        Unlike :meth:`call` (the LLM-facing tool) this is an internal sender
+        used by the daily-brief queue: it takes pre-rendered HTML + text and a
+        delivery time, and returns the bare Resend message id so the caller can
+        later cancel/replace it.
+        """
+        recipient = self._recipient()
+        payload: dict[str, Any] = {
+            "from": self._settings.resend_from_email,
+            "to": [recipient],
+            "subject": subject,
+            "text": body,
+            "html": html,
+            "scheduled_at": scheduled_at.isoformat(),
+        }
+        response = await self._send(payload)
+        return str(response.get("id", ""))
+
+    async def cancel_email(self, email_id: str) -> None:
+        """Cancel a previously-scheduled email. Raises if Resend rejects it.
+
+        A 4xx here typically means the email already sent (too late to cancel);
+        the caller is expected to catch and continue.
+        """
+        if self._settings.resend_api_key is None:
+            raise ToolError("resend_unlinked", detail="set RESEND_API_KEY in .env")
+        headers = {
+            "Authorization": f"Bearer {self._settings.resend_api_key.get_secret_value()}",
+        }
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(f"{_RESEND_URL}/{email_id}/cancel", headers=headers)
+        if resp.status_code >= 400:
+            logger.warning("resend.cancel_failed", status=resp.status_code, email_id=email_id)
+            raise ToolError(
+                "resend_cancel_failed",
+                detail=f"status={resp.status_code}: {resp.text[:200]}",
+            )
+
+    async def _send(self, payload: dict[str, Any]) -> dict[str, Any]:
         try:
             async for attempt in AsyncRetrying(
                 stop=stop_after_attempt(4),
@@ -119,9 +182,7 @@ class ResendSendTool:
         except _ResendHTTPError as exc:
             logger.warning("resend.http_error", status=exc.status_code, body=exc.body[:200])
             raise ToolError("resend_failed", detail=str(exc)) from exc
-
-        message_id = str(response.get("id", "?"))
-        return f"sent (message id {message_id})"
+        return response
 
     async def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
         assert self._settings.resend_api_key is not None  # checked by call()

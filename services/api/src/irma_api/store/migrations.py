@@ -80,6 +80,23 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
         created_at          TEXT NOT NULL
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS profile (
+        id                   INTEGER PRIMARY KEY CHECK (id = 1),
+        owner_name           TEXT    NOT NULL DEFAULT 'there',
+        owner_role           TEXT    NOT NULL DEFAULT '',
+        owner_email          TEXT,
+        timezone             TEXT    NOT NULL DEFAULT 'UTC',
+        persona_blurb        TEXT    NOT NULL DEFAULT '',
+        calendar_exclude_ids TEXT    NOT NULL DEFAULT '[]',
+        daily_brief_enabled  INTEGER NOT NULL DEFAULT 1,
+        brief_hour           INTEGER NOT NULL DEFAULT 8,
+        brief_minute         INTEGER NOT NULL DEFAULT 0,
+        brief_lookahead_days INTEGER NOT NULL DEFAULT 3,
+        setup_complete       INTEGER NOT NULL DEFAULT 0,
+        updated_at           TEXT    NOT NULL
+    )
+    """,
     "DROP TABLE IF EXISTS briefs",
 )
 
@@ -119,4 +136,6 @@ async def ensure_schema(conn: aiosqlite.Connection) -> None:
             "CREATE UNIQUE INDEX idx_project_reminder_calendar_id "
             "ON project(reminder_calendar_id) WHERE reminder_calendar_id IS NOT NULL"
         )
+    if not await _table_has_column(conn, "profile", "brief_minute"):
+        await conn.execute("ALTER TABLE profile ADD COLUMN brief_minute INTEGER NOT NULL DEFAULT 0")
     await conn.commit()

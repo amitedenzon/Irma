@@ -5,7 +5,8 @@ import { applyTheme, loadSettings } from "./lib/settings";
 import "./styles.css";
 
 // Apply persisted theme before first paint.
-applyTheme(loadSettings().themeId);
+const { themeId: _initThemeId } = loadSettings();
+applyTheme(_initThemeId);
 
 const rootEl = document.getElementById("root");
 if (!rootEl) throw new Error("root element missing in index.html");

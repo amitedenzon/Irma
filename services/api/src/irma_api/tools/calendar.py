@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, cast
+from zoneinfo import ZoneInfo
 
 import structlog
 from aiogoogle import Aiogoogle  # type: ignore[attr-defined]
@@ -23,6 +24,7 @@ from tenacity import (
 )
 
 from irma_api.config import Settings
+from irma_api.runtime.profile_cache import ProfileCache
 from irma_api.tools.base import Tool, ToolError, ToolSpec
 
 logger = structlog.get_logger(__name__)
@@ -69,8 +71,9 @@ class ReadCalendarTool:
         },
     )
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, profile_cache: ProfileCache) -> None:
         self._settings = settings
+        self._profile_cache = profile_cache
 
     async def call(self, args: dict[str, Any]) -> str:
         if not self._has_credentials():
@@ -83,9 +86,21 @@ class ReadCalendarTool:
         days = max(1, min(_MAX_DAYS, days))
 
         client, user = self._build_creds()
-        now = datetime.now(UTC)
-        time_min = now.isoformat()
-        time_max = (now + timedelta(days=days)).isoformat()
+        # `start_date` (internal — not in the LLM-facing schema) anchors the
+        # window to a specific calendar day in the profile timezone, so the
+        # daily-brief queue can render *tomorrow's* brief tonight. Without it we
+        # read forward from now (the usual on-demand "next N days" behaviour).
+        start_raw = args.get("start_date")
+        if start_raw:
+            tz = ZoneInfo(self._profile_cache.current.timezone)
+            d = date.fromisoformat(str(start_raw))
+            start_local = datetime(d.year, d.month, d.day, tzinfo=tz)
+            time_min = start_local.isoformat()
+            time_max = (start_local + timedelta(days=days)).isoformat()
+        else:
+            now = datetime.now(UTC)
+            time_min = now.isoformat()
+            time_max = (now + timedelta(days=days)).isoformat()
 
         try:
             async for attempt in AsyncRetrying(
@@ -168,7 +183,7 @@ class ReadCalendarTool:
             calendar = await g.discover("calendar", "v3")
 
             cal_resp = cast(dict[str, Any], await g.as_user(calendar.calendarList.list(maxResults=250)))
-            exclude = set(self._settings.irma_calendar_exclude_ids)
+            exclude = set(self._profile_cache.current.calendar_exclude_ids)
             cal_entries: list[tuple[str, str]] = [
                 (c["id"], str(c.get("summary") or c["id"]))
                 for c in cast(list[dict[str, Any]], cal_resp.get("items", []))
@@ -254,7 +269,9 @@ class ReadCalendarTool:
         except (ValueError, AttributeError):
             when = raw_start[:10] if raw_start else "?"
 
-        return f"{when} → {title}"
+        location = str(event.get("location") or "").strip()
+        suffix = f" [{location}]" if location else ""
+        return f"{when} → {title}{suffix}"
 
 
 # Module-level sanity: ReadCalendarTool conforms to Tool.

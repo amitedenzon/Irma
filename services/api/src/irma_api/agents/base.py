@@ -21,5 +21,5 @@ class Observer(Protocol):
 class LeadAgentProtocol(Protocol):
     """Structural type for the horizon-aware synthesis agent."""
 
-    async def synthesize(self, horizon: Horizon) -> Brief:  # pragma: no cover - protocol
+    async def synthesize(self, horizon: Horizon, guidance: str | None = None) -> Brief:  # pragma: no cover - protocol
         ...

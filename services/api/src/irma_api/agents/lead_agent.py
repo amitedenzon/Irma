@@ -110,22 +110,26 @@ class LeadAgent:
         self._store = store
         self._max_tokens = max_tokens
 
-    async def synthesize(self, horizon: Horizon) -> Brief:
+    async def synthesize(self, horizon: Horizon, guidance: str | None = None) -> Brief:
         ctx = await self._build_context(horizon)
         cache = BriefCacheRepo(self._store.connection)
         inputs_hash = _inputs_hash(ctx)
-        cached = await cache.get(horizon, inputs_hash=inputs_hash)
-        if cached is not None:
-            logger.info("lead_agent.cache_hit", horizon=horizon)
-            return cached
+        # Guidance bypasses cache — it's caller-supplied and not reflected in inputs_hash.
+        if guidance is None:
+            cached = await cache.get(horizon, inputs_hash=inputs_hash)
+            if cached is not None:
+                logger.info("lead_agent.cache_hit", horizon=horizon)
+                return cached
 
         if not ctx.projects and not ctx.tasks and not ctx.signals:
             brief = self._empty_brief(horizon)
-            await cache.put(horizon, inputs_hash=inputs_hash, brief=brief)
+            if guidance is None:
+                await cache.put(horizon, inputs_hash=inputs_hash, brief=brief)
             return brief
 
-        brief = await self._call_and_parse(ctx)
-        await cache.put(horizon, inputs_hash=inputs_hash, brief=brief)
+        brief = await self._call_and_parse(ctx, guidance=guidance)
+        if guidance is None:
+            await cache.put(horizon, inputs_hash=inputs_hash, brief=brief)
         logger.info("lead_agent.brief_ready", horizon=horizon, conflicts=len(brief.conflicts))
         return brief
 
@@ -166,9 +170,9 @@ class LeadAgent:
             signals=signals,
         )
 
-    async def _call_and_parse(self, ctx: SynthesisContext) -> Brief:
+    async def _call_and_parse(self, ctx: SynthesisContext, guidance: str | None = None) -> Brief:
         system = load_prompt("irma_persona")
-        user = self._compose_user_message(ctx)
+        user = self._compose_user_message(ctx, guidance=guidance)
         messages: list[ChatTurn] = [ChatTurn(role="user", content=user)]
 
         outcome = await self._llm.complete(
@@ -196,7 +200,7 @@ class LeadAgent:
             )
             return _parse_brief(retry_text)
 
-    def _compose_user_message(self, ctx: SynthesisContext) -> str:
+    def _compose_user_message(self, ctx: SynthesisContext, guidance: str | None = None) -> str:
         lines: list[str] = [
             f"HORIZON: {ctx.horizon}",
             f"TODAY: {ctx.today.isoformat()}",
@@ -240,6 +244,11 @@ class LeadAgent:
                 )
         else:
             lines.append("  (none)")
+
+        if guidance:
+            lines.append("")
+            lines.append("ADDITIONAL GUIDANCE FROM OWNER:")
+            lines.append(guidance)
 
         now_iso = datetime.now(UTC).isoformat()
         lines.append("")

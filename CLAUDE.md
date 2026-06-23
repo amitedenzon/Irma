@@ -7,11 +7,15 @@
 
 The maintainer is an AI Researcher / Backend Engineer (deep learning, generative AI, inference-time optimization). **Skip tutorials, junior commentary, and basic explanations.** Ship production-grade, strictly-typed, async code. No placeholder bodies (`# implement here`) — write the real implementation or explicitly scope it to a deferred phase.
 
+**HARD RULE — no paid Anthropic API.** The maintainer will **never** set `ANTHROPIC_API_KEY` or use the metered Anthropic API. All LLM work uses one of: (1) **local models** (Ollama, the default for backend synthesis like the daily brief), or (2) the **regular Claude subscription** via Claude Code / cowork and `/schedule` routines. Do **not** propose adding an Anthropic API key, do **not** wire backend code paths that depend on `ANTHROPIC_API_KEY`, and treat the Ollama backend as the only synthesis option for the FastAPI service. (Resend and Google OAuth keys are fine — they are not Anthropic.)
+
 ## 1. What Irma Is
 
 Irma is a **local, desktop-native AI PMO (Project Management Office) assistant** embodied as a character that lives beside the macOS Dock. She is a *passive intelligence layer*: she observes read-only data streams (calendar, local git repos), synthesizes them into a daily standup brief, and surfaces conflicts/blockers. Clicking the character opens her UI.
 
 She has a persona — calm, precise, slightly proactive. The synthesis LLM speaks **as Irma**, not as a generic assistant.
+
+**Clonability (Phase 4).** The app is designed to be clonable. A first-run setup wizard captures owner identity (name, role, optional persona blurb), timezone, brief time, and walks through connecting Google Calendar, Anthropic, and Resend. Owner profile is stored in a `profile` DB table and hot-reloaded via `GET/PATCH /api/v1/profile` — no restart required. Secrets (API keys, OAuth tokens) stay in `.env` and do require a restart. See `services/api/.env.example` for which values are legacy one-time seed values vs. live `.env` secrets.
 
 ## 2. Product Behavior (the parts that are non-obvious)
 
@@ -28,7 +32,7 @@ She has a persona — calm, precise, slightly proactive. The synthesis LLM speak
 | Desktop shell | **Tauri v2** (Rust). Two windows: `companion` + `main`. Accessory activation policy. Tray icon. |
 | Frontend | React + Vite + TypeScript + Tailwind CSS |
 | Backend | **FastAPI** (Python 3.12+), fully async, modular routers |
-| Synthesis LLM | **Claude** via official `anthropic` async SDK, Messages API. Model from `ANTHROPIC_MODEL` env (verify current string at docs.claude.com). |
+| Synthesis LLM | **Local model via Ollama** (`IRMA_LLM_BACKEND=ollama`, e.g. `qwen2.5:7b`). The `anthropic` SDK path exists for clonability but the maintainer never uses it — see the HARD RULE in §0. Opus-quality output, when wanted, comes from the Claude **subscription** (cowork / `/schedule`), not the API. |
 | Calendar | Google Calendar **REST API** via `aiogoogle` (async) + OAuth2. *(Not MCP — see §7.)* |
 | Storage | SQLite via `aiosqlite`/SQLModel (signals + briefs). ChromaDB deferred to Phase 4. |
 | Config | `pydantic-settings`, `.env` (+ committed `.env.example`). **Never hardcode secrets.** |
@@ -94,6 +98,8 @@ irma/
 | GET    | `/api/v1/signals`               | Raw signals (debug). |
 | GET    | `/api/v1/state`                 | Current `AgentState`. |
 | GET    | `/api/v1/stream`                | SSE stream of `AgentState`. |
+| GET    | `/api/v1/profile`               | Owner profile (name, email, timezone, brief_hour, etc.). |
+| PATCH  | `/api/v1/profile`               | Partial update; hot-reloaded — no restart needed. |
 
 ## 7. Why REST and not MCP for Calendar
 
@@ -161,3 +167,10 @@ When formatting calendar events in any email, always use these formats — one e
 - All-day, single:  `dd/MM (Day) → title`
 - All-day, multi:   `dd/MM - dd/MM (Day - Day) → title`  (Google end-date is exclusive — subtract 1 day)
 Never emit raw ISO timestamps.
+
+## 12. Known limitations / follow-ups for full clonability
+
+- **Claude-CLI tab persona (this file).** `CLAUDE.md` is read by the `claude` CLI on every turn, so §11 still references the original owner. The DB `profile` is not consulted. Follow-up: generate a per-user instructions file, or replace §11 with a generic persona that fetches identity from the API at runtime.
+- **Tauri bundle identifier.** `apps/desktop/src-tauri/tauri.conf.json` contains `com.amit.irma`. Must be updated before distributing to other users.
+- **Hardcoded dev backend path.** `IRMA_API_DIR` defaults to `~/Documents/Code/Irma/services/api` in `apps/desktop/src-tauri/src/lib.rs`. Needs a configurable installer default before distribution.
+- **Resend free-tier `from` constraint.** The default `onboarding@resend.dev` sender only delivers to the Resend account's own verified email address — a cloner must verify their own domain or accept this limitation.
